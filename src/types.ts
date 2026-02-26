@@ -84,6 +84,10 @@ export interface MigrationFile {
   environmentMapping: MigrationEnvironmentMapping[];
 }
 
+export interface DryRunFile extends MigrationFile {
+  requests: Array<{ method: string; path: string; body: unknown }>;
+}
+
 export interface DatadogCondition {
   operator: string;
   attribute: string;

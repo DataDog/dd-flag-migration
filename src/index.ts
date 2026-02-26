@@ -9,7 +9,7 @@ import path from 'node:path';
 import { getEppoApiKey, saveEppoApiKey, getDatadogKeys, saveDatadogKeys, CONFIG_DIR } from './config.js';
 import { fetchEppoFlags, validateEppoApiKey, extractEnvironments } from './eppo.js';
 import { fetchDatadogFlagKeys, fetchDatadogEnvironments, validateDatadogKeys, createFeatureFlag, enableFeatureFlagEnvironment } from './datadog.js';
-import type { EppoFlag, EppoFlagEnvironment, EppoAllocation, DatadogEnvironment, DatadogCreateFlagRequest, DatadogAllocationForFlagCreation, DatadogTargetingRule, MigrationFile, MigrationEnvironmentMapping } from './types.js';
+import type { EppoFlag, EppoFlagEnvironment, EppoAllocation, DatadogEnvironment, DatadogCreateFlagRequest, DatadogAllocationForFlagCreation, DatadogTargetingRule, MigrationFile, MigrationEnvironmentMapping, DryRunFile } from './types.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -517,27 +517,29 @@ async function confirmMigration(
     enableFailures.forEach((f) => console.log(`  ${chalk.yellow('⚠')} ${f.key} / ${f.env}: ${f.error}`));
   }
 
+  const timestamp = new Date().toISOString();
+  const environmentMapping: MigrationEnvironmentMapping[] = [];
+  for (const [eppoEnvId, ddEnv] of envMapping) {
+    const eppoEnv = flags
+      .flatMap((f) => f.environments ?? [])
+      .find((e) => e.id === eppoEnvId);
+    environmentMapping.push({
+      sourceEnvId: eppoEnvId,
+      sourceEnvName: eppoEnv?.name ?? String(eppoEnvId),
+      datadogEnvId: ddEnv.id,
+      datadogEnvName: ddEnv.name,
+    });
+  }
+
   if (dryRun && dryRunRequests.length > 0) {
-    const filename = `dry-run-${new Date().toISOString()}.json`;
+    const dryRunData: DryRunFile = { provider, migratedAt: timestamp, flags, environmentMapping, requests: dryRunRequests };
+    const filename = `dry-run-${timestamp}.json`;
     const filepath = path.join(process.cwd(), filename);
-    fs.writeFileSync(filepath, JSON.stringify(dryRunRequests, null, 2));
+    fs.writeFileSync(filepath, JSON.stringify(dryRunData, null, 2));
     console.log(chalk.gray(`  Requests written to ${filepath}`));
   }
 
   if (!dryRun && created > 0) {
-    const timestamp = new Date().toISOString();
-    const environmentMapping: MigrationEnvironmentMapping[] = [];
-    for (const [eppoEnvId, ddEnv] of envMapping) {
-      const eppoEnv = flags
-        .flatMap((f) => f.environments ?? [])
-        .find((e) => e.id === eppoEnvId);
-      environmentMapping.push({
-        sourceEnvId: eppoEnvId,
-        sourceEnvName: eppoEnv?.name ?? String(eppoEnvId),
-        datadogEnvId: ddEnv.id,
-        datadogEnvName: ddEnv.name,
-      });
-    }
     const migrationData: MigrationFile = { provider, migratedAt: timestamp, flags, environmentMapping };
     const filename = `migration-${timestamp}.json`;
     if (!fs.existsSync(CONFIG_DIR)) fs.mkdirSync(CONFIG_DIR, { recursive: true });

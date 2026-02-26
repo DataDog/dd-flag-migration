@@ -30,7 +30,7 @@ function printHeader(): void {
 async function selectMigrationFile(): Promise<MigrationFile> {
   if (!fs.existsSync(CONFIG_DIR)) {
     console.log(chalk.red('\n  No migration files found.'));
-    console.log(chalk.gray(`  Run 'yarn dev' to perform a migration first.\n`));
+    console.log(chalk.gray(`  Run 'yarn migrate' to perform a migration first.\n`));
     process.exit(1);
   }
 
@@ -41,7 +41,7 @@ async function selectMigrationFile(): Promise<MigrationFile> {
 
   if (files.length === 0) {
     console.log(chalk.red('\n  No migration files found.'));
-    console.log(chalk.gray(`  Run 'yarn dev' to perform a migration first.\n`));
+    console.log(chalk.gray(`  Run 'yarn migrate' to perform a migration first.\n`));
     process.exit(1);
   }
 
