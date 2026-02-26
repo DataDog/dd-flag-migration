@@ -592,6 +592,10 @@ async function main(): Promise<void> {
     if (eppoEnvironments.length > 0) {
       const envResult = await selectEnvironments(flags, eppoEnvironments, prevSelectedEnvs);
       if (envResult === null) break; // escaped → exit
+      if (envResult.length === 0) {
+        console.log(chalk.yellow('\n  Please select at least one environment to migrate from.\n'));
+        continue;
+      }
       prevSelectedEnvs = envResult;
       selectedEnvs = envResult;
       // Reset flag selections if the environment selection changed
