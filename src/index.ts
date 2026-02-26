@@ -6,10 +6,10 @@ import ora from 'ora';
 import axios from 'axios';
 import fs from 'node:fs';
 import path from 'node:path';
-import { getEppoApiKey, saveEppoApiKey, getDatadogKeys, saveDatadogKeys } from './config.js';
+import { getEppoApiKey, saveEppoApiKey, getDatadogKeys, saveDatadogKeys, CONFIG_DIR } from './config.js';
 import { fetchEppoFlags, validateEppoApiKey, extractEnvironments } from './eppo.js';
 import { fetchDatadogFlagKeys, fetchDatadogEnvironments, validateDatadogKeys, createFeatureFlag, enableFeatureFlagEnvironment } from './datadog.js';
-import type { EppoFlag, EppoFlagEnvironment, EppoAllocation, DatadogEnvironment, DatadogCreateFlagRequest, DatadogAllocationForFlagCreation, DatadogTargetingRule } from './types.js';
+import type { EppoFlag, EppoFlagEnvironment, EppoAllocation, DatadogEnvironment, DatadogCreateFlagRequest, DatadogAllocationForFlagCreation, DatadogTargetingRule, MigrationFile, MigrationEnvironmentMapping } from './types.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -258,7 +258,8 @@ async function confirmMigration(
   ddApiKey: string,
   ddAppKey: string,
   envMapping: Map<number, DatadogEnvironment>,
-  datadogKeys: Set<string>
+  datadogKeys: Set<string>,
+  provider: string
 ): Promise<ConfirmAction> {
   if (flags.length === 0) {
     console.log(chalk.yellow('\nNo flags selected — nothing to migrate.'));
@@ -523,6 +524,28 @@ async function confirmMigration(
     console.log(chalk.gray(`  Requests written to ${filepath}`));
   }
 
+  if (!dryRun && created > 0) {
+    const timestamp = new Date().toISOString();
+    const environmentMapping: MigrationEnvironmentMapping[] = [];
+    for (const [eppoEnvId, ddEnv] of envMapping) {
+      const eppoEnv = flags
+        .flatMap((f) => f.environments ?? [])
+        .find((e) => e.id === eppoEnvId);
+      environmentMapping.push({
+        sourceEnvId: eppoEnvId,
+        sourceEnvName: eppoEnv?.name ?? String(eppoEnvId),
+        datadogEnvId: ddEnv.id,
+        datadogEnvName: ddEnv.name,
+      });
+    }
+    const migrationData: MigrationFile = { provider, migratedAt: timestamp, flags, environmentMapping };
+    const filename = `migration-${timestamp}.json`;
+    if (!fs.existsSync(CONFIG_DIR)) fs.mkdirSync(CONFIG_DIR, { recursive: true });
+    const filepath = path.join(CONFIG_DIR, filename);
+    fs.writeFileSync(filepath, JSON.stringify(migrationData, null, 2));
+    console.log(chalk.gray(`  Migration saved to ${filepath}`));
+  }
+
   console.log();
   return 'migrate';
 }
@@ -618,7 +641,7 @@ async function main(): Promise<void> {
         if (flagResult === null) break; // escaped → back to linking
 
         prevSelectedFlags = flagResult;
-        const action = await confirmMigration(prevSelectedFlags, ddApiKey, ddAppKey, prevEnvMapping, datadogKeys);
+        const action = await confirmMigration(prevSelectedFlags, ddApiKey, ddAppKey, prevEnvMapping, datadogKeys, provider);
         if (action === 'cancel') break outer;
         if (action === 'migrate') break outer;
         // action === 'select-more': loop back to selectFlags

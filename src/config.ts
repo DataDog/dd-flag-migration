@@ -3,7 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import type { Config } from './types.js';
 
-const CONFIG_DIR = path.join(os.homedir(), '.dd-flag-migration');
+export const CONFIG_DIR = path.join(os.homedir(), '.dd-flag-migration');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 
 export function loadConfig(): Config {
@@ -42,5 +42,15 @@ export function saveDatadogKeys(apiKey: string, appKey: string): void {
   const config = loadConfig();
   config.datadogApiKey = apiKey;
   config.datadogAppKey = appKey;
+  saveConfig(config);
+}
+
+export function getEppoSdkKey(): string | undefined {
+  return loadConfig().eppoSdkKey;
+}
+
+export function saveEppoSdkKey(key: string): void {
+  const config = loadConfig();
+  config.eppoSdkKey = key;
   saveConfig(config);
 }

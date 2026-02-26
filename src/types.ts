@@ -65,8 +65,23 @@ export interface DatadogEnvironment {
 
 export interface Config {
   eppoApiKey?: string;
+  eppoSdkKey?: string;
   datadogApiKey?: string;
   datadogAppKey?: string;
+}
+
+export interface MigrationEnvironmentMapping {
+  sourceEnvId: number;
+  sourceEnvName: string;
+  datadogEnvId: string;
+  datadogEnvName: string;
+}
+
+export interface MigrationFile {
+  provider: string;
+  migratedAt: string;
+  flags: EppoFlag[];
+  environmentMapping: MigrationEnvironmentMapping[];
 }
 
 export interface DatadogCondition {
