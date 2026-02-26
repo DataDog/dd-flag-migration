@@ -414,6 +414,7 @@ async function confirmMigration(
   let created = 0, skipped = 0, errored = 0;
   let totalEnabled = 0;
   const failures: Array<{ key: string; error: string }> = [];
+  const enableFailures: Array<{ key: string; env: string; error: string }> = [];
   const dryRunRequests: Array<{ method: string; path: string; body: unknown }> = [];
 
   for (const flag of flags) {
@@ -474,7 +475,6 @@ async function confirmMigration(
 
         // Enable the flag in each DD environment where it was active in Eppo
         let enabledCount = 0;
-        const enableErrors: string[] = [];
         for (const ddEnv of envsToEnable) {
           try {
             await enableFeatureFlagEnvironment(ddApiKey, ddAppKey, createdFlag.id, ddEnv.id);
@@ -483,17 +483,13 @@ async function confirmMigration(
             const msg = axios.isAxiosError(err)
               ? ((err.response?.data as { errors?: Array<{ detail?: string }> })?.errors?.[0]?.detail ?? err.message)
               : String(err);
-            enableErrors.push(`${ddEnv.name}: ${msg}`);
+            enableFailures.push({ key: flag.key, env: ddEnv.name, error: msg });
           }
         }
 
         totalEnabled += enabledCount;
         const enableLabel = enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
         spinner.succeed(`Created ${chalk.cyan(flag.key)} (${allocations.length} allocation(s)${ruleLabel}${enableLabel})`);
-
-        if (enableErrors.length > 0) {
-          for (const e of enableErrors) console.log(chalk.yellow(`    Warning: could not enable — ${e}`));
-        }
 
         created++;
       } catch (err) {
@@ -513,6 +509,11 @@ async function confirmMigration(
   if (failures.length > 0) {
     console.log();
     failures.forEach((f) => console.log(`  ${chalk.red('✗')} ${f.key}: ${f.error}`));
+  }
+  if (enableFailures.length > 0) {
+    console.log();
+    console.log(chalk.yellow('  Flags created but could not be enabled in some environments:'));
+    enableFailures.forEach((f) => console.log(`  ${chalk.yellow('⚠')} ${f.key} / ${f.env}: ${f.error}`));
   }
 
   if (dryRun && dryRunRequests.length > 0) {
