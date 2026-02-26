@@ -54,3 +54,23 @@ export function saveEppoSdkKey(key: string): void {
   config.eppoSdkKey = key;
   saveConfig(config);
 }
+
+export function getDatadogClientToken(): string | undefined {
+  return loadConfig().datadogClientToken;
+}
+
+export function saveDatadogClientToken(token: string): void {
+  const config = loadConfig();
+  config.datadogClientToken = token;
+  saveConfig(config);
+}
+
+export function getDatadogSite(): string | undefined {
+  return loadConfig().datadogSite;
+}
+
+export function saveDatadogSite(site: string): void {
+  const config = loadConfig();
+  config.datadogSite = site;
+  saveConfig(config);
+}

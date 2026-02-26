@@ -61,6 +61,7 @@ export interface DatadogEnvironment {
   id: string;
   name: string;
   is_production: boolean;
+  queries: string[];
 }
 
 export interface Config {
@@ -68,6 +69,8 @@ export interface Config {
   eppoSdkKey?: string;
   datadogApiKey?: string;
   datadogAppKey?: string;
+  datadogClientToken?: string;
+  datadogSite?: string;
 }
 
 export interface MigrationEnvironmentMapping {
@@ -75,6 +78,7 @@ export interface MigrationEnvironmentMapping {
   sourceEnvName: string;
   datadogEnvId: string;
   datadogEnvName: string;
+  datadogDdEnvNames?: string[];
 }
 
 export interface MigrationFile {

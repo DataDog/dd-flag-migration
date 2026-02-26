@@ -2,6 +2,7 @@
 import { select, password, input, confirm } from '@inquirer/prompts';
 import chalk from 'chalk';
 import ora from 'ora';
+import axios from 'axios';
 import path from 'node:path';
 import fs from 'node:fs';
 import {
@@ -10,8 +11,12 @@ import {
   saveEppoSdkKey,
   getDatadogKeys,
   saveDatadogKeys,
+  getDatadogClientToken,
+  saveDatadogClientToken,
+  getDatadogSite,
+  saveDatadogSite,
 } from './config.js';
-import type { MigrationFile, EppoFlag } from './types.js';
+import type { MigrationFile, EppoFlag, MigrationEnvironmentMapping } from './types.js';
 
 // ─── UI Helpers ───────────────────────────────────────────────────────────────
 
@@ -90,6 +95,54 @@ async function promptForEppoSdkKey(): Promise<string> {
   return key.trim();
 }
 
+async function promptForDatadogClientToken(): Promise<string> {
+  const stored = getDatadogClientToken();
+
+  if (stored) {
+    const useStored = await confirm({
+      message: 'Use your saved Datadog client token?',
+      default: true,
+    });
+    if (useStored) return stored;
+  }
+
+  const token = await password({
+    message: 'Enter your Datadog client token:',
+    validate: (v) => v.trim().length > 0 ? true : 'Client token cannot be empty',
+  });
+
+  saveDatadogClientToken(token.trim());
+  console.log(chalk.gray('  Token saved for future sessions.\n'));
+  return token.trim();
+}
+
+async function promptForDatadogSite(): Promise<string> {
+  const stored = getDatadogSite();
+
+  if (stored) {
+    const useStored = await confirm({
+      message: `Use your saved Datadog site (${stored})?`,
+      default: true,
+    });
+    if (useStored) return stored;
+  }
+
+  const site = await select<string>({
+    message: 'Select your Datadog site:',
+    choices: [
+      { name: 'datadoghq.com (US1)', value: 'datadoghq.com' },
+      { name: 'us3.datadoghq.com (US3)', value: 'us3.datadoghq.com' },
+      { name: 'datadoghq.eu (EU)', value: 'datadoghq.eu' },
+      { name: 'datad0g.com (Staging)', value: 'datad0g.com' },
+    ],
+    default: 'datadoghq.com',
+  });
+
+  saveDatadogSite(site);
+  console.log(chalk.gray('  Site saved for future sessions.\n'));
+  return site;
+}
+
 async function promptForDatadogKeys(): Promise<{ apiKey: string; appKey: string }> {
   const stored = getDatadogKeys();
 
@@ -101,56 +154,160 @@ async function promptForDatadogKeys(): Promise<{ apiKey: string; appKey: string 
     if (useStored) return { apiKey: stored.apiKey, appKey: stored.appKey };
   }
 
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    const apiKey = await password({
-      message: 'Enter your Datadog API key:',
-      validate: (v) => v.trim().length > 0 ? true : 'API key cannot be empty',
-    });
-    const appKey = await password({
-      message: 'Enter your Datadog Application key:',
-      validate: (v) => v.trim().length > 0 ? true : 'Application key cannot be empty',
-    });
+  const apiKey = await password({
+    message: 'Enter your Datadog API key:',
+    validate: (v) => v.trim().length > 0 ? true : 'API key cannot be empty',
+  });
+  const appKey = await password({
+    message: 'Enter your Datadog Application key:',
+    validate: (v) => v.trim().length > 0 ? true : 'Application key cannot be empty',
+  });
 
-    saveDatadogKeys(apiKey.trim(), appKey.trim());
-    console.log(chalk.gray('  Keys saved for future sessions.\n'));
-    return { apiKey: apiKey.trim(), appKey: appKey.trim() };
+  saveDatadogKeys(apiKey.trim(), appKey.trim());
+  console.log(chalk.gray('  Keys saved for future sessions.\n'));
+  return { apiKey: apiKey.trim(), appKey: appKey.trim() };
+}
+
+type ApiEnvironment = { id: string; queries: string[] };
+
+async function fetchEnvironmentsFromApi(apiKey: string, appKey: string, site: string): Promise<ApiEnvironment[]> {
+  const baseUrl = `https://api.${site}`;
+  const resp = await axios.get<{ data: Array<{ id: string; attributes: { queries: string[] } }> }>(
+    `${baseUrl}/api/unstable/feature-flags/environments`,
+    { headers: { 'DD-API-KEY': apiKey, 'DD-APPLICATION-KEY': appKey } },
+  );
+  return resp.data.data.map((item) => ({ id: item.id, queries: item.attributes.queries ?? [] }));
+}
+
+async function selectDDEnvironment(
+  environmentMapping: MigrationEnvironmentMapping[],
+  apiKey: string,
+  appKey: string,
+  site: string,
+): Promise<string> {
+  if (environmentMapping.length === 0) {
+    throw new Error('No environment mapping found in migration file. Re-run the migration first.');
+  }
+
+  let chosen: MigrationEnvironmentMapping;
+
+  if (environmentMapping.length === 1) {
+    chosen = environmentMapping[0];
+    console.log(chalk.gray(`  Using Datadog environment: ${chalk.cyan(chosen.datadogEnvName)}\n`));
+  } else {
+    const chosenId = await select<string>({
+      message: 'Select the Datadog environment to evaluate against:',
+      choices: environmentMapping.map((m) => ({
+        name: m.datadogEnvName,
+        value: m.datadogEnvId,
+      })),
+    });
+    chosen = environmentMapping.find((m) => m.datadogEnvId === chosenId)!;
+  }
+
+  // Fetch the live environment from the API to get its dd_env queries
+  const apiEnvs = await fetchEnvironmentsFromApi(apiKey, appKey, site);
+  const matched = apiEnvs.find((e) => e.id === chosen.datadogEnvId);
+
+  if (!matched || matched.queries.length === 0) {
+    throw new Error(
+      `No DD_ENV names found for environment "${chosen.datadogEnvName}" (id: ${chosen.datadogEnvId}). ` +
+      'Configure DD_ENV names in Datadog → Feature Flags → Environments → Edit.'
+    );
+  }
+
+  if (matched.queries.length === 1) return matched.queries[0];
+
+  return await select<string>({
+    message: `Select a DD_ENV for "${chosen.datadogEnvName}":`,
+    choices: matched.queries.map((q) => ({ name: q, value: q })),
+  });
+}
+
+// ─── Endpoint Host Mapping ────────────────────────────────────────────────────
+
+function buildEndpointHost(site: string): string {
+  return `preview.ff-cdn.${site}`;
+}
+
+// ─── DD Flag Fetching ─────────────────────────────────────────────────────────
+
+type DDFlagValue = { variationValue: unknown; variationType: string };
+
+async function fetchDDFlagKeys(apiKey: string, appKey: string, site: string): Promise<Set<string>> {
+  const baseUrl = `https://api.${site}`;
+  const keys = new Set<string>();
+  let offset = 0;
+  const limit = 200;
+  while (true) {
+    const resp = await axios.get<{ data: Array<{ attributes: { key: string } }> }>(
+      `${baseUrl}/api/unstable/feature-flags`,
+      { headers: { 'DD-API-KEY': apiKey, 'DD-APPLICATION-KEY': appKey }, params: { limit, offset, is_archived: false } },
+    );
+    const flags = resp.data.data ?? [];
+    for (const f of flags) keys.add(f.attributes.key);
+    if (flags.length < limit) break;
+    offset += limit;
+  }
+  return keys;
+}
+
+async function fetchDDFlags(
+  clientToken: string,
+  site: string,
+  env: string,
+  subjectId: string,
+): Promise<Record<string, DDFlagValue>> {
+  const host = buildEndpointHost(site);
+  const url = `https://${host}/precompute-assignments?dd_env=${encodeURIComponent(env)}`;
+  try {
+    const resp = await axios.post(url, {
+      data: {
+        type: 'precompute-assignments-request',
+        attributes: {
+          env: { dd_env: env },
+          sdk: { name: 'browser', version: 'dev' },
+          subject: { targeting_key: subjectId, targeting_attributes: {} },
+        },
+      },
+    }, {
+      headers: {
+        'Content-Type': 'application/vnd.api+json',
+        'dd-client-token': clientToken,
+      },
+    });
+    return (resp.data?.data?.attributes?.flags ?? {}) as Record<string, DDFlagValue>;
+  } catch (err) {
+    if (axios.isAxiosError(err) && err.response) {
+      const detail = JSON.stringify(err.response.data);
+      throw new Error(`HTTP ${err.response.status} from ${url}\n  ${detail}`);
+    }
+    throw err;
   }
 }
 
 // ─── SDK Initialization ───────────────────────────────────────────────────────
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function initializeSdks(ddApiKey: string, ddAppKey: string, eppoSdkKey: string): Promise<{ eppoClient: any; ddClient: any }> {
-  // Set env vars BEFORE dynamically importing tracer (tracer reads them at init time)
-  process.env.DD_API_KEY = ddApiKey;
-  process.env.DD_APP_KEY = ddAppKey;
-
-  // Dynamic imports ensure correct initialization ordering
-  const { default: tracer } = await import('dd-trace') as { default: any };
-  tracer.init({
-    remoteConfig: { pollInterval: 5 },
-    experimental: {
-      flaggingProvider: { enabled: true },
-    },
-  });
-
-  const { OpenFeature } = await import('@openfeature/server-sdk') as { OpenFeature: any };
-  OpenFeature.setProvider(tracer.openfeature);
-  const ddClient = OpenFeature.getClient();
-
+async function initializeEppo(eppoSdkKey: string): Promise<any> {
+  // Suppress pino logs from the Eppo SDK (level:30 info, level:40 warn)
+  process.env.LOG_LEVEL = 'silent';
   const { init, getInstance } = await import('@eppo/node-server-sdk') as { init: any; getInstance: any };
   await init({ apiKey: eppoSdkKey, throwOnFailedInitialization: false });
-  const eppoClient = getInstance();
-
-  return { eppoClient, ddClient };
+  return getInstance();
 }
 
 // ─── Flag Evaluation ──────────────────────────────────────────────────────────
 
+type DDStatus = 'assigned' | 'not-assigned' | 'not-in-dd';
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function evaluateFlag(flag: EppoFlag, subjectId: string, eppoClient: any, ddClient: any): Promise<{ eppoResult: string; ddResult: string; error?: string }> {
+async function evaluateFlag(flag: EppoFlag, subjectId: string, eppoClient: any, ddFlags: Record<string, DDFlagValue>, ddFlagKeys: Set<string>): Promise<{ eppoResult: string; ddResult: string; ddStatus: DDStatus; error?: string }> {
   const vtype = (flag.variation_type ?? 'STRING').toUpperCase();
+  const ddFlag = ddFlags[flag.key];
+  const ddStatus: DDStatus = ddFlag !== undefined ? 'assigned'
+    : ddFlagKeys.has(flag.key) ? 'not-assigned'
+    : 'not-in-dd';
 
   try {
     let eppoResult: string;
@@ -159,46 +316,42 @@ async function evaluateFlag(flag: EppoFlag, subjectId: string, eppoClient: any, 
     switch (vtype) {
       case 'BOOLEAN': {
         const eppo = eppoClient.getBoolAssignment(flag.key, subjectId, {}, false) as boolean;
-        const dd = await ddClient.getBooleanValue(flag.key, false, { targetingKey: subjectId }) as boolean;
         eppoResult = String(eppo);
-        ddResult = String(dd);
+        ddResult = ddFlag !== undefined ? String(ddFlag.variationValue) : '';
         break;
       }
       case 'INTEGER': {
         const eppo = eppoClient.getIntegerAssignment(flag.key, subjectId, {}, 0) as number;
-        const dd = await ddClient.getNumberValue(flag.key, 0, { targetingKey: subjectId }) as number;
         eppoResult = String(eppo);
-        ddResult = String(dd);
+        ddResult = ddFlag !== undefined ? String(ddFlag.variationValue) : '';
         break;
       }
       case 'NUMERIC': {
         const eppo = eppoClient.getNumericAssignment(flag.key, subjectId, {}, 0) as number;
-        const dd = await ddClient.getNumberValue(flag.key, 0, { targetingKey: subjectId }) as number;
         eppoResult = String(eppo);
-        ddResult = String(dd);
+        ddResult = ddFlag !== undefined ? String(ddFlag.variationValue) : '';
         break;
       }
       case 'JSON': {
         const eppo = eppoClient.getJSONAssignment(flag.key, subjectId, {}, {}) as object;
-        const dd = await ddClient.getObjectValue(flag.key, {}, { targetingKey: subjectId }) as object;
         eppoResult = JSON.stringify(eppo);
-        ddResult = JSON.stringify(dd);
+        ddResult = ddFlag !== undefined ? JSON.stringify(ddFlag.variationValue) : '';
         break;
       }
       default: {
         const eppo = eppoClient.getStringAssignment(flag.key, subjectId, {}, 'control') as string;
-        const dd = await ddClient.getStringValue(flag.key, 'control', { targetingKey: subjectId }) as string;
         eppoResult = String(eppo);
-        ddResult = String(dd);
+        ddResult = ddFlag !== undefined ? String(ddFlag.variationValue) : '';
         break;
       }
     }
 
-    return { eppoResult, ddResult };
+    return { eppoResult, ddResult, ddStatus };
   } catch (err) {
     return {
       eppoResult: 'ERROR',
       ddResult: 'ERROR',
+      ddStatus: 'assigned',
       error: err instanceof Error ? err.message : String(err),
     };
   }
@@ -211,6 +364,7 @@ interface TableRow {
   eppo: string;
   dd: string;
   match: boolean;
+  ddStatus: DDStatus;
   error?: string;
 }
 
@@ -245,6 +399,24 @@ function renderTable(rows: TableRow[], providerLabel: string): void {
         chalk.red(truncate('ERROR', COL2)) +
         '  ' + chalk.red('ERROR')
       );
+    } else if (row.ddStatus === 'not-in-dd') {
+      console.log(
+        chalk.dim(key) +
+        chalk.gray(' │ ') +
+        chalk.dim(truncate(row.eppo, COL2)) +
+        chalk.gray(' │ ') +
+        chalk.dim('—'.padEnd(COL2)) +
+        '  ' + chalk.red('Not in Datadog')
+      );
+    } else if (row.ddStatus === 'not-assigned') {
+      console.log(
+        chalk.dim(key) +
+        chalk.gray(' │ ') +
+        chalk.dim(truncate(row.eppo, COL2)) +
+        chalk.gray(' │ ') +
+        chalk.dim('—'.padEnd(COL2)) +
+        '  ' + chalk.dim('Not assigned')
+      );
     } else if (row.match) {
       console.log(
         key +
@@ -270,22 +442,23 @@ function renderTable(rows: TableRow[], providerLabel: string): void {
 }
 
 function printSummary(rows: TableRow[]): void {
-  const matched = rows.filter((r) => r.match && !r.error).length;
-  const differed = rows.filter((r) => !r.match && !r.error).length;
+  const matched = rows.filter((r) => r.match).length;
+  const differed = rows.filter((r) => !r.match && !r.error && r.ddStatus === 'assigned').length;
+  const notAssigned = rows.filter((r) => r.ddStatus === 'not-assigned').length;
+  const notInDD = rows.filter((r) => r.ddStatus === 'not-in-dd').length;
   const errored = rows.filter((r) => Boolean(r.error)).length;
 
   console.log(chalk.bold('Summary:'));
-  console.log(
-    `  ${chalk.green(String(matched))} match  ` +
-    `${chalk.yellow(String(differed))} differ  ` +
-    `${chalk.red(String(errored))} error`
-  );
+  let summary = `  ${chalk.green(String(matched))} match  ${chalk.yellow(String(differed))} differ  ${chalk.red(String(errored))} error`;
+  if (notAssigned > 0) summary += `  ${chalk.dim(String(notAssigned))} not assigned`;
+  if (notInDD > 0) summary += `  ${chalk.red(String(notInDD))} not in Datadog`;
+  console.log(summary);
   console.log();
 
   if (differed > 0) {
     console.log(chalk.yellow(
-      '  Some flags returned different values. This may be expected if remote\n' +
-      '  config has not yet propagated or flag configurations differ between providers.'
+      '  Some flags returned different values. This may be expected if\n' +
+      '  flag configurations differ between providers.'
     ));
     console.log();
   }
@@ -310,52 +483,70 @@ async function main(): Promise<void> {
   const eppoSdkKey = await promptForEppoSdkKey();
   console.log();
   const { apiKey: ddApiKey, appKey: ddAppKey } = await promptForDatadogKeys();
+  const ddClientToken = await promptForDatadogClientToken();
+  const ddSite = await promptForDatadogSite();
 
-  // 3. Prompt for test subject ID
+  // 3. Select Datadog environment (resolved via API)
+  const ddEnv = await selectDDEnvironment(migration.environmentMapping ?? [], ddApiKey, ddAppKey, ddSite);
+  console.log();
+
+  // 4. Prompt for test subject ID
   const subjectId = await input({
     message: 'Enter a test subject ID (user ID for flag evaluation):',
     validate: (v) => v.trim().length > 0 ? true : 'Subject ID cannot be empty',
   });
   console.log();
 
-  // 4. Initialize SDKs
-  const initSpinner = ora('Initializing Eppo and Datadog SDKs…').start();
+  // 5. Initialize Eppo SDK
+  const initSpinner = ora('Initializing Eppo SDK…').start();
   let eppoClient: unknown;
-  let ddClient: unknown;
 
   try {
-    ({ eppoClient, ddClient } = await initializeSdks(ddApiKey, ddAppKey, eppoSdkKey));
-    initSpinner.succeed('SDKs initialized');
+    eppoClient = await initializeEppo(eppoSdkKey);
+    initSpinner.succeed('Eppo SDK initialized');
   } catch (err) {
-    initSpinner.fail('Failed to initialize SDKs');
+    initSpinner.fail('Failed to initialize Eppo SDK');
     console.error(chalk.red(err instanceof Error ? err.message : String(err)));
     process.exit(1);
   }
 
-  // 5. Wait for remote config to propagate
-  const waitSpinner = ora('Waiting for Datadog remote config to load…').start();
-  await new Promise((resolve) => setTimeout(resolve, 3000));
-  waitSpinner.succeed('Remote config ready');
+  // 6. Fetch Datadog data (flag assignments + full flag list) in parallel
+  const ddSpinner = ora('Fetching Datadog flag data…').start();
+  let ddFlags: Record<string, DDFlagValue>;
+  let ddFlagKeys: Set<string>;
 
-  // 6. Evaluate each flag
+  try {
+    [ddFlags, ddFlagKeys] = await Promise.all([
+      fetchDDFlags(ddClientToken, ddSite, ddEnv, subjectId.trim()),
+      fetchDDFlagKeys(ddApiKey, ddAppKey, ddSite),
+    ]);
+    ddSpinner.succeed(`Fetched ${Object.keys(ddFlags).length} assignment(s) across ${ddFlagKeys.size} Datadog flag(s)`);
+  } catch (err) {
+    ddSpinner.fail('Failed to fetch Datadog flag data');
+    console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+    process.exit(1);
+  }
+
+  // 7. Evaluate each flag
   const evalSpinner = ora(`Evaluating ${migration.flags.length} flag(s)…`).start();
   const rows: TableRow[] = [];
 
   for (const flag of migration.flags) {
-    const { eppoResult, ddResult, error } = await evaluateFlag(
-      flag, subjectId.trim(), eppoClient, ddClient
+    const { eppoResult, ddResult, ddStatus, error } = await evaluateFlag(
+      flag, subjectId.trim(), eppoClient, ddFlags, ddFlagKeys
     );
     rows.push({
       key: flag.key,
       eppo: eppoResult,
       dd: ddResult,
-      match: !error && eppoResult === ddResult,
+      ddStatus,
+      match: !error && ddStatus === 'assigned' && eppoResult === ddResult,
       error,
     });
   }
   evalSpinner.succeed('Evaluation complete');
 
-  // 7. Render results
+  // 8. Render results
   renderTable(rows, providerLabel);
   printSummary(rows);
 }

@@ -33,6 +33,7 @@ export async function fetchDatadogEnvironments(
     id: item.id,
     name: item.attributes.name,
     is_production: item.attributes.is_production,
+    queries: item.attributes.queries ?? [],
   }));
 }
 

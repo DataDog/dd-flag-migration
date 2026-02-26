@@ -528,6 +528,7 @@ async function confirmMigration(
       sourceEnvName: eppoEnv?.name ?? String(eppoEnvId),
       datadogEnvId: ddEnv.id,
       datadogEnvName: ddEnv.name,
+      datadogDdEnvNames: ddEnv.queries,
     });
   }
 
