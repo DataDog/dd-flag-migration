@@ -6,8 +6,8 @@ import ora from 'ora';
 import axios from 'axios';
 import { getEppoApiKey, saveEppoApiKey, getDatadogKeys, saveDatadogKeys } from './config.js';
 import { fetchEppoFlags, validateEppoApiKey, extractEnvironments } from './eppo.js';
-import { fetchDatadogFlagKeys, fetchDatadogEnvironments, validateDatadogKeys, createFeatureFlag } from './datadog.js';
-import type { EppoFlag, EppoFlagEnvironment, DatadogEnvironment, DatadogCreateFlagRequest, DatadogAllocationForFlagCreation } from './types.js';
+import { fetchDatadogFlagKeys, fetchDatadogEnvironments, validateDatadogKeys, createFeatureFlag, enableFeatureFlagEnvironment } from './datadog.js';
+import type { EppoFlag, EppoFlagEnvironment, EppoAllocation, DatadogEnvironment, DatadogCreateFlagRequest, DatadogAllocationForFlagCreation, DatadogTargetingRule } from './types.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -306,20 +306,103 @@ async function confirmMigration(
     }
   }
 
-  // Build equal-weight allocations for each mapped DD environment where the flag is active
+  // Map Eppo condition operator → Datadog condition operator
+  function mapOperator(eppoOp: string): string {
+    const mapping: Record<string, string> = {
+      LT: 'LT', LTE: 'LTE', GT: 'GT', GTE: 'GTE',
+      MATCHES: 'MATCHES', ONE_OF: 'ONE_OF', NOT_ONE_OF: 'NOT_ONE_OF', IS_NULL: 'IS_NULL',
+    };
+    return mapping[eppoOp.toUpperCase()] ?? eppoOp.toUpperCase();
+  }
+
+  // Convert Eppo targeting rules → Datadog targeting rules
+  function buildTargetingRules(eppoAlloc: EppoAllocation): DatadogTargetingRule[] {
+    return (eppoAlloc.targeting_rules ?? [])
+      .map((rule) => ({
+        conditions: (rule.conditions ?? []).map((cond) => ({
+          operator: mapOperator(cond.operator),
+          attribute: cond.attribute,
+          value: cond.values ?? [],
+        })),
+      }))
+      .filter((rule) => rule.conditions.length > 0);
+  }
+
+  // Build allocations from Eppo's actual allocation data for each mapped DD environment
   function buildAllocations(flag: EppoFlag, mapping: Map<number, DatadogEnvironment>): DatadogAllocationForFlagCreation[] {
-    const variants = flag.variations ?? [];
-    if (variants.length === 0) return [];
-    const equalWeight = 100.0 / variants.length;
-    const variantWeights = variants.map((v) => ({ variant_key: v.variant_key, value: equalWeight }));
+    const variations = flag.variations ?? [];
+    if (variations.length === 0) return [];
+
+    // Build variation_id → variant_key lookup
+    const variationIdToKey = new Map<number, string>();
+    for (const v of variations) variationIdToKey.set(v.id, v.variant_key);
+
+    const eppoAllocations = flag.allocations ?? [];
     const activeEnvIds = new Set((flag.environments ?? []).filter((e) => e.active).map((e) => e.id));
     const allocations: DatadogAllocationForFlagCreation[] = [];
+
     for (const [eppoEnvId, ddEnv] of mapping) {
-      if (!activeEnvIds.has(eppoEnvId)) continue;
-      const allocationKey = `${flag.key}-${ddEnv.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
-      allocations.push({ environment_id: ddEnv.id, name: `${ddEnv.name}`, key: allocationKey, type: 'FEATURE_GATE', variant_weights: variantWeights });
+      // Find Eppo allocations that belong to this environment
+      const envAllocs = eppoAllocations.filter((a) => a.environment_id === eppoEnvId);
+
+      if (envAllocs.length === 0) {
+        // No Eppo allocations for this env — create a simple equal-weight fallback
+        // only if the flag is active in this environment
+        if (!activeEnvIds.has(eppoEnvId)) continue;
+        const equalWeight = 100.0 / variations.length;
+        const allocationKey = `${flag.key}-${ddEnv.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+        allocations.push({
+          environment_id: ddEnv.id,
+          name: ddEnv.name,
+          key: allocationKey,
+          type: 'FEATURE_GATE',
+          variant_weights: variations.map((v) => ({ variant_key: v.variant_key, value: equalWeight })),
+        });
+        continue;
+      }
+
+      for (const eppoAlloc of envAllocs) {
+        // Map variant weights: Eppo variation_id → DD variant_key
+        const rawWeights = eppoAlloc.variation_weight ?? [];
+        const totalWeight = rawWeights.reduce((sum, w) => sum + w.weight, 0);
+
+        const variantWeights = rawWeights
+          .filter((w) => variationIdToKey.has(w.variation_id))
+          .map((w) => ({
+            variant_key: variationIdToKey.get(w.variation_id)!,
+            value: totalWeight > 0 ? (w.weight / totalWeight) * 100 : 0,
+          }));
+
+        if (variantWeights.length === 0) continue;
+
+        // Map targeting rules
+        const targetingRules = buildTargetingRules(eppoAlloc);
+
+        const allocationKey = eppoAlloc.key
+          || `${flag.key}-${ddEnv.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${eppoAlloc.id}`;
+
+        allocations.push({
+          environment_id: ddEnv.id,
+          name: eppoAlloc.name || ddEnv.name,
+          key: allocationKey,
+          type: 'FEATURE_GATE',
+          variant_weights: variantWeights,
+          ...(targetingRules.length > 0 ? { targeting_rules: targetingRules } : {}),
+        });
+      }
     }
+
     return allocations;
+  }
+
+  // Determine which DD environments should be enabled for a flag
+  function getEnvsToEnable(flag: EppoFlag, mapping: Map<number, DatadogEnvironment>): DatadogEnvironment[] {
+    const activeEnvIds = new Set((flag.environments ?? []).filter((e) => e.active).map((e) => e.id));
+    const envsToEnable: DatadogEnvironment[] = [];
+    for (const [eppoEnvId, ddEnv] of mapping) {
+      if (activeEnvIds.has(eppoEnvId)) envsToEnable.push(ddEnv);
+    }
+    return envsToEnable;
   }
 
   if (dryRun) {
@@ -327,6 +410,7 @@ async function confirmMigration(
   }
   console.log();
   let created = 0, skipped = 0, errored = 0;
+  let totalEnabled = 0;
   const failures: Array<{ key: string; error: string }> = [];
 
   for (const flag of flags) {
@@ -347,6 +431,7 @@ async function confirmMigration(
     }
 
     const allocations = buildAllocations(flag, envMapping);
+    const envsToEnable = getEnvsToEnable(flag, envMapping);
     const request: DatadogCreateFlagRequest = {
       key: flag.key, name: flag.name,
       value_type: mapVariationType(flag.variation_type),
@@ -354,13 +439,46 @@ async function confirmMigration(
       allocations: allocations.length > 0 ? allocations : undefined,
     };
 
+    // Count targeting rules for reporting
+    const ruleCount = allocations.reduce((sum, a) => sum + (a.targeting_rules?.length ?? 0), 0);
+    const ruleLabel = ruleCount > 0 ? `, ${ruleCount} rule(s)` : '';
+
     if (dryRun) {
-      spinner.succeed(`${chalk.dim('[dry run]')} Would create ${chalk.cyan(flag.key)} (${allocations.length} allocation(s))`);
+      const enableLabel = envsToEnable.length > 0
+        ? `, would enable in ${envsToEnable.map((e) => e.name).join(', ')}`
+        : '';
+      spinner.succeed(
+        `${chalk.dim('[dry run]')} Would create ${chalk.cyan(flag.key)} ` +
+        `(${allocations.length} allocation(s)${ruleLabel}${enableLabel})`
+      );
       created++;
     } else {
       try {
-        await createFeatureFlag(ddApiKey, ddAppKey, request);
-        spinner.succeed(`Created ${chalk.cyan(flag.key)} (${allocations.length} allocation(s))`);
+        const createdFlag = await createFeatureFlag(ddApiKey, ddAppKey, request);
+
+        // Enable the flag in each DD environment where it was active in Eppo
+        let enabledCount = 0;
+        const enableErrors: string[] = [];
+        for (const ddEnv of envsToEnable) {
+          try {
+            await enableFeatureFlagEnvironment(ddApiKey, ddAppKey, createdFlag.id, ddEnv.id);
+            enabledCount++;
+          } catch (err) {
+            const msg = axios.isAxiosError(err)
+              ? ((err.response?.data as { errors?: Array<{ detail?: string }> })?.errors?.[0]?.detail ?? err.message)
+              : String(err);
+            enableErrors.push(`${ddEnv.name}: ${msg}`);
+          }
+        }
+
+        totalEnabled += enabledCount;
+        const enableLabel = enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
+        spinner.succeed(`Created ${chalk.cyan(flag.key)} (${allocations.length} allocation(s)${ruleLabel}${enableLabel})`);
+
+        if (enableErrors.length > 0) {
+          for (const e of enableErrors) console.log(chalk.yellow(`    Warning: could not enable — ${e}`));
+        }
+
         created++;
       } catch (err) {
         const msg = axios.isAxiosError(err)
@@ -374,7 +492,8 @@ async function confirmMigration(
 
   console.log();
   console.log(chalk.bold(dryRun ? 'Dry run complete!' : 'Migration complete!'));
-  console.log(`  ${chalk.green(String(created))} ${dryRun ? 'would be created' : 'created'}  ${chalk.yellow(String(skipped))} skipped  ${chalk.red(String(errored))} failed`);
+  const enabledSummary = !dryRun && totalEnabled > 0 ? `  ${chalk.hex('#632CA6')(String(totalEnabled))} enabled` : '';
+  console.log(`  ${chalk.green(String(created))} ${dryRun ? 'would be created' : 'created'}  ${chalk.yellow(String(skipped))} skipped  ${chalk.red(String(errored))} failed${enabledSummary}`);
   if (failures.length > 0) {
     console.log();
     failures.forEach((f) => console.log(`  ${chalk.red('✗')} ${f.key}: ${f.error}`));

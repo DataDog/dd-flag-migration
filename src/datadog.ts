@@ -85,3 +85,16 @@ export async function createFeatureFlag(
   );
   return { id: response.data.data.id, key: response.data.data.attributes.key };
 }
+
+export async function enableFeatureFlagEnvironment(
+  apiKey: string,
+  appKey: string,
+  flagId: string,
+  environmentId: string
+): Promise<void> {
+  await axios.post(
+    `${DD_BASE_URL}/api/unstable/feature-flags/${flagId}/environments/${environmentId}/enable`,
+    {},
+    { headers: { ...ddHeaders(apiKey, appKey), 'Content-Type': 'application/json' } }
+  );
+}

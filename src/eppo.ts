@@ -13,7 +13,7 @@ export async function fetchEppoFlags(apiKey: string): Promise<EppoFlag[]> {
         'x-eppo-token': apiKey,
         'Content-Type': 'application/json',
       },
-      params: { limit: -1 },
+      params: { limit: -1, include_detailed_allocations: true },
     }
   );
 

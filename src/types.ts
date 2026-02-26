@@ -1,3 +1,5 @@
+// ─── Eppo Types ──────────────────────────────────────────────────────────────
+
 export interface EppoFlagVariation {
   id: number;
   name: string;
@@ -9,6 +11,33 @@ export interface EppoFlagEnvironment {
   name: string;
   active: boolean;
   is_production: boolean;
+}
+
+export interface EppoCondition {
+  operator: string; // LT | LTE | GT | GTE | MATCHES | ONE_OF | NOT_ONE_OF | IS_NULL
+  attribute: string;
+  values: string[];
+}
+
+export interface EppoTargetingRule {
+  conditions: EppoCondition[];
+}
+
+export interface EppoVariationWeight {
+  variation_id: number;
+  weight: number;
+}
+
+export interface EppoAllocation {
+  id: number;
+  key: string;
+  name: string;
+  environment_id?: number;
+  type: string; // FEATURE_GATE | EXPERIMENT | SWITCHBACK
+  percent_exposure: number;
+  is_default: boolean;
+  variation_weight: EppoVariationWeight[];
+  targeting_rules: EppoTargetingRule[];
 }
 
 export interface EppoFlag {
@@ -23,7 +52,10 @@ export interface EppoFlag {
   type?: 'FEATURE_FLAG' | 'LAYER';
   variations?: EppoFlagVariation[];
   environments?: EppoFlagEnvironment[];
+  allocations?: EppoAllocation[];
 }
+
+// ─── Datadog Types ───────────────────────────────────────────────────────────
 
 export interface DatadogEnvironment {
   id: string;
@@ -37,12 +69,23 @@ export interface Config {
   datadogAppKey?: string;
 }
 
+export interface DatadogCondition {
+  operator: string;
+  attribute: string;
+  value: string[];
+}
+
+export interface DatadogTargetingRule {
+  conditions: DatadogCondition[];
+}
+
 export interface DatadogAllocationForFlagCreation {
   environment_id: string;
   name: string;
   key: string;
   type: 'FEATURE_GATE';
   variant_weights: Array<{ variant_key: string; value: number }>;
+  targeting_rules?: DatadogTargetingRule[];
 }
 
 export interface DatadogCreateFlagRequest {
