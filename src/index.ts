@@ -4,6 +4,8 @@ import { filterableCheckbox } from './filterable-checkbox.js';
 import chalk from 'chalk';
 import ora from 'ora';
 import axios from 'axios';
+import fs from 'node:fs';
+import path from 'node:path';
 import { getEppoApiKey, saveEppoApiKey, getDatadogKeys, saveDatadogKeys } from './config.js';
 import { fetchEppoFlags, validateEppoApiKey, extractEnvironments } from './eppo.js';
 import { fetchDatadogFlagKeys, fetchDatadogEnvironments, validateDatadogKeys, createFeatureFlag, enableFeatureFlagEnvironment } from './datadog.js';
@@ -412,6 +414,7 @@ async function confirmMigration(
   let created = 0, skipped = 0, errored = 0;
   let totalEnabled = 0;
   const failures: Array<{ key: string; error: string }> = [];
+  const dryRunRequests: Array<{ method: string; path: string; body: unknown }> = [];
 
   for (const flag of flags) {
     const spinner = ora(`Migrating ${chalk.cyan(flag.key)}…`).start();
@@ -444,6 +447,19 @@ async function confirmMigration(
     const ruleLabel = ruleCount > 0 ? `, ${ruleCount} rule(s)` : '';
 
     if (dryRun) {
+      dryRunRequests.push({
+        method: 'POST',
+        path: '/api/unstable/feature-flags',
+        body: { data: { type: 'feature-flags', attributes: request } },
+      });
+      for (const ddEnv of envsToEnable) {
+        dryRunRequests.push({
+          method: 'POST',
+          path: `/api/unstable/feature-flags/${flag.key}/environments/${ddEnv.id}/enable`,
+          body: {},
+        });
+      }
+
       const enableLabel = envsToEnable.length > 0
         ? `, would enable in ${envsToEnable.map((e) => e.name).join(', ')}`
         : '';
@@ -498,6 +514,14 @@ async function confirmMigration(
     console.log();
     failures.forEach((f) => console.log(`  ${chalk.red('✗')} ${f.key}: ${f.error}`));
   }
+
+  if (dryRun && dryRunRequests.length > 0) {
+    const filename = `dry-run-${new Date().toISOString()}.json`;
+    const filepath = path.join(process.cwd(), filename);
+    fs.writeFileSync(filepath, JSON.stringify(dryRunRequests, null, 2));
+    console.log(chalk.gray(`  Requests written to ${filepath}`));
+  }
+
   console.log();
   return 'migrate';
 }
