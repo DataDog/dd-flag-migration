@@ -184,7 +184,7 @@ async function selectDDEnvironment(
   apiKey: string,
   appKey: string,
   site: string,
-): Promise<string> {
+): Promise<{ ddEnvName: string; envId: string }> {
   if (environmentMapping.length === 0) {
     throw new Error('No environment mapping found in migration file. Re-run the migration first.');
   }
@@ -216,12 +216,15 @@ async function selectDDEnvironment(
     );
   }
 
-  if (matched.queries.length === 1) return matched.queries[0];
+  const envId = chosen.datadogEnvId;
 
-  return await select<string>({
+  if (matched.queries.length === 1) return { ddEnvName: matched.queries[0], envId };
+
+  const ddEnvName = await select<string>({
     message: `Select a DD_ENV for "${chosen.datadogEnvName}":`,
     choices: matched.queries.map((q) => ({ name: q, value: q })),
   });
+  return { ddEnvName, envId };
 }
 
 // ─── Endpoint Host Mapping ────────────────────────────────────────────────────
@@ -234,22 +237,39 @@ function buildEndpointHost(site: string): string {
 
 type DDFlagValue = { variationValue: unknown; variationType: string };
 
-async function fetchDDFlagKeys(apiKey: string, appKey: string, site: string): Promise<Set<string>> {
+type DDFlagListItem = {
+  attributes: {
+    key: string;
+    feature_flag_environments?: Array<{ environment_id: string; status: 'ENABLED' | 'DISABLED' }>;
+  };
+};
+
+async function fetchDDFlagData(
+  apiKey: string,
+  appKey: string,
+  site: string,
+  envId: string,
+): Promise<{ keys: Set<string>; enabledByKey: Map<string, boolean> }> {
   const baseUrl = `https://api.${site}`;
   const keys = new Set<string>();
+  const enabledByKey = new Map<string, boolean>();
   let offset = 0;
   const limit = 200;
   while (true) {
-    const resp = await axios.get<{ data: Array<{ attributes: { key: string } }> }>(
+    const resp = await axios.get<{ data: DDFlagListItem[] }>(
       `${baseUrl}/api/unstable/feature-flags`,
       { headers: { 'DD-API-KEY': apiKey, 'DD-APPLICATION-KEY': appKey }, params: { limit, offset, is_archived: false } },
     );
     const flags = resp.data.data ?? [];
-    for (const f of flags) keys.add(f.attributes.key);
+    for (const f of flags) {
+      keys.add(f.attributes.key);
+      const envEntry = (f.attributes.feature_flag_environments ?? []).find((e) => e.environment_id === envId);
+      if (envEntry !== undefined) enabledByKey.set(f.attributes.key, envEntry.status === 'ENABLED');
+    }
     if (flags.length < limit) break;
     offset += limit;
   }
-  return keys;
+  return { keys, enabledByKey };
 }
 
 async function fetchDDFlags(
@@ -369,18 +389,20 @@ interface TableRow {
   ddStatus: DDStatus;
   error?: string;
   migrationStatus: MigrationStatus;
+  ddEnabled: boolean | null;
 }
 
 function renderTable(rows: TableRow[], providerLabel: string): void {
   const COL1 = 32;
   const COL2 = 18;
   const COL3 = 12;
+  const COL4 = 10;
 
   const truncate = (s: string, len: number) =>
     s.length > len ? s.slice(0, len - 1) + '…' : s.padEnd(len);
 
   const divider = chalk.gray(
-    '─'.repeat(COL1) + '─┼─' + '─'.repeat(COL2) + '─┼─' + '─'.repeat(COL2) + '─┼─' + '─'.repeat(COL3)
+    '─'.repeat(COL1) + '─┼─' + '─'.repeat(COL2) + '─┼─' + '─'.repeat(COL2) + '─┼─' + '─'.repeat(COL3) + '─┼─' + '─'.repeat(COL4)
   );
   const header =
     chalk.bold(truncate('Flag Key', COL1)) +
@@ -389,7 +411,9 @@ function renderTable(rows: TableRow[], providerLabel: string): void {
     chalk.gray(' │ ') +
     chalk.bold(truncate('Datadog Flags', COL2)) +
     chalk.gray(' │ ') +
-    chalk.bold('Migration');
+    chalk.bold(truncate('Migration', COL3)) +
+    chalk.gray(' │ ') +
+    chalk.bold('Enabled');
 
   console.log();
   console.log(header);
@@ -404,30 +428,35 @@ function renderTable(rows: TableRow[], providerLabel: string): void {
     }
   };
 
+  const enabledCol = (enabled: boolean | null) => {
+    if (enabled === null) return chalk.gray('—'.padEnd(COL4));
+    return enabled ? chalk.green('✓ Enabled'.padEnd(COL4)) : chalk.gray('✗ Disabled'.padEnd(COL4));
+  };
+
   for (const row of rows) {
     const key = truncate(row.key, COL1);
     const sep = chalk.gray(' │ ');
     const mig = migrationCol(row.migrationStatus);
+    const ena = enabledCol(row.ddEnabled);
 
     if (row.error) {
-      console.log(key + sep + chalk.red(truncate('ERROR', COL2)) + sep + chalk.red(truncate('ERROR', COL2)) + sep + mig);
+      console.log(key + sep + chalk.red(truncate('ERROR', COL2)) + sep + chalk.red(truncate('ERROR', COL2)) + sep + mig + sep + ena);
     } else if (row.ddStatus === 'not-in-dd') {
-      console.log(chalk.dim(key) + sep + chalk.dim(truncate(row.eppo, COL2)) + sep + chalk.dim('—'.padEnd(COL2)) + sep + mig);
+      console.log(chalk.dim(key) + sep + chalk.dim(truncate(row.eppo, COL2)) + sep + chalk.dim('—'.padEnd(COL2)) + sep + mig + sep + ena);
     } else if (row.ddStatus === 'not-assigned') {
-      console.log(chalk.dim(key) + sep + chalk.dim(truncate(row.eppo, COL2)) + sep + chalk.dim('—'.padEnd(COL2)) + sep + mig);
+      console.log(chalk.dim(key) + sep + chalk.dim(truncate(row.eppo, COL2)) + sep + chalk.dim('—'.padEnd(COL2)) + sep + mig + sep + ena);
     } else if (row.match) {
-      console.log(key + sep + chalk.green(truncate(row.eppo, COL2)) + sep + chalk.green(truncate(row.dd, COL2)) + sep + mig);
+      console.log(key + sep + chalk.green(truncate(row.eppo, COL2)) + sep + chalk.green(truncate(row.dd, COL2)) + sep + mig + sep + ena);
     } else {
-      console.log(key + sep + chalk.yellow(truncate(row.eppo, COL2)) + sep + chalk.yellow(truncate(row.dd, COL2)) + sep + mig);
+      console.log(key + sep + chalk.yellow(truncate(row.eppo, COL2)) + sep + chalk.yellow(truncate(row.dd, COL2)) + sep + mig + sep + ena);
     }
   }
 
-  console.log(chalk.gray(
-    '  Migration: ' +
-    chalk.green('✓ Created') + ' — flag was successfully created during migration  ' +
-    chalk.yellow('⚠ Partial') + ' — flag was created but failed to enable in one or more environments  ' +
-    chalk.red('✗ Failed') + ' — flag creation itself failed'
-  ));
+  console.log();
+  console.log(chalk.gray('  Migration:'));
+  console.log('  • ' + chalk.green('✓ Created') + chalk.gray(' — flag was successfully created during migration'));
+  console.log('  • ' + chalk.yellow('⚠ Partial') + chalk.gray(' — flag was created but failed to enable in one or more environments'));
+  console.log('  • ' + chalk.red('✗ Failed') + chalk.gray(' — flag creation itself failed'));
   console.log();
 }
 
@@ -477,7 +506,7 @@ async function main(): Promise<void> {
   const ddSite = await promptForDatadogSite();
 
   // 3. Select Datadog environment (resolved via API)
-  const ddEnv = await selectDDEnvironment(migration.environmentMapping ?? [], ddApiKey, ddAppKey, ddSite);
+  const { ddEnvName: ddEnv, envId: ddEnvId } = await selectDDEnvironment(migration.environmentMapping ?? [], ddApiKey, ddAppKey, ddSite);
   console.log();
 
   // 4. Prompt for test subject ID
@@ -504,12 +533,16 @@ async function main(): Promise<void> {
   const ddSpinner = ora('Fetching Datadog flag data…').start();
   let ddFlags: Record<string, DDFlagValue>;
   let ddFlagKeys: Set<string>;
+  let ddEnabledByKey: Map<string, boolean>;
 
   try {
-    [ddFlags, ddFlagKeys] = await Promise.all([
+    const [assignments, flagData] = await Promise.all([
       fetchDDFlags(ddClientToken, ddSite, ddEnv, subjectId.trim()),
-      fetchDDFlagKeys(ddApiKey, ddAppKey, ddSite),
+      fetchDDFlagData(ddApiKey, ddAppKey, ddSite, ddEnvId),
     ]);
+    ddFlags = assignments;
+    ddFlagKeys = flagData.keys;
+    ddEnabledByKey = flagData.enabledByKey;
     ddSpinner.succeed(`Fetched ${Object.keys(ddFlags).length} assignment(s) across ${ddFlagKeys.size} Datadog flag(s)`);
   } catch (err) {
     ddSpinner.fail('Failed to fetch Datadog flag data');
@@ -533,6 +566,7 @@ async function main(): Promise<void> {
       : failedKeys.has(flag.key) ? 'failed'
       : partialKeys.has(flag.key) ? 'partial'
       : 'created';
+    const ddEnabled = ddEnabledByKey.has(flag.key) ? ddEnabledByKey.get(flag.key)! : null;
     rows.push({
       key: flag.key,
       eppo: eppoResult,
@@ -541,6 +575,7 @@ async function main(): Promise<void> {
       match: !error && ddStatus === 'assigned' && eppoResult === ddResult,
       error,
       migrationStatus,
+      ddEnabled,
     });
   }
   evalSpinner.succeed('Evaluation complete');
@@ -548,6 +583,7 @@ async function main(): Promise<void> {
   // 8. Render results
   renderTable(rows, providerLabel);
   printSummary(rows);
+  process.exit(0);
 }
 
 main().catch((err: unknown) => {
