@@ -49,7 +49,7 @@ export interface EppoFlag {
   tag_names: string[];
   updated_at: string;
   created_at: string;
-  type?: 'FEATURE_FLAG' | 'LAYER';
+  type?: 'FEATURE_FLAG' | 'LAYER' | 'BANDIT';
   variations?: EppoFlagVariation[];
   environments?: EppoFlagEnvironment[];
   allocations?: EppoAllocation[];
@@ -105,6 +105,7 @@ export interface MigrationFile {
   failures: MigrationFlagFailure[];
   enableFailures: MigrationEnvFailure[];
   skippedAllocations?: Array<{ flagKey: string; allocationName: string; allocationKey: string }>;
+  skippedFlags?: Array<{ key: string; reason: string }>;
   flags: EppoFlag[];
   environmentMapping: MigrationEnvironmentMapping[];
 }

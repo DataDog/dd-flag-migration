@@ -362,7 +362,7 @@ async function evaluateFlag(flag: EppoFlag, subjectId: string, eppoClient: any, 
 
 // ─── Table Rendering ──────────────────────────────────────────────────────────
 
-type MigrationStatus = 'created' | 'partial' | 'failed' | 'unknown';
+type MigrationStatus = 'created' | 'partial' | 'failed' | 'skipped' | 'unknown';
 
 interface TableRow {
   key: string;
@@ -411,6 +411,7 @@ function renderTable(rows: TableRow[], providerLabel: string): void {
       case 'created': return chalk.green('✓ Created'.padEnd(COL3));
       case 'partial': return chalk.yellow('⚠ Partial'.padEnd(COL3));
       case 'failed':  return chalk.red('✗ Failed'.padEnd(COL3));
+      case 'skipped': return chalk.gray('— Skipped'.padEnd(COL3));
       default:        return chalk.gray('—'.padEnd(COL3));
     }
   };
@@ -451,8 +452,9 @@ function renderTable(rows: TableRow[], providerLabel: string): void {
   console.log();
   console.log(chalk.gray('  Migration:'));
   console.log('  • ' + chalk.green('✓ Created') + chalk.gray(' — flag was successfully created during migration'));
-  console.log('  • ' + chalk.yellow('⚠ Partial') + chalk.gray(' — flag was created but some allocations or environments were skipped'));
+  console.log('  • ' + chalk.yellow('⚠ Partial') + chalk.gray(' — flag was created but could not be enabled in some environments'));
   console.log('  • ' + chalk.red('✗ Failed') + chalk.gray(' — flag creation itself failed'));
+  console.log('  • ' + chalk.gray('— Skipped') + chalk.gray(' — flag type is not supported (BANDIT, LAYER)'));
   console.log();
 }
 
@@ -555,9 +557,9 @@ async function main(): Promise<void> {
   const failedKeys = new Set((migration.failures ?? []).map((f) => f.key));
   const hasMigrationDetail = migration.failures !== undefined;
 
-  const skippedAllocFlagKeys = new Set<string>();
-  for (const s of migration.skippedAllocations ?? []) {
-    skippedAllocFlagKeys.add(s.flagKey);
+  const skippedFlagReason = new Map<string, string>();
+  for (const s of migration.skippedFlags ?? []) {
+    skippedFlagReason.set(s.key, s.reason);
   }
   const enableFailCountByFlag = new Map<string, number>();
   for (const f of migration.enableFailures ?? []) {
@@ -565,15 +567,19 @@ async function main(): Promise<void> {
   }
 
   for (const flag of migration.flags) {
-    const hasSkippedAllocs = skippedAllocFlagKeys.has(flag.key);
+    const skipReason = skippedFlagReason.get(flag.key);
     const envFailCount = enableFailCountByFlag.get(flag.key) ?? 0;
     const partialDetails: string[] = [];
-    if (hasSkippedAllocs) partialDetails.push('Experiments not supported (Coming Soon!)');
-    if (envFailCount > 0) partialDetails.push(`Could not enable (${envFailCount} env(s))`);
+    if (skipReason !== undefined) {
+      partialDetails.push(skipReason);
+    } else if (envFailCount > 0) {
+      partialDetails.push(`Could not enable (${envFailCount} env(s))`);
+    }
 
-    const migrationStatus: MigrationStatus = !hasMigrationDetail ? 'unknown'
+    const migrationStatus: MigrationStatus = skipReason !== undefined ? 'skipped'
+      : !hasMigrationDetail ? 'unknown'
       : failedKeys.has(flag.key) ? 'failed'
-      : partialDetails.length > 0 ? 'partial'
+      : envFailCount > 0 ? 'partial'
       : 'created';
     const ddEnabled = ddEnabledByKey.has(flag.key) ? ddEnabledByKey.get(flag.key)! : null;
 
