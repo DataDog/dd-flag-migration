@@ -14,7 +14,6 @@ import {
   getDatadogClientToken,
   saveDatadogClientToken,
   getDatadogSite,
-  saveDatadogSite,
 } from './config.js';
 import type { MigrationFile, EppoFlag, MigrationEnvironmentMapping } from './types.js';
 
@@ -116,31 +115,8 @@ async function promptForDatadogClientToken(): Promise<string> {
   return token.trim();
 }
 
-async function promptForDatadogSite(): Promise<string> {
-  const stored = getDatadogSite();
-
-  if (stored) {
-    const useStored = await confirm({
-      message: `Use your saved Datadog site (${stored})?`,
-      default: true,
-    });
-    if (useStored) return stored;
-  }
-
-  const site = await select<string>({
-    message: 'Select your Datadog site:',
-    choices: [
-      { name: 'datadoghq.com (US1)', value: 'datadoghq.com' },
-      { name: 'us3.datadoghq.com (US3)', value: 'us3.datadoghq.com' },
-      { name: 'datadoghq.eu (EU)', value: 'datadoghq.eu' },
-      { name: 'datad0g.com (Staging)', value: 'datad0g.com' },
-    ],
-    default: 'datadoghq.com',
-  });
-
-  saveDatadogSite(site);
-  console.log(chalk.gray('  Site saved for future sessions.\n'));
-  return site;
+function getDatadogSiteFromConfig(): string {
+  return getDatadogSite() ?? 'datadoghq.com';
 }
 
 async function promptForDatadogKeys(): Promise<{ apiKey: string; appKey: string }> {
@@ -511,7 +487,7 @@ async function main(): Promise<void> {
   // 2. Collect Datadog credentials
   const { apiKey: ddApiKey, appKey: ddAppKey } = await promptForDatadogKeys();
   const ddClientToken = await promptForDatadogClientToken();
-  const ddSite = await promptForDatadogSite();
+  const ddSite = getDatadogSiteFromConfig();
 
   // 3. Select Datadog environment (resolved via API)
   const { ddEnvName: ddEnv, envId: ddEnvId, eppoEnvName } = await selectDDEnvironment(migration.environmentMapping ?? [], ddApiKey, ddAppKey, ddSite);
