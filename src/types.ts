@@ -104,6 +104,7 @@ export interface MigrationFile {
   };
   failures: MigrationFlagFailure[];
   enableFailures: MigrationEnvFailure[];
+  skippedAllocations?: Array<{ flagKey: string; allocationName: string; allocationKey: string }>;
   flags: EppoFlag[];
   environmentMapping: MigrationEnvironmentMapping[];
 }

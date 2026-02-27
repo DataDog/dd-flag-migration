@@ -337,9 +337,12 @@ async function confirmMigration(
   }
 
   // Build allocations from Eppo's actual allocation data for each mapped DD environment
-  function buildAllocations(flag: EppoFlag, mapping: Map<number, DatadogEnvironment>): DatadogAllocationForFlagCreation[] {
+  function buildAllocations(flag: EppoFlag, mapping: Map<number, DatadogEnvironment>): {
+    allocations: DatadogAllocationForFlagCreation[];
+    skippedExperiments: Array<{ allocationName: string; allocationKey: string }>;
+  } {
     const variations = flag.variations ?? [];
-    if (variations.length === 0) return [];
+    if (variations.length === 0) return { allocations: [], skippedExperiments: [] };
 
     // Build variation_id → variant_key lookup
     const variationIdToKey = new Map<number, string>();
@@ -348,10 +351,16 @@ async function confirmMigration(
     const eppoAllocations = flag.allocations ?? [];
     const activeEnvIds = new Set((flag.environments ?? []).filter((e) => e.active).map((e) => e.id));
     const allocations: DatadogAllocationForFlagCreation[] = [];
+    const skippedExperiments: Array<{ allocationName: string; allocationKey: string }> = [];
 
     for (const [eppoEnvId, ddEnv] of mapping) {
-      // Find Eppo allocations that belong to this environment
-      const envAllocs = eppoAllocations.filter((a) => a.environment_id === eppoEnvId);
+      // Find Eppo allocations that belong to this environment, skipping EXPERIMENT types
+      // (their targeting rules are stored at the experiment level and not available via the flags API)
+      const allEnvAllocs = eppoAllocations.filter((a) => a.environment_id === eppoEnvId);
+      for (const a of allEnvAllocs.filter((a) => a.type === 'EXPERIMENT')) {
+        skippedExperiments.push({ allocationName: a.name, allocationKey: a.key });
+      }
+      const envAllocs = allEnvAllocs.filter((a) => a.type !== 'EXPERIMENT');
 
       if (envAllocs.length === 0) {
         // No Eppo allocations for this env — create a simple equal-weight fallback
@@ -400,7 +409,7 @@ async function confirmMigration(
       }
     }
 
-    return allocations;
+    return { allocations, skippedExperiments };
   }
 
   // Determine which DD environments should be enabled for a flag
@@ -421,6 +430,7 @@ async function confirmMigration(
   let totalEnabled = 0;
   const failures: Array<{ key: string; error: string }> = [];
   const enableFailures: Array<{ key: string; env: string; error: string }> = [];
+  const skippedAllocations: Array<{ flagKey: string; allocationName: string; allocationKey: string }> = [];
   const dryRunRequests: Array<{ method: string; path: string; body: unknown }> = [];
 
   for (const flag of flags) {
@@ -440,7 +450,10 @@ async function confirmMigration(
       skipped++; continue;
     }
 
-    const allocations = buildAllocations(flag, envMapping);
+    const { allocations, skippedExperiments } = buildAllocations(flag, envMapping);
+    for (const s of skippedExperiments) {
+      skippedAllocations.push({ flagKey: flag.key, allocationName: s.allocationName, allocationKey: s.allocationKey });
+    }
     const envsToEnable = getEnvsToEnable(flag, envMapping);
     const request: DatadogCreateFlagRequest = {
       key: flag.key, name: flag.name,
@@ -452,6 +465,9 @@ async function confirmMigration(
     // Count targeting rules for reporting
     const ruleCount = allocations.reduce((sum, a) => sum + (a.targeting_rules?.length ?? 0), 0);
     const ruleLabel = ruleCount > 0 ? `, ${ruleCount} rule(s)` : '';
+    const skipLabel = skippedExperiments.length > 0
+      ? chalk.yellow(` — skipped ${skippedExperiments.length} EXPERIMENT allocation(s)`)
+      : '';
 
     if (dryRun) {
       dryRunRequests.push({
@@ -470,9 +486,10 @@ async function confirmMigration(
       const enableLabel = envsToEnable.length > 0
         ? `, would enable in ${envsToEnable.map((e) => e.name).join(', ')}`
         : '';
-      spinner.succeed(
+      const logFn = skippedExperiments.length > 0 ? spinner.warn.bind(spinner) : spinner.succeed.bind(spinner);
+      logFn(
         `${chalk.dim('[dry run]')} Would create ${chalk.cyan(flag.key)} ` +
-        `(${allocations.length} allocation(s)${ruleLabel}${enableLabel})`
+        `(${allocations.length} allocation(s)${ruleLabel}${enableLabel})${skipLabel}`
       );
       created++;
     } else {
@@ -495,7 +512,8 @@ async function confirmMigration(
 
         totalEnabled += enabledCount;
         const enableLabel = enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
-        spinner.succeed(`Created ${chalk.cyan(flag.key)} (${allocations.length} allocation(s)${ruleLabel}${enableLabel})`);
+        const logFn = skippedExperiments.length > 0 ? spinner.warn.bind(spinner) : spinner.succeed.bind(spinner);
+        logFn(`Created ${chalk.cyan(flag.key)} (${allocations.length} allocation(s)${ruleLabel}${enableLabel})${skipLabel}`);
 
         created++;
       } catch (err) {
@@ -538,7 +556,7 @@ async function confirmMigration(
   }
 
   if (dryRun && dryRunRequests.length > 0) {
-    const dryRunData: DryRunFile = { provider, migratedAt: timestamp, success: true, summary: { created, skipped, errored: 0, enabled: 0 }, failures: [], enableFailures: [], flags, environmentMapping, requests: dryRunRequests };
+    const dryRunData: DryRunFile = { provider, migratedAt: timestamp, success: true, summary: { created, skipped, errored: 0, enabled: 0 }, failures: [], enableFailures: [], skippedAllocations: skippedAllocations.length > 0 ? skippedAllocations : undefined, flags, environmentMapping, requests: dryRunRequests };
     const filename = `dry-run-${timestamp}.json`;
     const filepath = path.join(process.cwd(), filename);
     fs.writeFileSync(filepath, JSON.stringify(dryRunData, null, 2));
@@ -553,6 +571,7 @@ async function confirmMigration(
       summary: { created, skipped, errored, enabled: totalEnabled },
       failures,
       enableFailures,
+      skippedAllocations: skippedAllocations.length > 0 ? skippedAllocations : undefined,
       flags,
       environmentMapping,
     };

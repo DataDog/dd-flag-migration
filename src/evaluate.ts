@@ -373,6 +373,7 @@ interface TableRow {
   error?: string;
   migrationStatus: MigrationStatus;
   ddEnabled: boolean | null;
+  partialDetails: string[];
 }
 
 function renderTable(rows: TableRow[], providerLabel: string): void {
@@ -380,12 +381,13 @@ function renderTable(rows: TableRow[], providerLabel: string): void {
   const COL2 = 18;
   const COL3 = 12;
   const COL4 = 10;
+  const COL5 = 44;
 
   const truncate = (s: string, len: number) =>
     s.length > len ? s.slice(0, len - 1) + '…' : s.padEnd(len);
 
   const divider = chalk.gray(
-    '─'.repeat(COL1) + '─┼─' + '─'.repeat(COL2) + '─┼─' + '─'.repeat(COL2) + '─┼─' + '─'.repeat(COL3) + '─┼─' + '─'.repeat(COL4)
+    '─'.repeat(COL1) + '─┼─' + '─'.repeat(COL2) + '─┼─' + '─'.repeat(COL2) + '─┼─' + '─'.repeat(COL3) + '─┼─' + '─'.repeat(COL4) + '─┼─' + '─'.repeat(COL5)
   );
   const header =
     chalk.bold(truncate('Flag Key', COL1)) +
@@ -396,7 +398,9 @@ function renderTable(rows: TableRow[], providerLabel: string): void {
     chalk.gray(' │ ') +
     chalk.bold(truncate('Migration', COL3)) +
     chalk.gray(' │ ') +
-    chalk.bold('Enabled');
+    chalk.bold(truncate('Enabled', COL4)) +
+    chalk.gray(' │ ') +
+    chalk.bold('Skipped');
 
   console.log();
   console.log(header);
@@ -416,32 +420,38 @@ function renderTable(rows: TableRow[], providerLabel: string): void {
     return enabled ? chalk.green('✓ Enabled'.padEnd(COL4)) : chalk.gray('✗ Disabled'.padEnd(COL4));
   };
 
+  const skippedCol = (details: string[]) => {
+    if (details.length === 0) return chalk.gray('—');
+    return chalk.yellow(details.join(' | '));
+  };
+
   for (const row of rows) {
     const key = truncate(row.key, COL1);
     const sep = chalk.gray(' │ ');
     const mig = migrationCol(row.migrationStatus);
     const ena = enabledCol(row.ddEnabled);
+    const skp = skippedCol(row.partialDetails);
 
     if (row.error) {
       const ddDisplay = row.ddStatus === 'assigned'
         ? chalk.dim(truncate(row.dd, COL2))
         : chalk.dim('—'.padEnd(COL2));
-      console.log(key + sep + chalk.red(truncate('ERROR', COL2)) + sep + ddDisplay + sep + mig + sep + ena);
+      console.log(key + sep + chalk.red(truncate('ERROR', COL2)) + sep + ddDisplay + sep + mig + sep + ena + sep + skp);
     } else if (row.ddStatus === 'not-in-dd') {
-      console.log(chalk.dim(key) + sep + chalk.dim(truncate(row.eppo, COL2)) + sep + chalk.dim('—'.padEnd(COL2)) + sep + mig + sep + ena);
+      console.log(chalk.dim(key) + sep + chalk.dim(truncate(row.eppo, COL2)) + sep + chalk.dim('—'.padEnd(COL2)) + sep + mig + sep + ena + sep + skp);
     } else if (row.ddStatus === 'not-assigned') {
-      console.log(chalk.dim(key) + sep + chalk.dim(truncate(row.eppo, COL2)) + sep + chalk.dim('—'.padEnd(COL2)) + sep + mig + sep + ena);
+      console.log(chalk.dim(key) + sep + chalk.dim(truncate(row.eppo, COL2)) + sep + chalk.dim('—'.padEnd(COL2)) + sep + mig + sep + ena + sep + skp);
     } else if (row.match) {
-      console.log(key + sep + chalk.green(truncate(row.eppo, COL2)) + sep + chalk.green(truncate(row.dd, COL2)) + sep + mig + sep + ena);
+      console.log(key + sep + chalk.green(truncate(row.eppo, COL2)) + sep + chalk.green(truncate(row.dd, COL2)) + sep + mig + sep + ena + sep + skp);
     } else {
-      console.log(key + sep + chalk.yellow(truncate(row.eppo, COL2)) + sep + chalk.yellow(truncate(row.dd, COL2)) + sep + mig + sep + ena);
+      console.log(key + sep + chalk.yellow(truncate(row.eppo, COL2)) + sep + chalk.yellow(truncate(row.dd, COL2)) + sep + mig + sep + ena + sep + skp);
     }
   }
 
   console.log();
   console.log(chalk.gray('  Migration:'));
   console.log('  • ' + chalk.green('✓ Created') + chalk.gray(' — flag was successfully created during migration'));
-  console.log('  • ' + chalk.yellow('⚠ Partial') + chalk.gray(' — flag was created but failed to enable in one or more environments'));
+  console.log('  • ' + chalk.yellow('⚠ Partial') + chalk.gray(' — flag was created but some allocations or environments were skipped'));
   console.log('  • ' + chalk.red('✗ Failed') + chalk.gray(' — flag creation itself failed'));
   console.log();
 }
@@ -543,13 +553,27 @@ async function main(): Promise<void> {
   const rows: TableRow[] = [];
 
   const failedKeys = new Set((migration.failures ?? []).map((f) => f.key));
-  const partialKeys = new Set((migration.enableFailures ?? []).map((f) => f.key));
   const hasMigrationDetail = migration.failures !== undefined;
 
+  const skippedAllocFlagKeys = new Set<string>();
+  for (const s of migration.skippedAllocations ?? []) {
+    skippedAllocFlagKeys.add(s.flagKey);
+  }
+  const enableFailCountByFlag = new Map<string, number>();
+  for (const f of migration.enableFailures ?? []) {
+    enableFailCountByFlag.set(f.key, (enableFailCountByFlag.get(f.key) ?? 0) + 1);
+  }
+
   for (const flag of migration.flags) {
+    const hasSkippedAllocs = skippedAllocFlagKeys.has(flag.key);
+    const envFailCount = enableFailCountByFlag.get(flag.key) ?? 0;
+    const partialDetails: string[] = [];
+    if (hasSkippedAllocs) partialDetails.push('Experiments not supported (Coming Soon!)');
+    if (envFailCount > 0) partialDetails.push(`Could not enable (${envFailCount} env(s))`);
+
     const migrationStatus: MigrationStatus = !hasMigrationDetail ? 'unknown'
       : failedKeys.has(flag.key) ? 'failed'
-      : partialKeys.has(flag.key) ? 'partial'
+      : partialDetails.length > 0 ? 'partial'
       : 'created';
     const ddEnabled = ddEnabledByKey.has(flag.key) ? ddEnabledByKey.get(flag.key)! : null;
 
@@ -567,6 +591,7 @@ async function main(): Promise<void> {
         error: `Eppo SDK: ${eppoInitError}`,
         migrationStatus,
         ddEnabled,
+        partialDetails,
       });
     } else {
       const { eppoResult, ddResult, ddStatus, error } = await evaluateFlag(
@@ -581,6 +606,7 @@ async function main(): Promise<void> {
         error,
         migrationStatus,
         ddEnabled,
+        partialDetails,
       });
     }
   }
