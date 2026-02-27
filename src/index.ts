@@ -9,7 +9,7 @@ import path from 'node:path';
 import { getEppoApiKey, saveEppoApiKey, getDatadogKeys, saveDatadogKeys, CONFIG_DIR } from './config.js';
 import { fetchEppoFlags, validateEppoApiKey, extractEnvironments } from './eppo.js';
 import { fetchDatadogFlagKeys, fetchDatadogEnvironments, validateDatadogKeys, createFeatureFlag, enableFeatureFlagEnvironment } from './datadog.js';
-import type { EppoFlag, EppoFlagEnvironment, EppoAllocation, DatadogEnvironment, DatadogCreateFlagRequest, DatadogAllocationForFlagCreation, DatadogTargetingRule, MigrationFile, MigrationEnvironmentMapping, DryRunFile } from './types.js';
+import type { EppoFlag, EppoFlagEnvironment, EppoAllocation, DatadogEnvironment, DatadogCreateFlagRequest, DatadogAllocationForFlagCreation, DatadogTargetingRule, MigrationFile, MigrationEnvironmentMapping, DryRunFile, MigrationFlagFailure, MigrationEnvFailure } from './types.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -533,15 +533,24 @@ async function confirmMigration(
   }
 
   if (dryRun && dryRunRequests.length > 0) {
-    const dryRunData: DryRunFile = { provider, migratedAt: timestamp, flags, environmentMapping, requests: dryRunRequests };
+    const dryRunData: DryRunFile = { provider, migratedAt: timestamp, success: true, summary: { created, skipped, errored: 0, enabled: 0 }, failures: [], enableFailures: [], flags, environmentMapping, requests: dryRunRequests };
     const filename = `dry-run-${timestamp}.json`;
     const filepath = path.join(process.cwd(), filename);
     fs.writeFileSync(filepath, JSON.stringify(dryRunData, null, 2));
     console.log(chalk.gray(`  Requests written to ${filepath}`));
   }
 
-  if (!dryRun && created > 0) {
-    const migrationData: MigrationFile = { provider, migratedAt: timestamp, flags, environmentMapping };
+  if (!dryRun && (created > 0 || errored > 0)) {
+    const migrationData: MigrationFile = {
+      provider,
+      migratedAt: timestamp,
+      success: errored === 0,
+      summary: { created, skipped, errored, enabled: totalEnabled },
+      failures,
+      enableFailures,
+      flags,
+      environmentMapping,
+    };
     const filename = `migration-${timestamp}.json`;
     if (!fs.existsSync(CONFIG_DIR)) fs.mkdirSync(CONFIG_DIR, { recursive: true });
     const filepath = path.join(CONFIG_DIR, filename);

@@ -81,9 +81,29 @@ export interface MigrationEnvironmentMapping {
   datadogDdEnvNames?: string[];
 }
 
+export interface MigrationFlagFailure {
+  key: string;
+  error: string;
+}
+
+export interface MigrationEnvFailure {
+  key: string;
+  env: string;
+  error: string;
+}
+
 export interface MigrationFile {
   provider: string;
   migratedAt: string;
+  success: boolean;
+  summary: {
+    created: number;
+    skipped: number;
+    errored: number;
+    enabled: number;
+  };
+  failures: MigrationFlagFailure[];
+  enableFailures: MigrationEnvFailure[];
   flags: EppoFlag[];
   environmentMapping: MigrationEnvironmentMapping[];
 }

@@ -359,6 +359,8 @@ async function evaluateFlag(flag: EppoFlag, subjectId: string, eppoClient: any, 
 
 // ─── Table Rendering ──────────────────────────────────────────────────────────
 
+type MigrationStatus = 'created' | 'partial' | 'failed' | 'unknown';
+
 interface TableRow {
   key: string;
   eppo: string;
@@ -366,78 +368,66 @@ interface TableRow {
   match: boolean;
   ddStatus: DDStatus;
   error?: string;
+  migrationStatus: MigrationStatus;
 }
 
 function renderTable(rows: TableRow[], providerLabel: string): void {
   const COL1 = 32;
   const COL2 = 18;
+  const COL3 = 12;
 
   const truncate = (s: string, len: number) =>
     s.length > len ? s.slice(0, len - 1) + '…' : s.padEnd(len);
 
-  const divider = chalk.gray('─'.repeat(COL1) + '─┼─' + '─'.repeat(COL2) + '─┼─' + '─'.repeat(COL2 + 2));
+  const divider = chalk.gray(
+    '─'.repeat(COL1) + '─┼─' + '─'.repeat(COL2) + '─┼─' + '─'.repeat(COL2) + '─┼─' + '─'.repeat(COL3)
+  );
   const header =
     chalk.bold(truncate('Flag Key', COL1)) +
     chalk.gray(' │ ') +
     chalk.bold(truncate(providerLabel, COL2)) +
     chalk.gray(' │ ') +
-    chalk.bold('Datadog Flags');
+    chalk.bold(truncate('Datadog Flags', COL2)) +
+    chalk.gray(' │ ') +
+    chalk.bold('Migration');
 
   console.log();
   console.log(header);
   console.log(divider);
 
+  const migrationCol = (status: MigrationStatus) => {
+    switch (status) {
+      case 'created': return chalk.green('✓ Created'.padEnd(COL3));
+      case 'partial': return chalk.yellow('⚠ Partial'.padEnd(COL3));
+      case 'failed':  return chalk.red('✗ Failed'.padEnd(COL3));
+      default:        return chalk.gray('—'.padEnd(COL3));
+    }
+  };
+
   for (const row of rows) {
     const key = truncate(row.key, COL1);
+    const sep = chalk.gray(' │ ');
+    const mig = migrationCol(row.migrationStatus);
 
     if (row.error) {
-      console.log(
-        key +
-        chalk.gray(' │ ') +
-        chalk.red(truncate('ERROR', COL2)) +
-        chalk.gray(' │ ') +
-        chalk.red(truncate('ERROR', COL2)) +
-        '  ' + chalk.red('ERROR')
-      );
+      console.log(key + sep + chalk.red(truncate('ERROR', COL2)) + sep + chalk.red(truncate('ERROR', COL2)) + sep + mig);
     } else if (row.ddStatus === 'not-in-dd') {
-      console.log(
-        chalk.dim(key) +
-        chalk.gray(' │ ') +
-        chalk.dim(truncate(row.eppo, COL2)) +
-        chalk.gray(' │ ') +
-        chalk.dim('—'.padEnd(COL2)) +
-        '  ' + chalk.red('Not in Datadog')
-      );
+      console.log(chalk.dim(key) + sep + chalk.dim(truncate(row.eppo, COL2)) + sep + chalk.dim('—'.padEnd(COL2)) + sep + mig);
     } else if (row.ddStatus === 'not-assigned') {
-      console.log(
-        chalk.dim(key) +
-        chalk.gray(' │ ') +
-        chalk.dim(truncate(row.eppo, COL2)) +
-        chalk.gray(' │ ') +
-        chalk.dim('—'.padEnd(COL2)) +
-        '  ' + chalk.dim('Not assigned')
-      );
+      console.log(chalk.dim(key) + sep + chalk.dim(truncate(row.eppo, COL2)) + sep + chalk.dim('—'.padEnd(COL2)) + sep + mig);
     } else if (row.match) {
-      console.log(
-        key +
-        chalk.gray(' │ ') +
-        chalk.green(truncate(row.eppo, COL2)) +
-        chalk.gray(' │ ') +
-        chalk.green(truncate(row.dd, COL2)) +
-        '  ' + chalk.green('✓')
-      );
+      console.log(key + sep + chalk.green(truncate(row.eppo, COL2)) + sep + chalk.green(truncate(row.dd, COL2)) + sep + mig);
     } else {
-      console.log(
-        key +
-        chalk.gray(' │ ') +
-        chalk.yellow(truncate(row.eppo, COL2)) +
-        chalk.gray(' │ ') +
-        chalk.yellow(truncate(row.dd, COL2)) +
-        '  ' + chalk.yellow('✗')
-      );
+      console.log(key + sep + chalk.yellow(truncate(row.eppo, COL2)) + sep + chalk.yellow(truncate(row.dd, COL2)) + sep + mig);
     }
   }
 
+  console.log(chalk.gray(
+    '  Migration: ' +
+    chalk.green('✓ Created') + ' — flag was successfully created during migration  ' +
+    chalk.yellow('⚠ Partial') + ' — flag was created but failed to enable in one or more environments  ' +
+    chalk.red('✗ Failed') + ' — flag creation itself failed'
+  ));
   console.log();
 }
 
@@ -531,10 +521,18 @@ async function main(): Promise<void> {
   const evalSpinner = ora(`Evaluating ${migration.flags.length} flag(s)…`).start();
   const rows: TableRow[] = [];
 
+  const failedKeys = new Set((migration.failures ?? []).map((f) => f.key));
+  const partialKeys = new Set((migration.enableFailures ?? []).map((f) => f.key));
+  const hasMigrationDetail = migration.failures !== undefined;
+
   for (const flag of migration.flags) {
     const { eppoResult, ddResult, ddStatus, error } = await evaluateFlag(
       flag, subjectId.trim(), eppoClient, ddFlags, ddFlagKeys
     );
+    const migrationStatus: MigrationStatus = !hasMigrationDetail ? 'unknown'
+      : failedKeys.has(flag.key) ? 'failed'
+      : partialKeys.has(flag.key) ? 'partial'
+      : 'created';
     rows.push({
       key: flag.key,
       eppo: eppoResult,
@@ -542,6 +540,7 @@ async function main(): Promise<void> {
       ddStatus,
       match: !error && ddStatus === 'assigned' && eppoResult === ddResult,
       error,
+      migrationStatus,
     });
   }
   evalSpinner.succeed('Evaluation complete');
