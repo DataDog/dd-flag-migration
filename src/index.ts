@@ -33,6 +33,10 @@ function printHeader(): void {
   console.log();
 }
 
+function clearScreen(): void {
+  process.stdout.write('\x1Bc');
+}
+
 function ddEnvLabel(env: DatadogEnvironment): string {
   const prodBadge = env.is_production ? '  ' + chalk.bgHex('#632CA6').white(' Prod ') : '';
   return `${env.name}${prodBadge}`;
@@ -140,7 +144,8 @@ async function linkEnvironments(
     const eppoEnv = eppoEnvs[i];
     const prevChoice = mapping.get(eppoEnv.id);
 
-    console.log();
+    clearScreen();
+    printHeader();
     console.log(
       chalk.bold('Linking environment ') +
       chalk.green(`${i + 1}`) +
@@ -567,6 +572,7 @@ async function confirmMigration(
 const dryRun = process.argv.includes('--dry-run');
 
 async function main(): Promise<void> {
+  clearScreen();
   printHeader();
   if (dryRun) {
     console.log(chalk.bold.yellow('  Dry run mode — no flags will be created\n'));
@@ -625,6 +631,8 @@ async function main(): Promise<void> {
     let selectedEnvs: EppoFlagEnvironment[];
 
     if (eppoEnvironments.length > 0) {
+      clearScreen();
+      printHeader();
       const envResult = await selectEnvironments(flags, eppoEnvironments, prevSelectedEnvs);
       if (envResult === null) break; // escaped → exit
       if (envResult.length === 0) {
@@ -649,10 +657,14 @@ async function main(): Promise<void> {
       prevEnvMapping = mapping;
 
       while (true) {
+        clearScreen();
+        printHeader();
         const flagResult = await selectFlags(flags, datadogKeys, selectedEnvs, prevSelectedFlags);
         if (flagResult === null) break; // escaped → back to linking
 
         prevSelectedFlags = flagResult;
+        clearScreen();
+        printHeader();
         const action = await confirmMigration(prevSelectedFlags, ddApiKey, ddAppKey, prevEnvMapping, datadogKeys, provider);
         if (action === 'cancel') break outer;
         if (action === 'migrate') break outer;
