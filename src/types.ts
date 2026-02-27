@@ -66,7 +66,7 @@ export interface DatadogEnvironment {
 
 export interface Config {
   eppoApiKey?: string;
-  eppoSdkKey?: string;
+  eppoSdkKeys?: Record<string, string>;
   datadogApiKey?: string;
   datadogAppKey?: string;
   datadogClientToken?: string;

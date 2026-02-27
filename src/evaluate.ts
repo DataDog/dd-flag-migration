@@ -7,8 +7,8 @@ import path from 'node:path';
 import fs from 'node:fs';
 import {
   CONFIG_DIR,
-  getEppoSdkKey,
-  saveEppoSdkKey,
+  getEppoSdkKeyForEnv,
+  saveEppoSdkKeyForEnv,
   getDatadogKeys,
   saveDatadogKeys,
   getDatadogClientToken,
@@ -74,23 +74,23 @@ async function selectMigrationFile(): Promise<MigrationFile> {
 
 // ─── Credential Prompts ───────────────────────────────────────────────────────
 
-async function promptForEppoSdkKey(): Promise<string> {
-  const stored = getEppoSdkKey();
+async function promptForEppoSdkKey(eppoEnvName: string): Promise<string> {
+  const stored = getEppoSdkKeyForEnv(eppoEnvName);
 
   if (stored) {
     const useStored = await confirm({
-      message: 'Use your saved Eppo SDK key?',
+      message: `Use your saved Eppo SDK key for ${chalk.cyan(eppoEnvName)}?`,
       default: true,
     });
     if (useStored) return stored;
   }
 
   const key = await password({
-    message: 'Enter your Eppo SDK key (client/server SDK key, not the Admin API key):',
+    message: `Enter your Eppo SDK key for ${chalk.cyan(eppoEnvName)} (server SDK key, not the Admin API key):`,
     validate: (v) => v.trim().length > 0 ? true : 'SDK key cannot be empty',
   });
 
-  saveEppoSdkKey(key.trim());
+  saveEppoSdkKeyForEnv(eppoEnvName, key.trim());
   console.log(chalk.gray('  Key saved for future sessions.\n'));
   return key.trim();
 }
@@ -184,7 +184,7 @@ async function selectDDEnvironment(
   apiKey: string,
   appKey: string,
   site: string,
-): Promise<{ ddEnvName: string; envId: string }> {
+): Promise<{ ddEnvName: string; envId: string; eppoEnvName: string }> {
   if (environmentMapping.length === 0) {
     throw new Error('No environment mapping found in migration file. Re-run the migration first.');
   }
@@ -217,14 +217,15 @@ async function selectDDEnvironment(
   }
 
   const envId = chosen.datadogEnvId;
+  const eppoEnvName = chosen.sourceEnvName;
 
-  if (matched.queries.length === 1) return { ddEnvName: matched.queries[0], envId };
+  if (matched.queries.length === 1) return { ddEnvName: matched.queries[0], envId, eppoEnvName };
 
   const ddEnvName = await select<string>({
     message: `Select a DD_ENV for "${chosen.datadogEnvName}":`,
     choices: matched.queries.map((q) => ({ name: q, value: q })),
   });
-  return { ddEnvName, envId };
+  return { ddEnvName, envId, eppoEnvName };
 }
 
 // ─── Endpoint Host Mapping ────────────────────────────────────────────────────
@@ -313,7 +314,13 @@ async function initializeEppo(eppoSdkKey: string): Promise<any> {
   // Suppress pino logs from the Eppo SDK (level:30 info, level:40 warn)
   process.env.LOG_LEVEL = 'silent';
   const { init, getInstance } = await import('@eppo/node-server-sdk') as { init: any; getInstance: any };
-  await init({ apiKey: eppoSdkKey, throwOnFailedInitialization: false });
+  await init({
+    apiKey: eppoSdkKey,
+    throwOnFailedInitialization: true,
+    numInitialRequestRetries: 0,
+    pollAfterSuccessfulInitialization: false,
+    pollAfterFailedInitialization: false,
+  });
   return getInstance();
 }
 
@@ -440,7 +447,10 @@ function renderTable(rows: TableRow[], providerLabel: string): void {
     const ena = enabledCol(row.ddEnabled);
 
     if (row.error) {
-      console.log(key + sep + chalk.red(truncate('ERROR', COL2)) + sep + chalk.red(truncate('ERROR', COL2)) + sep + mig + sep + ena);
+      const ddDisplay = row.ddStatus === 'assigned'
+        ? chalk.dim(truncate(row.dd, COL2))
+        : chalk.dim('—'.padEnd(COL2));
+      console.log(key + sep + chalk.red(truncate('ERROR', COL2)) + sep + ddDisplay + sep + mig + sep + ena);
     } else if (row.ddStatus === 'not-in-dd') {
       console.log(chalk.dim(key) + sep + chalk.dim(truncate(row.eppo, COL2)) + sep + chalk.dim('—'.padEnd(COL2)) + sep + mig + sep + ena);
     } else if (row.ddStatus === 'not-assigned') {
@@ -498,35 +508,37 @@ async function main(): Promise<void> {
   console.log(chalk.gray(`  Flags:        ${migration.flags.length}`));
   console.log();
 
-  // 2. Collect credentials
-  const eppoSdkKey = await promptForEppoSdkKey();
-  console.log();
+  // 2. Collect Datadog credentials
   const { apiKey: ddApiKey, appKey: ddAppKey } = await promptForDatadogKeys();
   const ddClientToken = await promptForDatadogClientToken();
   const ddSite = await promptForDatadogSite();
 
   // 3. Select Datadog environment (resolved via API)
-  const { ddEnvName: ddEnv, envId: ddEnvId } = await selectDDEnvironment(migration.environmentMapping ?? [], ddApiKey, ddAppKey, ddSite);
+  const { ddEnvName: ddEnv, envId: ddEnvId, eppoEnvName } = await selectDDEnvironment(migration.environmentMapping ?? [], ddApiKey, ddAppKey, ddSite);
   console.log();
 
-  // 4. Prompt for test subject ID
+  // 4a. Collect Eppo SDK key for this specific environment
+  const eppoSdkKey = await promptForEppoSdkKey(eppoEnvName);
+  console.log();
+
+  // 4b. Prompt for test subject ID
   const subjectId = await input({
     message: 'Enter a test subject ID (user ID for flag evaluation):',
     validate: (v) => v.trim().length > 0 ? true : 'Subject ID cannot be empty',
   });
   console.log();
 
-  // 5. Initialize Eppo SDK
+  // 5. Initialize Eppo SDK (non-fatal — errors surface in the table)
   const initSpinner = ora('Initializing Eppo SDK…').start();
-  let eppoClient: unknown;
+  let eppoClient: unknown = null;
+  let eppoInitError: string | undefined;
 
   try {
     eppoClient = await initializeEppo(eppoSdkKey);
     initSpinner.succeed('Eppo SDK initialized');
   } catch (err) {
-    initSpinner.fail('Failed to initialize Eppo SDK');
-    console.error(chalk.red(err instanceof Error ? err.message : String(err)));
-    process.exit(1);
+    eppoInitError = err instanceof Error ? err.message : String(err);
+    initSpinner.fail(`Eppo SDK initialization failed: ${chalk.red(eppoInitError)}`);
   }
 
   // 6. Fetch Datadog data (flag assignments + full flag list) in parallel
@@ -559,31 +571,48 @@ async function main(): Promise<void> {
   const hasMigrationDetail = migration.failures !== undefined;
 
   for (const flag of migration.flags) {
-    const { eppoResult, ddResult, ddStatus, error } = await evaluateFlag(
-      flag, subjectId.trim(), eppoClient, ddFlags, ddFlagKeys
-    );
     const migrationStatus: MigrationStatus = !hasMigrationDetail ? 'unknown'
       : failedKeys.has(flag.key) ? 'failed'
       : partialKeys.has(flag.key) ? 'partial'
       : 'created';
     const ddEnabled = ddEnabledByKey.has(flag.key) ? ddEnabledByKey.get(flag.key)! : null;
-    rows.push({
-      key: flag.key,
-      eppo: eppoResult,
-      dd: ddResult,
-      ddStatus,
-      match: !error && ddStatus === 'assigned' && eppoResult === ddResult,
-      error,
-      migrationStatus,
-      ddEnabled,
-    });
+
+    if (eppoInitError) {
+      const ddFlag = ddFlags[flag.key];
+      const ddStatus: DDStatus = ddFlag !== undefined ? 'assigned'
+        : ddFlagKeys.has(flag.key) ? 'not-assigned'
+        : 'not-in-dd';
+      rows.push({
+        key: flag.key,
+        eppo: 'ERROR',
+        dd: ddFlag !== undefined ? String(ddFlag.variationValue) : '',
+        ddStatus,
+        match: false,
+        error: `Eppo SDK: ${eppoInitError}`,
+        migrationStatus,
+        ddEnabled,
+      });
+    } else {
+      const { eppoResult, ddResult, ddStatus, error } = await evaluateFlag(
+        flag, subjectId.trim(), eppoClient, ddFlags, ddFlagKeys
+      );
+      rows.push({
+        key: flag.key,
+        eppo: eppoResult,
+        dd: ddResult,
+        ddStatus,
+        match: !error && ddStatus === 'assigned' && eppoResult === ddResult,
+        error,
+        migrationStatus,
+        ddEnabled,
+      });
+    }
   }
   evalSpinner.succeed('Evaluation complete');
 
   // 8. Render results
   renderTable(rows, providerLabel);
   printSummary(rows);
-  process.exit(0);
 }
 
 main().catch((err: unknown) => {

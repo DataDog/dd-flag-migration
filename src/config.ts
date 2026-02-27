@@ -45,13 +45,13 @@ export function saveDatadogKeys(apiKey: string, appKey: string): void {
   saveConfig(config);
 }
 
-export function getEppoSdkKey(): string | undefined {
-  return loadConfig().eppoSdkKey;
+export function getEppoSdkKeyForEnv(envName: string): string | undefined {
+  return loadConfig().eppoSdkKeys?.[envName];
 }
 
-export function saveEppoSdkKey(key: string): void {
+export function saveEppoSdkKeyForEnv(envName: string, key: string): void {
   const config = loadConfig();
-  config.eppoSdkKey = key;
+  config.eppoSdkKeys = { ...config.eppoSdkKeys, [envName]: key };
   saveConfig(config);
 }
 
