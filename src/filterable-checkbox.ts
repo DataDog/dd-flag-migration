@@ -101,6 +101,9 @@ const _filterableCheckbox = createPrompt(
         setStatus('escaped');
         done(null as unknown as T[]);
         return;
+      } else if (isBackspaceKey(key) && (key as { meta?: boolean }).meta) {
+        setFilterText(filterText.replace(/\S+\s*$/, ''));
+        setActive(0);
       } else if (isBackspaceKey(key)) {
         setFilterText(filterText.slice(0, -1));
         setActive(0);
