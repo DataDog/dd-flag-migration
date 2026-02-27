@@ -29,9 +29,22 @@ function printHeader(): void {
   console.log();
 }
 
+// ─── Arg Parsing ──────────────────────────────────────────────────────────────
+
+function parseArgs(): { useSavedKeys: boolean; testSubjectId: string | undefined; useLatestMigration: boolean; flagEnvironment: string | undefined } {
+  const args = process.argv.slice(2);
+  const useSavedKeys = args.includes('--use-saved-keys');
+  const useLatestMigration = args.includes('--use-latest-migration');
+  const subjectArg = args.find((a) => a.startsWith('--test-subject-id='));
+  const testSubjectId = subjectArg ? subjectArg.slice('--test-subject-id='.length) : undefined;
+  const envArg = args.find((a) => a.startsWith('--flag-environment='));
+  const flagEnvironment = envArg ? envArg.slice('--flag-environment='.length) : undefined;
+  return { useSavedKeys, testSubjectId, useLatestMigration, flagEnvironment };
+}
+
 // ─── Migration File Selection ─────────────────────────────────────────────────
 
-async function selectMigrationFile(): Promise<MigrationFile> {
+async function selectMigrationFile(useLatest = false): Promise<MigrationFile> {
   if (!fs.existsSync(CONFIG_DIR)) {
     console.log(chalk.red('\n  No migration files found.'));
     console.log(chalk.gray(`  Run 'yarn migrate' to perform a migration first.\n`));
@@ -51,7 +64,7 @@ async function selectMigrationFile(): Promise<MigrationFile> {
 
   let chosen: string;
 
-  if (files.length === 1) {
+  if (files.length === 1 || useLatest) {
     console.log(chalk.gray(`  Using migration file: ${chalk.cyan(files[0])}\n`));
     chosen = files[0];
   } else {
@@ -73,8 +86,13 @@ async function selectMigrationFile(): Promise<MigrationFile> {
 
 // ─── Credential Prompts ───────────────────────────────────────────────────────
 
-async function promptForEppoSdkKey(eppoEnvName: string): Promise<string> {
+async function promptForEppoSdkKey(eppoEnvName: string, useSavedKeys = false): Promise<string> {
   const stored = getEppoSdkKeyForEnv(eppoEnvName);
+
+  if (stored && useSavedKeys) {
+    console.log(chalk.gray(`  Using saved Eppo SDK key for ${chalk.cyan(eppoEnvName)}.\n`));
+    return stored;
+  }
 
   if (stored) {
     const useStored = await confirm({
@@ -94,8 +112,13 @@ async function promptForEppoSdkKey(eppoEnvName: string): Promise<string> {
   return key.trim();
 }
 
-async function promptForDatadogClientToken(): Promise<string> {
+async function promptForDatadogClientToken(useSavedKeys = false): Promise<string> {
   const stored = getDatadogClientToken();
+
+  if (stored && useSavedKeys) {
+    console.log(chalk.gray('  Using saved Datadog client token.\n'));
+    return stored;
+  }
 
   if (stored) {
     const useStored = await confirm({
@@ -119,8 +142,13 @@ function getDatadogSiteFromConfig(): string {
   return getDatadogSite() ?? 'datadoghq.com';
 }
 
-async function promptForDatadogKeys(): Promise<{ apiKey: string; appKey: string }> {
+async function promptForDatadogKeys(useSavedKeys = false): Promise<{ apiKey: string; appKey: string }> {
   const stored = getDatadogKeys();
+
+  if (stored.apiKey && stored.appKey && useSavedKeys) {
+    console.log(chalk.gray('  Using saved Datadog API keys.\n'));
+    return { apiKey: stored.apiKey, appKey: stored.appKey };
+  }
 
   if (stored.apiKey && stored.appKey) {
     const useStored = await confirm({
@@ -160,6 +188,7 @@ async function selectDDEnvironment(
   apiKey: string,
   appKey: string,
   site: string,
+  flagEnvironment?: string,
 ): Promise<{ ddEnvName: string; envId: string; eppoEnvName: string }> {
   if (environmentMapping.length === 0) {
     throw new Error('No environment mapping found in migration file. Re-run the migration first.');
@@ -167,7 +196,17 @@ async function selectDDEnvironment(
 
   let chosen: MigrationEnvironmentMapping;
 
-  if (environmentMapping.length === 1) {
+  if (flagEnvironment !== undefined) {
+    const match = environmentMapping.find((m) => m.datadogEnvName === flagEnvironment);
+    if (!match) {
+      throw new Error(
+        `No environment named "${flagEnvironment}" found in migration file. ` +
+        `Available: ${environmentMapping.map((m) => m.datadogEnvName).join(', ')}`
+      );
+    }
+    chosen = match;
+    console.log(chalk.gray(`  Using Datadog environment: ${chalk.cyan(chosen.datadogEnvName)}\n`));
+  } else if (environmentMapping.length === 1) {
     chosen = environmentMapping[0];
     console.log(chalk.gray(`  Using Datadog environment: ${chalk.cyan(chosen.datadogEnvName)}\n`));
   } else {
@@ -195,7 +234,7 @@ async function selectDDEnvironment(
   const envId = chosen.datadogEnvId;
   const eppoEnvName = chosen.sourceEnvName;
 
-  if (matched.queries.length === 1) return { ddEnvName: matched.queries[0], envId, eppoEnvName };
+  if (matched.queries.length === 1 || flagEnvironment !== undefined) return { ddEnvName: matched.queries[0], envId, eppoEnvName };
 
   const ddEnvName = await select<string>({
     message: `Select a DD_ENV for "${chosen.datadogEnvName}":`,
@@ -392,9 +431,9 @@ function renderTable(rows: TableRow[], providerLabel: string): void {
   const header =
     chalk.bold(truncate('Flag Key', COL1)) +
     chalk.gray(' │ ') +
-    chalk.bold(truncate(providerLabel, COL2)) +
+    chalk.bold(truncate(`${providerLabel} Evaluation`, COL2)) +
     chalk.gray(' │ ') +
-    chalk.bold(truncate('Datadog Flags', COL2)) +
+    chalk.bold(truncate('Datadog Evaluation', COL2)) +
     chalk.gray(' │ ') +
     chalk.bold(truncate('Migration', COL3)) +
     chalk.gray(' │ ') +
@@ -484,10 +523,11 @@ function printSummary(rows: TableRow[]): void {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
+  const { useSavedKeys, testSubjectId, useLatestMigration, flagEnvironment } = parseArgs();
   printHeader();
 
   // 1. Select migration file
-  const migration = await selectMigrationFile();
+  const migration = await selectMigrationFile(useLatestMigration);
   const providerLabel = migration.provider === 'eppo' ? 'Eppo'
     : migration.provider.charAt(0).toUpperCase() + migration.provider.slice(1);
 
@@ -497,24 +537,30 @@ async function main(): Promise<void> {
   console.log();
 
   // 2. Collect Datadog credentials
-  const { apiKey: ddApiKey, appKey: ddAppKey } = await promptForDatadogKeys();
-  const ddClientToken = await promptForDatadogClientToken();
+  const { apiKey: ddApiKey, appKey: ddAppKey } = await promptForDatadogKeys(useSavedKeys);
+  const ddClientToken = await promptForDatadogClientToken(useSavedKeys);
   const ddSite = getDatadogSiteFromConfig();
 
   // 3. Select Datadog environment (resolved via API)
-  const { ddEnvName: ddEnv, envId: ddEnvId, eppoEnvName } = await selectDDEnvironment(migration.environmentMapping ?? [], ddApiKey, ddAppKey, ddSite);
+  const { ddEnvName: ddEnv, envId: ddEnvId, eppoEnvName } = await selectDDEnvironment(migration.environmentMapping ?? [], ddApiKey, ddAppKey, ddSite, flagEnvironment);
   console.log();
 
   // 4a. Collect Eppo SDK key for this specific environment
-  const eppoSdkKey = await promptForEppoSdkKey(eppoEnvName);
+  const eppoSdkKey = await promptForEppoSdkKey(eppoEnvName, useSavedKeys);
   console.log();
 
   // 4b. Prompt for test subject ID
-  const subjectId = await input({
-    message: 'Enter a test subject ID (user ID for flag evaluation):',
-    validate: (v) => v.trim().length > 0 ? true : 'Subject ID cannot be empty',
-  });
-  console.log();
+  let subjectId: string;
+  if (testSubjectId !== undefined) {
+    console.log(chalk.gray(`  Using test subject ID: ${chalk.cyan(testSubjectId)}\n`));
+    subjectId = testSubjectId;
+  } else {
+    subjectId = await input({
+      message: 'Enter a test subject ID (user ID for flag evaluation):',
+      validate: (v) => v.trim().length > 0 ? true : 'Subject ID cannot be empty',
+    });
+    console.log();
+  }
 
   // 5. Initialize Eppo SDK (non-fatal — errors surface in the table)
   const initSpinner = ora('Initializing Eppo SDK…').start();
