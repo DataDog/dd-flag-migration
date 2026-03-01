@@ -17,12 +17,162 @@ import {
 	saveEppoSdkKeyForEnv,
 } from "./config.js";
 import type {
+	EppoCondition,
 	EppoFlag,
 	MigrationEnvironmentMapping,
 	MigrationFile,
 } from "./types.js";
 
 type EppoClient = ReturnType<typeof EppoSdk.getInstance>;
+
+type SubjectAttributes = Record<string, string | number | boolean | null>;
+
+interface TestCase {
+	label: string;
+	attributes: SubjectAttributes;
+}
+
+// ─── Test Case Generation ─────────────────────────────────────────────────────
+
+function generateMatchingValue(
+	cond: EppoCondition,
+): string | number | null | undefined {
+	const op = cond.operator.toUpperCase();
+	const first = cond.values[0];
+	switch (op) {
+		case "ONE_OF":
+			return first ?? null;
+		case "NOT_ONE_OF": {
+			const set = new Set(cond.values);
+			for (const c of ["__other__", "other", "none", "unknown", "default"]) {
+				if (!set.has(c)) return c;
+			}
+			return `__not_${cond.attribute}__`;
+		}
+		case "GT": {
+			const n = parseFloat(first ?? "");
+			return Number.isFinite(n) ? n + 1 : undefined;
+		}
+		case "GTE": {
+			const n = parseFloat(first ?? "");
+			return Number.isFinite(n) ? n : undefined;
+		}
+		case "LT": {
+			const n = parseFloat(first ?? "");
+			return Number.isFinite(n) ? n - 1 : undefined;
+		}
+		case "LTE": {
+			const n = parseFloat(first ?? "");
+			return Number.isFinite(n) ? n : undefined;
+		}
+		case "MATCHES":
+			return first ?? undefined;
+		case "IS_NULL":
+			return null;
+		default:
+			return first ?? undefined;
+	}
+}
+
+function generateNonMatchingValue(
+	cond: EppoCondition,
+): string | number | null | undefined {
+	const op = cond.operator.toUpperCase();
+	const first = cond.values[0];
+	switch (op) {
+		case "ONE_OF": {
+			const slug = cond.values
+				.map((v) => v.replace(/\W/g, "").slice(0, 6))
+				.join("_")
+				.slice(0, 20);
+			return `__not_${slug}__`;
+		}
+		case "NOT_ONE_OF":
+			return first ?? `__in_${cond.attribute}__`;
+		case "GT":
+		case "GTE": {
+			const n = parseFloat(first ?? "");
+			return Number.isFinite(n) ? n - 1 : undefined;
+		}
+		case "LT":
+		case "LTE": {
+			const n = parseFloat(first ?? "");
+			return Number.isFinite(n) ? n + 1 : undefined;
+		}
+		case "MATCHES":
+			return "__no_match__";
+		case "IS_NULL":
+			return `${cond.attribute}_value`;
+		default:
+			return `__not_${cond.attribute}__`;
+	}
+}
+
+/**
+ * Generates test cases for a flag based on its targeting rules.
+ * Always includes a baseline "no attributes" case plus matching/non-matching
+ * attribute sets derived from each targeting rule (property-based testing style).
+ */
+function generateTestCases(flag: EppoFlag): TestCase[] {
+	const base: TestCase[] = [{ label: "no attributes", attributes: {} }];
+	const rulesWithConditions = (flag.allocations ?? [])
+		.flatMap((a) => a.targeting_rules ?? [])
+		.filter((r) => (r.conditions ?? []).length > 0);
+
+	if (rulesWithConditions.length === 0) return base;
+
+	const extra: TestCase[] = [];
+
+	for (const rule of rulesWithConditions) {
+		const matchAttrs: SubjectAttributes = {};
+		const nonMatchAttrs: SubjectAttributes = {};
+		let canMatch = true;
+		let canNonMatch = true;
+
+		for (const cond of rule.conditions) {
+			const mv = generateMatchingValue(cond);
+			const nv = generateNonMatchingValue(cond);
+
+			if (mv === undefined) {
+				canMatch = false;
+			} else {
+				matchAttrs[cond.attribute] = mv;
+			}
+			if (nv === undefined) {
+				canNonMatch = false;
+			} else {
+				nonMatchAttrs[cond.attribute] = nv;
+			}
+		}
+
+		if (canMatch && Object.keys(matchAttrs).length > 0) {
+			extra.push({
+				label: Object.entries(matchAttrs)
+					.map(([k, v]) => `${k}=${v === null ? "null" : v}`)
+					.join(", "),
+				attributes: matchAttrs,
+			});
+		}
+		if (canNonMatch && Object.keys(nonMatchAttrs).length > 0) {
+			extra.push({
+				label: Object.entries(nonMatchAttrs)
+					.map(([k, v]) => `${k}=${v === null ? "null" : v}`)
+					.join(", "),
+				attributes: nonMatchAttrs,
+			});
+		}
+		if (extra.length >= 4) break;
+	}
+
+	// Deduplicate by attribute set JSON
+	const seen = new Set<string>();
+	return [...base, ...extra].filter((tc) => {
+		const k = JSON.stringify(tc.attributes);
+		if (seen.has(k)) return false;
+		seen.add(k);
+		return true;
+	});
+}
 
 // ─── UI Helpers ───────────────────────────────────────────────────────────────
 
@@ -371,6 +521,7 @@ async function fetchDDFlags(
 	site: string,
 	env: string,
 	subjectId: string,
+	subjectAttributes: SubjectAttributes = {},
 ): Promise<Record<string, DDFlagValue>> {
 	const host = buildEndpointHost(site);
 	const url = `https://${host}/precompute-assignments?dd_env=${encodeURIComponent(env)}`;
@@ -383,7 +534,10 @@ async function fetchDDFlags(
 					attributes: {
 						env: { dd_env: env },
 						sdk: { name: "browser", version: "dev" },
-						subject: { targeting_key: subjectId, targeting_attributes: {} },
+						subject: {
+							targeting_key: subjectId,
+							targeting_attributes: subjectAttributes,
+						},
 					},
 				},
 			},
@@ -430,6 +584,7 @@ type DDStatus = "assigned" | "not-assigned" | "not-in-dd";
 async function evaluateFlag(
 	flag: EppoFlag,
 	subjectId: string,
+	attributes: SubjectAttributes,
 	eppoClient: EppoClient,
 	ddFlags: Record<string, DDFlagValue>,
 	ddFlagKeys: Set<string>,
@@ -449,6 +604,11 @@ async function evaluateFlag(
 				: "not-in-dd";
 
 	try {
+		// Eppo SDK's Attributes type does not include null; null means "absent"
+		const eppoAttrs = Object.fromEntries(
+			Object.entries(attributes).filter(([, v]) => v !== null),
+		) as Record<string, string | number | boolean>;
+
 		let eppoResult: string;
 		let ddResult: string;
 
@@ -457,7 +617,7 @@ async function evaluateFlag(
 				const eppo = eppoClient.getBoolAssignment(
 					flag.key,
 					subjectId,
-					{},
+					eppoAttrs,
 					false,
 				) as boolean;
 				eppoResult = String(eppo);
@@ -468,7 +628,7 @@ async function evaluateFlag(
 				const eppo = eppoClient.getIntegerAssignment(
 					flag.key,
 					subjectId,
-					{},
+					eppoAttrs,
 					0,
 				) as number;
 				eppoResult = String(eppo);
@@ -479,7 +639,7 @@ async function evaluateFlag(
 				const eppo = eppoClient.getNumericAssignment(
 					flag.key,
 					subjectId,
-					{},
+					eppoAttrs,
 					0,
 				) as number;
 				eppoResult = String(eppo);
@@ -490,7 +650,7 @@ async function evaluateFlag(
 				const eppo = eppoClient.getJSONAssignment(
 					flag.key,
 					subjectId,
-					{},
+					eppoAttrs,
 					{},
 				) as object;
 				eppoResult = JSON.stringify(eppo);
@@ -502,7 +662,7 @@ async function evaluateFlag(
 				const eppo = eppoClient.getStringAssignment(
 					flag.key,
 					subjectId,
-					{},
+					eppoAttrs,
 					"control",
 				) as string;
 				eppoResult = String(eppo);
@@ -526,167 +686,152 @@ async function evaluateFlag(
 
 type MigrationStatus = "created" | "partial" | "failed" | "skipped" | "unknown";
 
+interface FlagTestResult {
+	testCase: TestCase;
+	eppoResult: string;
+	ddResult: string;
+	ddStatus: DDStatus;
+	match: boolean;
+	error?: string;
+}
+
 interface TableRow {
 	key: string;
-	eppo: string;
-	dd: string;
-	match: boolean;
-	ddStatus: DDStatus;
-	error?: string;
+	testResults: FlagTestResult[];
 	migrationStatus: MigrationStatus;
 	ddEnabled: boolean | null;
 	partialDetails: string[];
 }
 
 function renderTable(rows: TableRow[], providerLabel: string): void {
-	const COL1 = 32;
-	const COL2 = 18;
-	const COL3 = 12;
-	const COL4 = 10;
-	const COL5 = 44;
+	const COL_FLAG = 32;
+	const COL_TEST = 26;
+	const COL_EVAL = 14;
+	const COL_MIG = 12;
+	const COL_ENA = 10;
 
-	const truncate = (s: string, len: number) =>
-		s.length > len ? `${s.slice(0, len - 1)}…` : s.padEnd(len);
+	const pad = (s: string, len: number) =>
+		s.length >= len ? `${s.slice(0, len - 1)}…` : s.padEnd(len);
+
+	const sep = chalk.gray(" │ ");
 
 	const divider = chalk.gray(
-		"─".repeat(COL1) +
+		"─".repeat(COL_FLAG) +
 			"─┼─" +
-			"─".repeat(COL2) +
+			"─".repeat(COL_TEST) +
 			"─┼─" +
-			"─".repeat(COL2) +
+			"─".repeat(COL_EVAL) +
 			"─┼─" +
-			"─".repeat(COL3) +
+			"─".repeat(COL_EVAL) +
 			"─┼─" +
-			"─".repeat(COL4) +
+			"─".repeat(COL_MIG) +
 			"─┼─" +
-			"─".repeat(COL5),
+			"─".repeat(COL_ENA),
 	);
+
 	const header =
-		chalk.bold(truncate("Flag Key", COL1)) +
-		chalk.gray(" │ ") +
-		chalk.bold(truncate(`${providerLabel} Evaluation`, COL2)) +
-		chalk.gray(" │ ") +
-		chalk.bold(truncate("Datadog Evaluation", COL2)) +
-		chalk.gray(" │ ") +
-		chalk.bold(truncate("Migration", COL3)) +
-		chalk.gray(" │ ") +
-		chalk.bold(truncate("Enabled", COL4)) +
-		chalk.gray(" │ ") +
-		chalk.bold("Skipped");
+		chalk.bold(pad("Flag Key", COL_FLAG)) +
+		sep +
+		chalk.bold(pad("Test Case", COL_TEST)) +
+		sep +
+		chalk.bold(pad(providerLabel, COL_EVAL)) +
+		sep +
+		chalk.bold(pad("Datadog", COL_EVAL)) +
+		sep +
+		chalk.bold(pad("Migration", COL_MIG)) +
+		sep +
+		chalk.bold("Enabled");
 
 	console.log();
 	console.log(header);
 	console.log(divider);
 
-	const migrationCol = (status: MigrationStatus) => {
+	const migrationCol = (status: MigrationStatus): string => {
 		switch (status) {
 			case "created":
-				return chalk.green("✓ Created".padEnd(COL3));
+				return chalk.green("✓ Created".padEnd(COL_MIG));
 			case "partial":
-				return chalk.yellow("⚠ Partial".padEnd(COL3));
+				return chalk.yellow("⚠ Partial".padEnd(COL_MIG));
 			case "failed":
-				return chalk.red("✗ Failed".padEnd(COL3));
+				return chalk.red("✗ Failed".padEnd(COL_MIG));
 			case "skipped":
-				return chalk.gray("— Skipped".padEnd(COL3));
+				return chalk.gray("— Skipped".padEnd(COL_MIG));
 			default:
-				return chalk.gray("—".padEnd(COL3));
+				return chalk.gray("—".padEnd(COL_MIG));
 		}
 	};
 
-	const enabledCol = (enabled: boolean | null) => {
-		if (enabled === null) return chalk.gray("—".padEnd(COL4));
+	const enabledCol = (enabled: boolean | null): string => {
+		if (enabled === null) return chalk.gray("—".padEnd(COL_ENA));
 		return enabled
-			? chalk.green("✓ Enabled".padEnd(COL4))
-			: chalk.gray("✗ Disabled".padEnd(COL4));
-	};
-
-	const skippedCol = (details: string[]) => {
-		if (details.length === 0) return chalk.gray("—");
-		return chalk.yellow(details.join(" | "));
+			? chalk.green("✓ Enabled".padEnd(COL_ENA))
+			: chalk.gray("✗ Disabled".padEnd(COL_ENA));
 	};
 
 	for (const row of rows) {
-		const key = truncate(row.key, COL1);
-		const sep = chalk.gray(" │ ");
-		const mig = migrationCol(row.migrationStatus);
-		const ena = enabledCol(row.ddEnabled);
-		const skp = skippedCol(row.partialDetails);
+		for (let i = 0; i < row.testResults.length; i++) {
+			const tr = row.testResults[i];
+			const isFirst = i === 0;
 
-		if (row.error) {
-			const ddDisplay =
-				row.ddStatus === "assigned"
-					? chalk.dim(truncate(row.dd, COL2))
-					: chalk.dim("—".padEnd(COL2));
+			const flagKeyStr = isFirst
+				? pad(row.key, COL_FLAG)
+				: " ".repeat(COL_FLAG);
+
+			const testLabelStr = pad(tr.testCase.label, COL_TEST);
+
+			let eppoDisplay: string;
+			let ddDisplay: string;
+
+			if (tr.error) {
+				eppoDisplay = chalk.red(pad("ERROR", COL_EVAL));
+				ddDisplay =
+					tr.ddStatus === "assigned"
+						? chalk.dim(pad(tr.ddResult, COL_EVAL))
+						: chalk.dim(pad("—", COL_EVAL));
+			} else if (
+				tr.ddStatus === "not-in-dd" ||
+				tr.ddStatus === "not-assigned"
+			) {
+				eppoDisplay = chalk.dim(pad(tr.eppoResult, COL_EVAL));
+				ddDisplay = chalk.dim(pad("—", COL_EVAL));
+			} else if (tr.match) {
+				eppoDisplay = chalk.green(pad(tr.eppoResult, COL_EVAL));
+				ddDisplay = chalk.green(pad(tr.ddResult, COL_EVAL));
+			} else {
+				eppoDisplay = chalk.yellow(pad(tr.eppoResult, COL_EVAL));
+				ddDisplay = chalk.yellow(pad(tr.ddResult, COL_EVAL));
+			}
+
+			const migDisplay = isFirst
+				? migrationCol(row.migrationStatus)
+				: " ".repeat(COL_MIG);
+			const enaDisplay = isFirst
+				? enabledCol(row.ddEnabled)
+				: " ".repeat(COL_ENA);
+
 			console.log(
-				key +
+				flagKeyStr +
 					sep +
-					chalk.red(truncate("ERROR", COL2)) +
+					testLabelStr +
+					sep +
+					eppoDisplay +
 					sep +
 					ddDisplay +
 					sep +
-					mig +
+					migDisplay +
 					sep +
-					ena +
-					sep +
-					skp,
-			);
-		} else if (row.ddStatus === "not-in-dd") {
-			console.log(
-				chalk.dim(key) +
-					sep +
-					chalk.dim(truncate(row.eppo, COL2)) +
-					sep +
-					chalk.dim("—".padEnd(COL2)) +
-					sep +
-					mig +
-					sep +
-					ena +
-					sep +
-					skp,
-			);
-		} else if (row.ddStatus === "not-assigned") {
-			console.log(
-				chalk.dim(key) +
-					sep +
-					chalk.dim(truncate(row.eppo, COL2)) +
-					sep +
-					chalk.dim("—".padEnd(COL2)) +
-					sep +
-					mig +
-					sep +
-					ena +
-					sep +
-					skp,
-			);
-		} else if (row.match) {
-			console.log(
-				key +
-					sep +
-					chalk.green(truncate(row.eppo, COL2)) +
-					sep +
-					chalk.green(truncate(row.dd, COL2)) +
-					sep +
-					mig +
-					sep +
-					ena +
-					sep +
-					skp,
-			);
-		} else {
-			console.log(
-				key +
-					sep +
-					chalk.yellow(truncate(row.eppo, COL2)) +
-					sep +
-					chalk.yellow(truncate(row.dd, COL2)) +
-					sep +
-					mig +
-					sep +
-					ena +
-					sep +
-					skp,
+					enaDisplay,
 			);
 		}
+
+		if (row.partialDetails.length > 0) {
+			console.log(
+				" ".repeat(COL_FLAG + 3) +
+					chalk.yellow(`⚠ ${row.partialDetails.join(" | ")}`),
+			);
+		}
+
+		console.log(divider);
 	}
 
 	console.log();
@@ -717,13 +862,22 @@ function renderTable(rows: TableRow[], providerLabel: string): void {
 }
 
 function printSummary(rows: TableRow[]): void {
-	const matched = rows.filter((r) => r.match).length;
-	const differed = rows.filter(
+	const allResults = rows.flatMap((r) => r.testResults);
+	const matched = allResults.filter((r) => r.match).length;
+	const differed = allResults.filter(
 		(r) => !r.match && !r.error && r.ddStatus === "assigned",
 	).length;
-	const notAssigned = rows.filter((r) => r.ddStatus === "not-assigned").length;
-	const notInDD = rows.filter((r) => r.ddStatus === "not-in-dd").length;
-	const errored = rows.filter((r) => Boolean(r.error)).length;
+	const notAssigned = allResults.filter(
+		(r) => r.ddStatus === "not-assigned",
+	).length;
+	const notInDD = allResults.filter((r) => r.ddStatus === "not-in-dd").length;
+	const errored = allResults.filter((r) => Boolean(r.error)).length;
+
+	const flagsWithDiff = rows.filter((r) =>
+		r.testResults.some(
+			(t) => !t.match && !t.error && t.ddStatus === "assigned",
+		),
+	).length;
 
 	console.log(chalk.bold("Summary:"));
 	let summary = `  ${chalk.green(String(matched))} match  ${chalk.yellow(String(differed))} differ  ${chalk.red(String(errored))} error`;
@@ -731,13 +885,18 @@ function printSummary(rows: TableRow[]): void {
 		summary += `  ${chalk.dim(String(notAssigned))} not assigned`;
 	if (notInDD > 0) summary += `  ${chalk.red(String(notInDD))} not in Datadog`;
 	console.log(summary);
+	console.log(
+		chalk.gray(
+			`  Across ${rows.length} flag(s), ${allResults.length} evaluation(s) total`,
+		),
+	);
 	console.log();
 
-	if (differed > 0) {
+	if (flagsWithDiff > 0) {
 		console.log(
 			chalk.yellow(
-				"  Some flags returned different values. This may be expected if\n" +
-					"  flag configurations differ between providers.",
+				`  ${flagsWithDiff} flag(s) returned different values in at least one test case.\n` +
+					"  This may be expected if flag configurations differ between providers.",
 			),
 		);
 		console.log();
@@ -808,7 +967,22 @@ async function main(): Promise<void> {
 		console.log();
 	}
 
-	// 5. Initialize Eppo SDK (non-fatal — errors surface in the table)
+	// 5a. Generate test cases for each flag from its targeting rules
+	const flagTestCases = migration.flags.map((flag) => ({
+		flag,
+		testCases: generateTestCases(flag),
+	}));
+
+	// Collect all unique attribute sets needed across all flags
+	const uniqueAttrSets = new Map<string, SubjectAttributes>();
+	for (const { testCases } of flagTestCases) {
+		for (const tc of testCases) {
+			const k = JSON.stringify(tc.attributes);
+			if (!uniqueAttrSets.has(k)) uniqueAttrSets.set(k, tc.attributes);
+		}
+	}
+
+	// 5b. Initialize Eppo SDK (non-fatal — errors surface in the table)
 	const initSpinner = ora("Initializing Eppo SDK…").start();
 	let eppoClient: unknown = null;
 	let eppoInitError: string | undefined;
@@ -823,22 +997,42 @@ async function main(): Promise<void> {
 		);
 	}
 
-	// 6. Fetch Datadog data (flag assignments + full flag list) in parallel
-	const ddSpinner = ora("Fetching Datadog flag data…").start();
-	let ddFlags: Record<string, DDFlagValue>;
+	// 6. Fetch Datadog data: flag list + assignments for every unique attribute set
+	const ddSpinner = ora(
+		`Fetching Datadog data for ${uniqueAttrSets.size} test context(s)…`,
+	).start();
+	let ddFlagsPerContext: Map<string, Record<string, DDFlagValue>>;
 	let ddFlagKeys: Set<string>;
 	let ddEnabledByKey: Map<string, boolean>;
 
 	try {
-		const [assignments, flagData] = await Promise.all([
-			fetchDDFlags(ddClientToken, ddSite, ddEnv, subjectId.trim()),
+		const [flagData, contextResults] = await Promise.all([
 			fetchDDFlagData(ddApiKey, ddAppKey, ddSite, ddEnvId),
+			Promise.all(
+				[...uniqueAttrSets.entries()].map(async ([key, attrs]) => ({
+					key,
+					result: await fetchDDFlags(
+						ddClientToken,
+						ddSite,
+						ddEnv,
+						subjectId.trim(),
+						attrs,
+					),
+				})),
+			),
 		]);
-		ddFlags = assignments;
+
 		ddFlagKeys = flagData.keys;
 		ddEnabledByKey = flagData.enabledByKey;
+		ddFlagsPerContext = new Map(contextResults.map((r) => [r.key, r.result]));
+
+		const totalAssignments = contextResults.reduce(
+			(sum, r) => sum + Object.keys(r.result).length,
+			0,
+		);
 		ddSpinner.succeed(
-			`Fetched ${Object.keys(ddFlags).length} assignment(s) across ${ddFlagKeys.size} Datadog flag(s)`,
+			`Fetched ${totalAssignments} assignment(s) across ${ddFlagKeys.size} flag(s) ` +
+				`and ${uniqueAttrSets.size} test context(s)`,
 		);
 	} catch (err) {
 		ddSpinner.fail("Failed to fetch Datadog flag data");
@@ -846,9 +1040,13 @@ async function main(): Promise<void> {
 		process.exit(1);
 	}
 
-	// 7. Evaluate each flag
+	// 7. Evaluate each flag against each of its test cases
+	const totalEvals = flagTestCases.reduce(
+		(sum, { testCases }) => sum + testCases.length,
+		0,
+	);
 	const evalSpinner = ora(
-		`Evaluating ${migration.flags.length} flag(s)…`,
+		`Evaluating ${migration.flags.length} flag(s) across ${totalEvals} test case(s)…`,
 	).start();
 	const rows: TableRow[] = [];
 
@@ -867,7 +1065,7 @@ async function main(): Promise<void> {
 		);
 	}
 
-	for (const flag of migration.flags) {
+	for (const { flag, testCases } of flagTestCases) {
 		const skipReason = skippedFlagReason.get(flag.key);
 		const envFailCount = enableFailCountByFlag.get(flag.key) ?? 0;
 		const partialDetails: string[] = [];
@@ -889,45 +1087,55 @@ async function main(): Promise<void> {
 							: "created";
 		const ddEnabled = ddEnabledByKey.get(flag.key) ?? null;
 
-		if (eppoInitError) {
-			const ddFlag = ddFlags[flag.key];
-			const ddStatus: DDStatus =
-				ddFlag !== undefined
-					? "assigned"
-					: ddFlagKeys.has(flag.key)
-						? "not-assigned"
-						: "not-in-dd";
-			rows.push({
-				key: flag.key,
-				eppo: "ERROR",
-				dd: ddFlag !== undefined ? String(ddFlag.variationValue) : "",
-				ddStatus,
-				match: false,
-				error: `Eppo SDK: ${eppoInitError}`,
-				migrationStatus,
-				ddEnabled,
-				partialDetails,
-			});
-		} else {
-			const { eppoResult, ddResult, ddStatus, error } = await evaluateFlag(
-				flag,
-				subjectId.trim(),
-				eppoClient,
-				ddFlags,
-				ddFlagKeys,
-			);
-			rows.push({
-				key: flag.key,
-				eppo: eppoResult,
-				dd: ddResult,
-				ddStatus,
-				match: !error && ddStatus === "assigned" && eppoResult === ddResult,
-				error,
-				migrationStatus,
-				ddEnabled,
-				partialDetails,
-			});
+		const testResults: FlagTestResult[] = [];
+
+		for (const tc of testCases) {
+			const attrKey = JSON.stringify(tc.attributes);
+			const ddFlagsForCase = ddFlagsPerContext.get(attrKey) ?? {};
+
+			if (eppoInitError) {
+				const ddFlag = ddFlagsForCase[flag.key];
+				const ddStatus: DDStatus =
+					ddFlag !== undefined
+						? "assigned"
+						: ddFlagKeys.has(flag.key)
+							? "not-assigned"
+							: "not-in-dd";
+				testResults.push({
+					testCase: tc,
+					eppoResult: "ERROR",
+					ddResult: ddFlag !== undefined ? String(ddFlag.variationValue) : "",
+					ddStatus,
+					match: false,
+					error: `Eppo SDK: ${eppoInitError}`,
+				});
+			} else {
+				const { eppoResult, ddResult, ddStatus, error } = await evaluateFlag(
+					flag,
+					subjectId.trim(),
+					tc.attributes,
+					eppoClient as EppoClient,
+					ddFlagsForCase,
+					ddFlagKeys,
+				);
+				testResults.push({
+					testCase: tc,
+					eppoResult,
+					ddResult,
+					ddStatus,
+					match: !error && ddStatus === "assigned" && eppoResult === ddResult,
+					error,
+				});
+			}
 		}
+
+		rows.push({
+			key: flag.key,
+			testResults,
+			migrationStatus,
+			ddEnabled,
+			partialDetails,
+		});
 	}
 	evalSpinner.succeed("Evaluation complete");
 

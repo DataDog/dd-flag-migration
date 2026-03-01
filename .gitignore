@@ -3,3 +3,4 @@ dist/
 *.js.map
 dry-run*.json
 CLAUDE.md
+plans/
