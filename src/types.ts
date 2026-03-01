@@ -71,12 +71,6 @@ export interface Config {
 	datadogAppKey?: string;
 	datadogClientToken?: string;
 	datadogSite?: string;
-	googleOAuthTokens?: {
-		access_token: string;
-		refresh_token: string;
-		token_type: string;
-		expiry_date: number; // ms since epoch
-	};
 }
 
 export interface MigrationEnvironmentMapping {

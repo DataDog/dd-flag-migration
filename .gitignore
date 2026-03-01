@@ -1,6 +1,7 @@
 node_modules/
 dist/
 *.js.map
+*.xlsx
 dry-run*.json
 CLAUDE.md
 plans/

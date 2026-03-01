@@ -74,15 +74,3 @@ export function saveDatadogSite(site: string): void {
 	config.datadogSite = site;
 	saveConfig(config);
 }
-
-export function getGoogleOAuthTokens(): Config["googleOAuthTokens"] {
-	return loadConfig().googleOAuthTokens;
-}
-
-export function saveGoogleOAuthTokens(
-	tokens: NonNullable<Config["googleOAuthTokens"]>,
-): void {
-	const config = loadConfig();
-	config.googleOAuthTokens = tokens;
-	saveConfig(config);
-}

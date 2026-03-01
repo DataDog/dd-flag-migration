@@ -769,12 +769,12 @@ async function confirmMigration(
 
 		const { confirm } = await import("@inquirer/prompts");
 		const exportToSheets = await confirm({
-			message: "Would you like to export migration results to Google Sheets?",
+			message: "Would you like to export migration results to an .xlsx file?",
 			default: false,
 		});
 		if (exportToSheets) {
-			const { exportMigrationToSheets } = await import("./sheets.js");
-			await exportMigrationToSheets(migrationData);
+			const { exportMigrationToXlsx } = await import("./xlsx.js");
+			await exportMigrationToXlsx(migrationData);
 		}
 	}
 

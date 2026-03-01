@@ -1144,14 +1144,14 @@ async function main(): Promise<void> {
 	renderTable(rows, providerLabel);
 	printSummary(rows);
 
-	// 9. Optional Google Sheets export
+	// 9. Optional .xlsx export
 	const flagByKey = new Map(migration.flags.map((f) => [f.key, f]));
 
-	const exportToSheets = await confirm({
-		message: "Would you like to export evaluation results to Google Sheets?",
+	const exportToXlsx = await confirm({
+		message: "Would you like to export evaluation results to an .xlsx file?",
 		default: false,
 	});
-	if (exportToSheets) {
+	if (exportToXlsx) {
 		const exportRows: EvaluationExportRow[] = rows.flatMap((row) => {
 			const flag = flagByKey.get(row.key);
 			return row.testResults.map((tr) => ({
@@ -1168,8 +1168,8 @@ async function main(): Promise<void> {
 				error: tr.error,
 			}));
 		});
-		const { exportEvaluationToSheets } = await import("./sheets.js");
-		await exportEvaluationToSheets(
+		const { exportEvaluationToXlsx } = await import("./xlsx.js");
+		await exportEvaluationToXlsx(
 			exportRows,
 			providerLabel,
 			migration.migratedAt,
