@@ -5,7 +5,7 @@ import chalk from "chalk";
 import type { OAuth2Client } from "google-auth-library";
 import { google } from "googleapis";
 import { getGoogleOAuthTokens, saveGoogleOAuthTokens } from "./config.js";
-import type { EppoFlag, MigrationFile } from "./types.js";
+import type { EppoFlag, EvaluationExportRow, MigrationFile } from "./types.js";
 
 // ─── OAuth Configuration ──────────────────────────────────────────────────────
 // These credentials identify this CLI tool to Google's OAuth system.
@@ -500,6 +500,287 @@ export async function exportMigrationToSheets(
 		console.log();
 		console.log(chalk.red(`  Google Sheets export failed: ${msg}`));
 		console.log(chalk.gray("  Your migration was still saved locally."));
+		console.log();
+	}
+}
+
+// ─── Evaluation Export ────────────────────────────────────────────────────────
+
+type EvalRowColor = "match" | "diff" | "error" | "notInDD" | "notAssigned";
+
+const EVAL_COLORS: Record<EvalRowColor, ReturnType<typeof hexToRgb>> = {
+	match: hexToRgb("#d9ead3"), // green
+	diff: hexToRgb("#fff2cc"), // yellow
+	error: hexToRgb("#fce8e6"), // red
+	notInDD: hexToRgb("#efefef"), // gray
+	notAssigned: hexToRgb("#efefef"), // gray
+};
+
+function evalRowColor(row: EvaluationExportRow): EvalRowColor {
+	if (row.error) return "error";
+	if (row.ddStatus === "not-in-dd") return "notInDD";
+	if (row.ddStatus === "not-assigned") return "notAssigned";
+	return row.match ? "match" : "diff";
+}
+
+export async function exportEvaluationToSheets(
+	evalRows: EvaluationExportRow[],
+	providerLabel: string,
+	migratedAt: string,
+): Promise<void> {
+	try {
+		const spinner = (await import("ora")).default;
+		const ora = spinner({ text: "Signing in to Google..." }).start();
+
+		let auth: OAuth2Client;
+		try {
+			auth = await getAuthenticatedClient();
+			ora.succeed("Signed in to Google");
+		} catch (err) {
+			ora.fail("Google sign-in failed");
+			throw err;
+		}
+
+		const sheets = google.sheets({ version: "v4", auth });
+
+		ora.start("Creating spreadsheet...");
+		const dateLabel = new Date().toLocaleDateString("en-US", {
+			year: "numeric",
+			month: "short",
+			day: "numeric",
+		});
+
+		const createRes = await sheets.spreadsheets.create({
+			requestBody: {
+				properties: { title: `Flag Evaluation — ${dateLabel}` },
+				sheets: [{ properties: { title: "Evaluation Results" } }],
+			},
+		});
+		const spreadsheetId = createRes.data.spreadsheetId ?? "";
+		if (!spreadsheetId) throw new Error("Failed to create spreadsheet");
+		const sheetId = createRes.data.sheets?.[0].properties?.sheetId ?? 0;
+		ora.succeed("Spreadsheet created");
+
+		// Sort by team → flag name, then preserve test case order within a flag
+		const sorted = [...evalRows].sort(
+			(a, b) =>
+				a.team.localeCompare(b.team) || a.flagName.localeCompare(b.flagName),
+		);
+
+		const NUM_COLS = 10;
+		const title = `Flag Evaluation Report — ${providerLabel} → Datadog`;
+		const migratedDate = new Date(migratedAt).toLocaleDateString("en-US", {
+			year: "numeric",
+			month: "short",
+			day: "numeric",
+		});
+		const instructions = `Evaluation run on ${dateLabel} against migration from ${migratedDate}. Green rows indicate matching results between ${providerLabel} and Datadog. Yellow rows differ and may require investigation before removing the ${providerLabel} flag. Teams listed in the 'Team' column are responsible for verifying their flags and updating code to use the Datadog flag key.`;
+
+		const headerRow = [
+			"Flag Key",
+			"Flag Name",
+			"Team",
+			"Test Case",
+			`${providerLabel} Result`,
+			"Datadog Result",
+			"Match",
+			"Migration Status",
+			"DD Enabled",
+			"Notes",
+		];
+
+		const dataRows = sorted.map((row) => {
+			const match = row.error
+				? "Error"
+				: row.ddStatus !== "assigned"
+					? "—"
+					: row.match
+						? "Yes"
+						: "No";
+			const ddEnabled =
+				row.ddEnabled === null ? "—" : row.ddEnabled ? "Yes" : "No";
+			const migStatus =
+				row.migrationStatus.charAt(0).toUpperCase() +
+				row.migrationStatus.slice(1);
+			const notes = row.error ?? "";
+			return [
+				row.flagKey,
+				row.flagName,
+				row.team,
+				row.testCaseLabel,
+				row.eppoResult,
+				row.ddResult,
+				match,
+				migStatus,
+				ddEnabled,
+				notes,
+			];
+		});
+
+		ora.start("Writing data...");
+		await sheets.spreadsheets.values.batchUpdate({
+			spreadsheetId,
+			requestBody: {
+				valueInputOption: "RAW",
+				data: [
+					{ range: "Evaluation Results!A1", values: [[title]] },
+					{ range: "Evaluation Results!A2", values: [[instructions]] },
+					{
+						range: "Evaluation Results!A4",
+						values: [headerRow, ...dataRows],
+					},
+				],
+			},
+		});
+		ora.succeed("Data written");
+
+		const formatRequests = [
+			// Merge title row
+			{
+				mergeCells: {
+					range: {
+						sheetId,
+						startRowIndex: 0,
+						endRowIndex: 1,
+						startColumnIndex: 0,
+						endColumnIndex: NUM_COLS,
+					},
+					mergeType: "MERGE_ALL",
+				},
+			},
+			// Merge instructions row
+			{
+				mergeCells: {
+					range: {
+						sheetId,
+						startRowIndex: 1,
+						endRowIndex: 2,
+						startColumnIndex: 0,
+						endColumnIndex: NUM_COLS,
+					},
+					mergeType: "MERGE_ALL",
+				},
+			},
+			// Title: bold, large
+			{
+				repeatCell: {
+					range: {
+						sheetId,
+						startRowIndex: 0,
+						endRowIndex: 1,
+						startColumnIndex: 0,
+						endColumnIndex: NUM_COLS,
+					},
+					cell: {
+						userEnteredFormat: {
+							textFormat: { bold: true, fontSize: 14 },
+							verticalAlignment: "MIDDLE",
+							wrapStrategy: "WRAP",
+							backgroundColor: COLORS.white,
+						},
+					},
+					fields:
+						"userEnteredFormat(textFormat,verticalAlignment,wrapStrategy,backgroundColor)",
+				},
+			},
+			// Instructions: italic, wrap
+			{
+				repeatCell: {
+					range: {
+						sheetId,
+						startRowIndex: 1,
+						endRowIndex: 2,
+						startColumnIndex: 0,
+						endColumnIndex: NUM_COLS,
+					},
+					cell: {
+						userEnteredFormat: {
+							textFormat: { italic: true },
+							wrapStrategy: "WRAP",
+							backgroundColor: COLORS.white,
+						},
+					},
+					fields: "userEnteredFormat(textFormat,wrapStrategy,backgroundColor)",
+				},
+			},
+			// Header row: bold, gray background
+			{
+				repeatCell: {
+					range: {
+						sheetId,
+						startRowIndex: 3,
+						endRowIndex: 4,
+						startColumnIndex: 0,
+						endColumnIndex: NUM_COLS,
+					},
+					cell: {
+						userEnteredFormat: {
+							textFormat: { bold: true },
+							backgroundColor: COLORS.headerBg,
+						},
+					},
+					fields: "userEnteredFormat(textFormat,backgroundColor)",
+				},
+			},
+			// Freeze rows 1–4
+			{
+				updateSheetProperties: {
+					properties: { sheetId, gridProperties: { frozenRowCount: 4 } },
+					fields: "gridProperties.frozenRowCount",
+				},
+			},
+			// Auto-resize all columns
+			{
+				autoResizeDimensions: {
+					dimensions: {
+						sheetId,
+						dimension: "COLUMNS",
+						startIndex: 0,
+						endIndex: NUM_COLS,
+					},
+				},
+			},
+		];
+
+		// Per-row color coding (data starts at row index 4)
+		for (let i = 0; i < sorted.length; i++) {
+			formatRequests.push(
+				rowColorRequest(
+					sheetId,
+					4 + i,
+					5 + i,
+					EVAL_COLORS[evalRowColor(sorted[i])],
+				) as never,
+			);
+		}
+
+		ora.start("Applying formatting...");
+		await sheets.spreadsheets.batchUpdate({
+			spreadsheetId,
+			requestBody: { requests: formatRequests },
+		});
+		ora.succeed("Formatting applied");
+
+		const matchCount = sorted.filter((r) => r.match).length;
+		const diffCount = sorted.filter(
+			(r) => !r.match && !r.error && r.ddStatus === "assigned",
+		).length;
+		const errorCount = sorted.filter((r) => Boolean(r.error)).length;
+
+		const url = `https://docs.google.com/spreadsheets/d/${spreadsheetId}`;
+		console.log();
+		console.log(chalk.green("  Google Sheet created successfully!"));
+		console.log(`  ${chalk.cyan(url)}`);
+		console.log(
+			chalk.gray(
+				`  ${sorted.length} evaluation(s) exported (${matchCount} match, ${diffCount} differ, ${errorCount} error)`,
+			),
+		);
+		console.log();
+	} catch (err) {
+		const msg = err instanceof Error ? err.message : String(err);
+		console.log();
+		console.log(chalk.red(`  Google Sheets export failed: ${msg}`));
 		console.log();
 	}
 }

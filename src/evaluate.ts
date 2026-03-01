@@ -19,6 +19,7 @@ import {
 import type {
 	EppoCondition,
 	EppoFlag,
+	EvaluationExportRow,
 	MigrationEnvironmentMapping,
 	MigrationFile,
 } from "./types.js";
@@ -1142,6 +1143,38 @@ async function main(): Promise<void> {
 	// 8. Render results
 	renderTable(rows, providerLabel);
 	printSummary(rows);
+
+	// 9. Optional Google Sheets export
+	const flagByKey = new Map(migration.flags.map((f) => [f.key, f]));
+
+	const exportToSheets = await confirm({
+		message: "Would you like to export evaluation results to Google Sheets?",
+		default: false,
+	});
+	if (exportToSheets) {
+		const exportRows: EvaluationExportRow[] = rows.flatMap((row) => {
+			const flag = flagByKey.get(row.key);
+			return row.testResults.map((tr) => ({
+				flagKey: row.key,
+				flagName: flag?.name ?? row.key,
+				team: flag?.owner?.name ?? "",
+				testCaseLabel: tr.testCase.label,
+				eppoResult: tr.eppoResult,
+				ddResult: tr.ddResult,
+				match: tr.match,
+				ddStatus: tr.ddStatus,
+				migrationStatus: row.migrationStatus,
+				ddEnabled: row.ddEnabled,
+				error: tr.error,
+			}));
+		});
+		const { exportEvaluationToSheets } = await import("./sheets.js");
+		await exportEvaluationToSheets(
+			exportRows,
+			providerLabel,
+			migration.migratedAt,
+		);
+	}
 }
 
 main().catch((err: unknown) => {

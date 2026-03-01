@@ -156,3 +156,19 @@ export interface DatadogCreatedFlag {
 	id: string;
 	key: string;
 }
+
+// ─── Evaluation Export Types ─────────────────────────────────────────────────
+
+export interface EvaluationExportRow {
+	flagKey: string;
+	flagName: string;
+	team: string;
+	testCaseLabel: string;
+	eppoResult: string;
+	ddResult: string;
+	match: boolean;
+	ddStatus: "assigned" | "not-assigned" | "not-in-dd";
+	migrationStatus: "created" | "partial" | "failed" | "skipped" | "unknown";
+	ddEnabled: boolean | null;
+	error?: string;
+}
