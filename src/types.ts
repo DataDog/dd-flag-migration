@@ -71,6 +71,12 @@ export interface Config {
 	datadogAppKey?: string;
 	datadogClientToken?: string;
 	datadogSite?: string;
+	googleOAuthTokens?: {
+		access_token: string;
+		refresh_token: string;
+		token_type: string;
+		expiry_date: number; // ms since epoch
+	};
 }
 
 export interface MigrationEnvironmentMapping {
@@ -111,6 +117,7 @@ export interface MigrationFile {
 	}>;
 	skippedFlags?: Array<{ key: string; reason: string }>;
 	flags: EppoFlag[];
+	unmigrated?: EppoFlag[];
 	environmentMapping: MigrationEnvironmentMapping[];
 }
 

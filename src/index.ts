@@ -336,6 +336,7 @@ type ConfirmAction = "migrate" | "select-more" | "cancel";
 
 async function confirmMigration(
 	flags: EppoFlag[],
+	allEppoFlags: EppoFlag[],
 	ddApiKey: string,
 	ddAppKey: string,
 	envMapping: Map<number, DatadogEnvironment>,
@@ -743,6 +744,10 @@ async function confirmMigration(
 	}
 
 	if (!dryRun && (created > 0 || errored > 0)) {
+		const selectedFlagKeys = new Set(flags.map((f) => f.key));
+		const unmigratedFlags = allEppoFlags.filter(
+			(f) => !selectedFlagKeys.has(f.key),
+		);
 		const migrationData: MigrationFile = {
 			provider,
 			migratedAt: timestamp,
@@ -752,6 +757,7 @@ async function confirmMigration(
 			enableFailures,
 			skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
 			flags,
+			unmigrated: unmigratedFlags.length > 0 ? unmigratedFlags : undefined,
 			environmentMapping,
 		};
 		const filename = `migration-${timestamp}.json`;
@@ -760,6 +766,16 @@ async function confirmMigration(
 		const filepath = path.join(CONFIG_DIR, filename);
 		fs.writeFileSync(filepath, JSON.stringify(migrationData, null, 2));
 		console.log(chalk.gray(`  Migration saved to ${filepath}`));
+
+		const { confirm } = await import("@inquirer/prompts");
+		const exportToSheets = await confirm({
+			message: "Would you like to export migration results to Google Sheets?",
+			default: false,
+		});
+		if (exportToSheets) {
+			const { exportMigrationToSheets } = await import("./sheets.js");
+			await exportMigrationToSheets(migrationData);
+		}
 	}
 
 	console.log();
@@ -896,6 +912,7 @@ async function main(): Promise<void> {
 				printHeader();
 				const action = await confirmMigration(
 					prevSelectedFlags,
+					flags,
 					ddApiKey,
 					ddAppKey,
 					prevEnvMapping,
