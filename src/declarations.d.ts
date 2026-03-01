@@ -1,4 +1,4 @@
-declare module 'inquirer-search-checkbox' {
-  const SearchCheckbox: any;
-  export = SearchCheckbox;
+declare module "inquirer-search-checkbox" {
+	const SearchCheckbox: unknown;
+	export = SearchCheckbox;
 }

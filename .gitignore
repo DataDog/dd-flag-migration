@@ -2,3 +2,4 @@ node_modules/
 dist/
 *.js.map
 dry-run*.json
+CLAUDE.md
