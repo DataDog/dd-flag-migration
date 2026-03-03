@@ -678,7 +678,7 @@ async function evaluateFlag(
 		return {
 			eppoResult: 'ERROR',
 			ddResult: 'ERROR',
-			ddStatus: 'assigned',
+			ddStatus: 'not-assigned',
 			error: err instanceof Error ? err.message : String(err),
 		};
 	}

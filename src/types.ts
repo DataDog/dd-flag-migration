@@ -142,7 +142,7 @@ export interface DatadogCreateFlagRequest {
 	key: string;
 	name: string;
 	value_type: 'BOOLEAN' | 'INTEGER' | 'FLOAT' | 'STRING' | 'JSON';
-	variants: Array<{ key: string; name: string; value: string }>;
+	variants: Array<{ key: string; name: string }>;
 	allocations?: DatadogAllocationForFlagCreation[];
 }
 
