@@ -570,7 +570,11 @@ async function initializeEppo(eppoSdkKey: string): Promise<EppoClient> {
 	const sdk = await import('@eppo/node-server-sdk');
 	await sdk.init({
 		apiKey: eppoSdkKey,
-		assignmentLogger: { logAssignment: () => {} },
+		assignmentLogger: {
+			logAssignment: () => {
+				/* intentionally empty */
+			},
+		},
 		throwOnFailedInitialization: true,
 		numInitialRequestRetries: 0,
 		pollAfterSuccessfulInitialization: false,
