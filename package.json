@@ -1,27 +1,40 @@
 {
-  "name": "dd-flag-migration",
-  "version": "0.1.0",
-  "description": "CLI tool to migrate feature flags to Datadog",
-  "type": "module",
-  "main": "dist/index.js",
-  "bin": {
-    "dd-flag-migration": "dist/index.js"
-  },
-  "scripts": {
-    "dev": "tsx src/index.ts",
-    "build": "tsc",
-    "start": "node dist/index.js"
-  },
-  "dependencies": {
-    "@inquirer/prompts": "^7.0.0",
-    "axios": "^1.6.0",
-    "chalk": "^5.3.0",
-    "ora": "^8.0.0"
-  },
-  "devDependencies": {
-    "@types/node": "^20.0.0",
-    "tsx": "^4.0.0",
-    "typescript": "^5.0.0"
-  },
-  "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
+	"name": "dd-flag-migration",
+	"version": "0.1.0",
+	"description": "CLI tool to migrate feature flags to Datadog",
+	"license": "Apache-2.0",
+	"type": "module",
+	"main": "dist/index.js",
+	"bin": {
+		"dd-flag-migration": "dist/index.js"
+	},
+	"scripts": {
+		"migrate": "tsx src/index.ts",
+		"evaluate": "tsx src/evaluate.ts",
+		"build": "tsc",
+		"start": "node dist/index.js",
+		"lint": "biome check",
+		"lint:fix": "biome check --write",
+		"typecheck": "tsc",
+		"test": "node --experimental-vm-modules node_modules/.bin/jest"
+	},
+	"dependencies": {
+		"@eppo/node-server-sdk": "^4.0.0",
+		"@inquirer/prompts": "^7.0.0",
+		"axios": "^1.6.0",
+		"chalk": "^5.3.0",
+		"exceljs": "^4.4.0",
+		"ora": "^8.0.0"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.4.4",
+		"@types/jest": "^30.0.0",
+		"@types/node": "^20.0.0",
+		"axios-mock-adapter": "^2.1.0",
+		"jest": "^30.2.0",
+		"ts-jest": "^29.4.6",
+		"tsx": "^4.0.0",
+		"typescript": "^5.0.0"
+	},
+	"packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
 }

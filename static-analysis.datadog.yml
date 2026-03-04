@@ -1,0 +1,6 @@
+schema-version: v1
+rulesets:
+  - typescript-best-practices:
+      rules:
+        no-console:
+          severity: NONE
