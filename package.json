@@ -29,7 +29,7 @@
 	"devDependencies": {
 		"@biomejs/biome": "^2.4.5",
 		"@types/jest": "^30.0.0",
-		"@types/node": "^20.0.0",
+		"@types/node": "^25.3.3",
 		"axios-mock-adapter": "^2.1.0",
 		"jest": "^30.2.0",
 		"ts-jest": "^29.4.6",
