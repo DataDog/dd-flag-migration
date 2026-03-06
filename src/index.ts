@@ -592,6 +592,7 @@ async function confirmMigration(
 		const variants = (flag.variations ?? []).map((v) => ({
 			key: v.variant_key,
 			name: v.name,
+			value: v.variant_key,
 		}));
 		if (variants.length === 0) {
 			spinner.warn(`Skipped ${chalk.cyan(flag.key)} — no variants`);
