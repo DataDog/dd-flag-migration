@@ -379,7 +379,7 @@ async function fetchEnvironmentsFromApi(
 	const baseUrl = `https://api.${site}`;
 	const resp = await axios.get<{
 		data: Array<{ id: string; attributes: { queries: string[] } }>;
-	}>(`${baseUrl}/api/unstable/feature-flags/environments`, {
+	}>(`${baseUrl}/api/v2/feature-flags/environments`, {
 		headers: { 'DD-API-KEY': apiKey, 'DD-APPLICATION-KEY': appKey },
 	});
 	return resp.data.data.map((item) => ({
@@ -496,7 +496,7 @@ async function fetchDDFlagData(
 	const limit = 200;
 	while (true) {
 		const resp = await axios.get<{ data: DDFlagListItem[] }>(
-			`${baseUrl}/api/unstable/feature-flags`,
+			`${baseUrl}/api/v2/feature-flags`,
 			{
 				headers: { 'DD-API-KEY': apiKey, 'DD-APPLICATION-KEY': appKey },
 				params: { limit, offset, is_archived: false },

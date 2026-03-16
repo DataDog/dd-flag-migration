@@ -620,13 +620,13 @@ async function confirmMigration(
 		if (dryRun) {
 			dryRunRequests.push({
 				method: 'POST',
-				path: '/api/unstable/feature-flags',
+				path: '/api/v2/feature-flags',
 				body: { data: { type: 'feature-flags', attributes: request } },
 			});
 			for (const ddEnv of envsToEnable) {
 				dryRunRequests.push({
 					method: 'POST',
-					path: `/api/unstable/feature-flags/${flag.key}/environments/${ddEnv.id}/enable`,
+					path: `/api/v2/feature-flags/${flag.key}/environments/${ddEnv.id}/enable`,
 					body: {},
 				});
 			}
