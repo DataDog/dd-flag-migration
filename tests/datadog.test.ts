@@ -29,7 +29,7 @@ describe('fetchDatadogEnvironments', () => {
 	});
 
 	it('returns parsed environments', async () => {
-		mock.onGet(`${BASE}/api/unstable/feature-flags/environments`).reply(200, {
+		mock.onGet(`${BASE}/api/v2/feature-flags/environments`).reply(200, {
 			data: [
 				{
 					id: 'env-1',
@@ -72,7 +72,7 @@ describe('fetchDatadogEnvironments', () => {
 	});
 
 	it('defaults queries to [] when not present', async () => {
-		mock.onGet(`${BASE}/api/unstable/feature-flags/environments`).reply(200, {
+		mock.onGet(`${BASE}/api/v2/feature-flags/environments`).reply(200, {
 			data: [
 				{
 					id: 'env-1',
@@ -93,9 +93,7 @@ describe('fetchDatadogEnvironments', () => {
 	it('uses the site parameter to build the base URL', async () => {
 		const customSite = 'datadoghq.eu';
 		mock
-			.onGet(
-				`https://api.${customSite}/api/unstable/feature-flags/environments`,
-			)
+			.onGet(`https://api.${customSite}/api/v2/feature-flags/environments`)
 			.reply(200, { data: [] });
 
 		const result = await fetchDatadogEnvironments(API_KEY, APP_KEY, customSite);
@@ -103,19 +101,17 @@ describe('fetchDatadogEnvironments', () => {
 	});
 
 	it('sends dd-api-key and dd-application-key headers', async () => {
-		mock
-			.onGet(`${BASE}/api/unstable/feature-flags/environments`)
-			.reply((config) => {
-				expect(config.headers?.['dd-api-key']).toBe(API_KEY);
-				expect(config.headers?.['dd-application-key']).toBe(APP_KEY);
-				return [200, { data: [] }];
-			});
+		mock.onGet(`${BASE}/api/v2/feature-flags/environments`).reply((config) => {
+			expect(config.headers?.['dd-api-key']).toBe(API_KEY);
+			expect(config.headers?.['dd-application-key']).toBe(APP_KEY);
+			return [200, { data: [] }];
+		});
 
 		await fetchDatadogEnvironments(API_KEY, APP_KEY, SITE);
 	});
 
 	it('throws on HTTP error', async () => {
-		mock.onGet(`${BASE}/api/unstable/feature-flags/environments`).reply(403);
+		mock.onGet(`${BASE}/api/v2/feature-flags/environments`).reply(403);
 
 		await expect(
 			fetchDatadogEnvironments(API_KEY, APP_KEY, SITE),
@@ -138,7 +134,7 @@ describe('validateDatadogKeys', () => {
 
 	it('returns true when the API call succeeds', async () => {
 		mock
-			.onGet(`${BASE}/api/unstable/feature-flags/environments`)
+			.onGet(`${BASE}/api/v2/feature-flags/environments`)
 			.reply(200, { data: [] });
 
 		const result = await validateDatadogKeys(API_KEY, APP_KEY, SITE);
@@ -146,16 +142,14 @@ describe('validateDatadogKeys', () => {
 	});
 
 	it('returns false on 401', async () => {
-		mock.onGet(`${BASE}/api/unstable/feature-flags/environments`).reply(401);
+		mock.onGet(`${BASE}/api/v2/feature-flags/environments`).reply(401);
 
 		const result = await validateDatadogKeys(API_KEY, APP_KEY, SITE);
 		expect(result).toBe(false);
 	});
 
 	it('returns false on network error', async () => {
-		mock
-			.onGet(`${BASE}/api/unstable/feature-flags/environments`)
-			.networkError();
+		mock.onGet(`${BASE}/api/v2/feature-flags/environments`).networkError();
 
 		const result = await validateDatadogKeys(API_KEY, APP_KEY, SITE);
 		expect(result).toBe(false);
@@ -176,7 +170,7 @@ describe('fetchDatadogFlagKeys', () => {
 	});
 
 	it('returns a set of flag keys', async () => {
-		mock.onGet(`${BASE}/api/unstable/feature-flags`).reply(200, {
+		mock.onGet(`${BASE}/api/v2/feature-flags`).reply(200, {
 			data: [
 				{
 					id: '1',
@@ -196,7 +190,7 @@ describe('fetchDatadogFlagKeys', () => {
 	});
 
 	it('returns empty set when there are no flags', async () => {
-		mock.onGet(`${BASE}/api/unstable/feature-flags`).reply(200, { data: [] });
+		mock.onGet(`${BASE}/api/v2/feature-flags`).reply(200, { data: [] });
 
 		const result = await fetchDatadogFlagKeys(API_KEY, APP_KEY, SITE);
 		expect(result.size).toBe(0);
@@ -218,13 +212,13 @@ describe('fetchDatadogFlagKeys', () => {
 		];
 
 		mock
-			.onGet(`${BASE}/api/unstable/feature-flags`, {
+			.onGet(`${BASE}/api/v2/feature-flags`, {
 				params: { limit, offset: 0, is_archived: false },
 			})
 			.reply(200, { data: page1 });
 
 		mock
-			.onGet(`${BASE}/api/unstable/feature-flags`, {
+			.onGet(`${BASE}/api/v2/feature-flags`, {
 				params: { limit, offset: 200, is_archived: false },
 			})
 			.reply(200, { data: page2 });
@@ -238,7 +232,7 @@ describe('fetchDatadogFlagKeys', () => {
 	it('uses the site parameter in the request URL', async () => {
 		const eu = 'datadoghq.eu';
 		mock
-			.onGet(`https://api.${eu}/api/unstable/feature-flags`)
+			.onGet(`https://api.${eu}/api/v2/feature-flags`)
 			.reply(200, { data: [] });
 
 		const result = await fetchDatadogFlagKeys(API_KEY, APP_KEY, eu);
@@ -270,7 +264,7 @@ describe('createFeatureFlag', () => {
 	};
 
 	it('returns the created flag id and key', async () => {
-		mock.onPost(`${BASE}/api/unstable/feature-flags`).reply(201, {
+		mock.onPost(`${BASE}/api/v2/feature-flags`).reply(201, {
 			data: {
 				id: 'flag-uuid-123',
 				attributes: { key: 'my-flag' },
@@ -282,7 +276,7 @@ describe('createFeatureFlag', () => {
 	});
 
 	it('sends the flag request wrapped in JSON:API format', async () => {
-		mock.onPost(`${BASE}/api/unstable/feature-flags`).reply((config) => {
+		mock.onPost(`${BASE}/api/v2/feature-flags`).reply((config) => {
 			const body = JSON.parse(config.data as string) as {
 				data: { type: string; attributes: DatadogCreateFlagRequest };
 			};
@@ -296,7 +290,7 @@ describe('createFeatureFlag', () => {
 
 	it('uses the site parameter in the request URL', async () => {
 		const us3 = 'us3.datadoghq.com';
-		mock.onPost(`https://api.${us3}/api/unstable/feature-flags`).reply(201, {
+		mock.onPost(`https://api.${us3}/api/v2/feature-flags`).reply(201, {
 			data: { id: 'id-2', attributes: { key: 'my-flag' } },
 		});
 
@@ -305,7 +299,7 @@ describe('createFeatureFlag', () => {
 	});
 
 	it('throws on HTTP error', async () => {
-		mock.onPost(`${BASE}/api/unstable/feature-flags`).reply(422, {
+		mock.onPost(`${BASE}/api/v2/feature-flags`).reply(422, {
 			errors: [{ detail: 'Key already exists' }],
 		});
 
@@ -334,7 +328,7 @@ describe('enableFeatureFlagEnvironment', () => {
 
 		mock
 			.onPost(
-				`${BASE}/api/unstable/feature-flags/${flagId}/environments/${envId}/enable`,
+				`${BASE}/api/v2/feature-flags/${flagId}/environments/${envId}/enable`,
 			)
 			.reply(200, {});
 
@@ -350,7 +344,7 @@ describe('enableFeatureFlagEnvironment', () => {
 
 		mock
 			.onPost(
-				`https://api.${eu}/api/unstable/feature-flags/${flagId}/environments/${envId}/enable`,
+				`https://api.${eu}/api/v2/feature-flags/${flagId}/environments/${envId}/enable`,
 			)
 			.reply(200, {});
 
@@ -361,7 +355,7 @@ describe('enableFeatureFlagEnvironment', () => {
 
 	it('throws on HTTP error', async () => {
 		mock
-			.onPost(`${BASE}/api/unstable/feature-flags/f1/environments/e1/enable`)
+			.onPost(`${BASE}/api/v2/feature-flags/f1/environments/e1/enable`)
 			.reply(404);
 
 		await expect(

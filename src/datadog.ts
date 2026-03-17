@@ -30,7 +30,7 @@ export async function fetchDatadogEnvironments(
 ): Promise<DatadogEnvironment[]> {
 	const baseUrl = `https://api.${site}`;
 	const response = await axios.get<{ data: JsonApiEnvironment[] }>(
-		`${baseUrl}/api/unstable/feature-flags/environments`,
+		`${baseUrl}/api/v2/feature-flags/environments`,
 		{ headers: ddHeaders(apiKey, appKey) },
 	);
 	return response.data.data.map((item) => ({
@@ -72,7 +72,7 @@ export async function fetchDatadogFlagKeys(
 	const limit = 200;
 	while (true) {
 		const response = await axios.get<{ data: JsonApiFlag[] }>(
-			`${baseUrl}/api/unstable/feature-flags`,
+			`${baseUrl}/api/v2/feature-flags`,
 			{
 				headers: ddHeaders(apiKey, appKey),
 				params: { limit, offset, is_archived: false },
@@ -96,7 +96,7 @@ export async function createFeatureFlag(
 	const body = { data: { type: 'feature-flags', attributes: request } };
 	const response = await axios.post<{
 		data: { id: string; attributes: { key: string } };
-	}>(`${baseUrl}/api/unstable/feature-flags`, body, {
+	}>(`${baseUrl}/api/v2/feature-flags`, body, {
 		headers: {
 			...ddHeaders(apiKey, appKey),
 			'Content-Type': 'application/json',
@@ -114,7 +114,7 @@ export async function enableFeatureFlagEnvironment(
 ): Promise<void> {
 	const baseUrl = `https://api.${site}`;
 	await axios.post(
-		`${baseUrl}/api/unstable/feature-flags/${flagId}/environments/${environmentId}/enable`,
+		`${baseUrl}/api/v2/feature-flags/${flagId}/environments/${environmentId}/enable`,
 		{},
 		{
 			headers: {
