@@ -1,0 +1,47 @@
+version: 2
+updates:
+- package-ecosystem: npm
+  directory: /
+  schedule:
+    interval: weekly
+    day: monday
+    time: 09:00
+    timezone: America/New_York
+  groups:
+    dev-dependencies:
+      dependency-type: development
+      update-types:
+      - minor
+      - patch
+    production-minor-patch:
+      dependency-type: production
+      update-types:
+      - minor
+      - patch
+  labels:
+  - dependencies
+  commit-message:
+    prefix: "\U0001F477 chore(deps)"
+    prefix-development: "\U0001F477 chore(deps-dev)"
+    include: scope
+  cooldown:
+    default-days: 14
+- package-ecosystem: github-actions
+  directory: /
+  schedule:
+    interval: monthly
+    day: monday
+    time: 09:00
+    timezone: America/New_York
+  groups:
+    github-actions:
+      patterns:
+      - '*'
+  labels:
+  - dependencies
+  - github-actions
+  commit-message:
+    prefix: "\U0001F477 ci(deps)"
+    include: scope
+  cooldown:
+    default-days: 14
