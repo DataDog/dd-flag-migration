@@ -9,6 +9,7 @@
 		"dd-flag-migration": "dist/index.js"
 	},
 	"scripts": {
+		"setup": "yarn install && yarn allow-scripts",
 		"migrate": "tsx src/index.ts",
 		"evaluate": "tsx src/evaluate.ts",
 		"build": "tsc",
@@ -28,6 +29,8 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.4.5",
+		"@lavamoat/allow-scripts": "^3.4.3",
+		"@lavamoat/preinstall-always-fail": "^2.1.0",
 		"@types/jest": "^30.0.0",
 		"@types/node": "^25.3.3",
 		"axios-mock-adapter": "^2.1.0",
@@ -35,6 +38,17 @@
 		"ts-jest": "^29.4.6",
 		"tsx": "^4.0.0",
 		"typescript": "^5.0.0"
+	},
+	"lavamoat": {
+		"allowScripts": {
+			"$root$": false,
+			"@lavamoat/preinstall-always-fail": false,
+			"tsx>esbuild": true,
+			"jest>@jest/core>jest-resolve>unrs-resolver": true
+		}
+	},
+	"engines": {
+		"yarn": "1.x"
 	},
 	"packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
 }
