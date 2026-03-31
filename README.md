@@ -18,8 +18,25 @@ A CLI tool for migrating feature flags from your current provider into [Datadog 
 ```bash
 git clone https://github.com/DataDog/dd-flag-migration.git
 cd dd-flag-migration
-yarn install
+yarn setup
 ```
+
+> **Note:** Use `yarn setup` instead of `yarn install`. This project uses [`@lavamoat/allow-scripts`](https://www.npmjs.com/package/@lavamoat/allow-scripts) to protect against supply-chain attacks by blocking all dependency lifecycle scripts by default. `yarn setup` runs `yarn install` and then selectively executes only the explicitly allowed postinstall scripts.
+
+### Adding new packages
+
+When you add a new dependency that has lifecycle scripts (`preinstall`, `install`, or `postinstall`), you'll see this error the next time you run `yarn allow-scripts`:
+
+```
+@lavamoat/allow-scripts has detected dependencies without configuration. explicit configuration required.
+run "allow-scripts auto" to automatically populate the configuration.
+```
+
+To fix this:
+
+1. Inspect the new dependency's install scripts to verify they are safe.
+2. Run `yarn allow-scripts auto` to add the new dependency to the allowlist in `package.json`.
+3. Run `yarn setup` to re-install with the newly allowed scripts executing.
 
 ---
 
