@@ -37,7 +37,7 @@
 		"jest": "^30.3.0",
 		"ts-jest": "^29.4.9",
 		"tsx": "^4.0.0",
-		"typescript": "^5.0.0"
+		"typescript": "^6.0.2"
 	},
 	"lavamoat": {
 		"allowScripts": {
