@@ -98,6 +98,7 @@ export interface MigrationFile {
 	success: boolean;
 	summary: {
 		created: number;
+		synced: number;
 		skipped: number;
 		errored: number;
 		enabled: number;
@@ -138,10 +139,15 @@ export interface DatadogAllocationForFlagCreation {
 	targeting_rules?: DatadogTargetingRule[];
 }
 
+export type DatadogAllocationSyncRequest = Omit<
+	DatadogAllocationForFlagCreation,
+	'environment_id'
+>;
+
 export interface DatadogCreateFlagRequest {
 	key: string;
 	name: string;
-	value_type: 'BOOLEAN' | 'INTEGER' | 'FLOAT' | 'STRING' | 'JSON';
+	value_type: 'BOOLEAN' | 'INTEGER' | 'NUMERIC' | 'STRING' | 'JSON';
 	variants: Array<{ key: string; name: string; value: string }>;
 	allocations?: DatadogAllocationForFlagCreation[];
 }

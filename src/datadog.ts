@@ -1,5 +1,6 @@
 import axios from 'axios';
 import type {
+	DatadogAllocationSyncRequest,
 	DatadogCreatedFlag,
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,
@@ -65,9 +66,9 @@ export async function fetchDatadogFlagKeys(
 	apiKey: string,
 	appKey: string,
 	site = 'datadoghq.com',
-): Promise<Set<string>> {
+): Promise<Map<string, string>> {
 	const baseUrl = `https://api.${site}`;
-	const keys = new Set<string>();
+	const keys = new Map<string, string>();
 	let offset = 0;
 	const limit = 200;
 	while (true) {
@@ -79,7 +80,7 @@ export async function fetchDatadogFlagKeys(
 			},
 		);
 		const flags = response.data.data ?? [];
-		for (const f of flags) keys.add(f.attributes.key);
+		for (const f of flags) keys.set(f.attributes.key, f.id);
 		if (flags.length < limit) break;
 		offset += limit;
 	}
@@ -116,6 +117,27 @@ export async function enableFeatureFlagEnvironment(
 	await axios.post(
 		`${baseUrl}/api/v2/feature-flags/${flagId}/environments/${environmentId}/enable`,
 		{},
+		{
+			headers: {
+				...ddHeaders(apiKey, appKey),
+				'Content-Type': 'application/json',
+			},
+		},
+	);
+}
+
+export async function syncAllocationsForEnvironment(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	environmentId: string,
+	allocations: DatadogAllocationSyncRequest[],
+	site = 'datadoghq.com',
+): Promise<void> {
+	const baseUrl = `https://api.${site}`;
+	await axios.put(
+		`${baseUrl}/api/v2/feature-flags/${flagId}/environments/${environmentId}/allocations`,
+		allocations,
 		{
 			headers: {
 				...ddHeaders(apiKey, appKey),
