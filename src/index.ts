@@ -425,7 +425,7 @@ async function confirmMigration(
 		[];
 
 	for (const flag of flags) {
-		const spinner = ora(`Migrating ${chalk.cyan(flag.key)}…`).start();
+		let spinner = ora(`Migrating ${chalk.cyan(flag.key)}…`).start();
 
 		if (flag.type === 'BANDIT') {
 			spinner.warn(
@@ -472,13 +472,13 @@ async function confirmMigration(
 		const envsToEnable = getEnvsToEnable(flag, envMapping);
 		const existingFlagId = datadogKeys.get(flag.key);
 
-		// Count targeting rules for reporting
-		const ruleCount = allocations.reduce(
+		// Count targeting rules for reporting (all environments — used for new-flag path)
+		const allRuleCount = allocations.reduce(
 			(sum, a) => sum + (a.targeting_rules?.length ?? 0),
 			0,
 		);
-		const filterLabel = `${allocations.length} targeting filter(s)`;
-		const ruleLabel = ruleCount > 0 ? `, ${ruleCount} rule(s)` : '';
+		const allFilterLabel = `${allocations.length} targeting filter(s)`;
+		const allRuleLabel = allRuleCount > 0 ? `, ${allRuleCount} rule(s)` : '';
 
 		if (existingFlagId) {
 			// Flag already exists in Datadog — sync targeting and enable in new environments
@@ -486,13 +486,29 @@ async function confirmMigration(
 				spinner.succeed(
 					`${chalk.cyan(flag.key)} — already in Datadog, nothing to sync`,
 				);
+				skippedFlags.push({
+					key: flag.key,
+					reason: 'Already in Datadog, no new environments to enable',
+				});
 				skipped++;
 				continue;
 			}
 
+			spinner.warn(
+				`${chalk.cyan(flag.key)} exists in Datadog — targeting filters in ${envsToEnable.map((e) => e.name).join(', ')} will be overwritten`,
+			);
+			spinner = ora(`Migrating ${chalk.cyan(flag.key)}…`).start();
+
 			if (dryRun) {
+				let syncFilterCount = 0;
+				let syncRuleCount = 0;
 				for (const ddEnv of envsToEnable) {
 					const syncReqs = toSyncRequests(allocations, ddEnv.id);
+					syncFilterCount += syncReqs.length;
+					syncRuleCount += syncReqs.reduce(
+						(sum, r) => sum + (r.targeting_rules?.length ?? 0),
+						0,
+					);
 					if (syncReqs.length > 0) {
 						dryRunRequests.push({
 							method: 'PUT',
@@ -506,19 +522,23 @@ async function confirmMigration(
 						body: {},
 					});
 				}
+				const syncFilterLabel = `${syncFilterCount} targeting filter(s)`;
+				const syncRuleLabel =
+					syncRuleCount > 0 ? `, ${syncRuleCount} rule(s)` : '';
 				const enableLabel =
 					envsToEnable.length > 0
 						? `, would enable in ${envsToEnable.map((e) => e.name).join(', ')}`
 						: '';
 				spinner.succeed(
 					`${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} ` +
-						`(${filterLabel}${ruleLabel}${enableLabel})`,
+						`(${syncFilterLabel}${syncRuleLabel}${enableLabel})`,
 				);
 				synced++;
 			} else {
 				try {
 					// Sync targeting for each target environment
 					let syncedAllocCount = 0;
+					let syncedRuleCount = 0;
 					for (const ddEnv of envsToEnable) {
 						const syncReqs = toSyncRequests(allocations, ddEnv.id);
 						if (syncReqs.length > 0) {
@@ -531,6 +551,10 @@ async function confirmMigration(
 								site,
 							);
 							syncedAllocCount += syncReqs.length;
+							syncedRuleCount += syncReqs.reduce(
+								(sum, r) => sum + (r.targeting_rules?.length ?? 0),
+								0,
+							);
 						}
 					}
 
@@ -556,10 +580,12 @@ async function confirmMigration(
 					}
 
 					totalEnabled += enabledCount;
+					const syncedRuleLabel =
+						syncedRuleCount > 0 ? `, ${syncedRuleCount} rule(s)` : '';
 					const enableLabel =
 						enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
 					spinner.succeed(
-						`Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${ruleLabel}${enableLabel})`,
+						`Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${enableLabel})`,
 					);
 					synced++;
 				} catch (err) {
@@ -601,7 +627,7 @@ async function confirmMigration(
 						: '';
 				spinner.succeed(
 					`${chalk.dim('[dry run]')} Would create ${chalk.cyan(flag.key)} ` +
-						`(${filterLabel}${ruleLabel}${enableLabel})`,
+						`(${allFilterLabel}${allRuleLabel}${enableLabel})`,
 				);
 				created++;
 			} else {
@@ -638,7 +664,7 @@ async function confirmMigration(
 					const enableLabel =
 						enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
 					spinner.succeed(
-						`Created ${chalk.cyan(flag.key)} (${filterLabel}${ruleLabel}${enableLabel})`,
+						`Created ${chalk.cyan(flag.key)} (${allFilterLabel}${allRuleLabel}${enableLabel})`,
 					);
 
 					created++;
