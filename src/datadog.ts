@@ -1,5 +1,6 @@
 import axios from 'axios';
 import type {
+	DatadogAllocationSyncRequest,
 	DatadogCreatedFlag,
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,
@@ -65,9 +66,9 @@ export async function fetchDatadogFlagKeys(
 	apiKey: string,
 	appKey: string,
 	site = 'datadoghq.com',
-): Promise<Set<string>> {
+): Promise<Map<string, string>> {
 	const baseUrl = `https://api.${site}`;
-	const keys = new Set<string>();
+	const keys = new Map<string, string>();
 	let offset = 0;
 	const limit = 200;
 	while (true) {
@@ -79,7 +80,7 @@ export async function fetchDatadogFlagKeys(
 			},
 		);
 		const flags = response.data.data ?? [];
-		for (const f of flags) keys.add(f.attributes.key);
+		for (const f of flags) keys.set(f.attributes.key, f.id);
 		if (flags.length < limit) break;
 		offset += limit;
 	}
@@ -120,6 +121,108 @@ export async function enableFeatureFlagEnvironment(
 			headers: {
 				...ddHeaders(apiKey, appKey),
 				'Content-Type': 'application/json',
+			},
+		},
+	);
+}
+
+type JsonApiAllocation = {
+	id: string;
+	type: string;
+	attributes: { key: string };
+};
+
+type JsonApiFlagDetail = {
+	id: string;
+	type: string;
+	attributes: {
+		variants: Array<{ id: string; key: string }>;
+	};
+};
+
+export async function fetchVariantKeyToId(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	site = 'datadoghq.com',
+): Promise<Map<string, string>> {
+	const baseUrl = `https://api.${site}`;
+	const response = await axios.get<{ data: JsonApiFlagDetail }>(
+		`${baseUrl}/api/v2/feature-flags/${flagId}`,
+		{ headers: ddHeaders(apiKey, appKey) },
+	);
+	const keyToId = new Map<string, string>();
+	for (const v of response.data.data.attributes.variants ?? []) {
+		keyToId.set(v.key, v.id);
+	}
+	return keyToId;
+}
+
+export async function fetchAllocationsForFlagEnvironment(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	environmentId: string,
+	site = 'datadoghq.com',
+): Promise<Map<string, string>> {
+	const baseUrl = `https://api.${site}`;
+	const response = await axios.get<{ data: JsonApiAllocation[] }>(
+		`${baseUrl}/api/unstable/feature-flags/${flagId}/allocations`,
+		{
+			headers: ddHeaders(apiKey, appKey),
+			params: { environmentIDs: environmentId },
+		},
+	);
+	const keyToId = new Map<string, string>();
+	for (const item of response.data.data ?? []) {
+		keyToId.set(item.attributes.key, item.id);
+	}
+	return keyToId;
+}
+
+export async function syncAllocationsForEnvironment(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	environmentId: string,
+	allocations: DatadogAllocationSyncRequest[],
+	site = 'datadoghq.com',
+): Promise<void> {
+	const baseUrl = `https://api.${site}`;
+
+	// Fetch existing allocation IDs so the sync endpoint treats them as updates
+	// and variant key→UUID mapping so we send variant_id instead of variant_key
+	const [existingKeyToId, variantKeyToId] = await Promise.all([
+		fetchAllocationsForFlagEnvironment(
+			apiKey,
+			appKey,
+			flagId,
+			environmentId,
+			site,
+		),
+		fetchVariantKeyToId(apiKey, appKey, flagId, site),
+	]);
+
+	const body = {
+		data: allocations.map((alloc) => ({
+			type: 'allocations',
+			id: existingKeyToId.get(alloc.key) ?? undefined,
+			attributes: {
+				...alloc,
+				variant_weights: alloc.variant_weights.map((vw) => ({
+					variant_id: variantKeyToId.get(vw.variant_key) ?? vw.variant_key,
+					value: vw.value,
+				})),
+			},
+		})),
+	};
+	await axios.put(
+		`${baseUrl}/api/v2/feature-flags/${flagId}/environments/${environmentId}/allocations`,
+		body,
+		{
+			headers: {
+				...ddHeaders(apiKey, appKey),
+				'Content-Type': 'application/vnd.api+json',
 			},
 		},
 	);

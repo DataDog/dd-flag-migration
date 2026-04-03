@@ -50,6 +50,19 @@ To fix this:
 | **Datadog API key** | Datadog → Organization Settings → API Keys |
 | **Datadog Application key** | Datadog → Organization Settings → Application Keys |
 
+#### Datadog Application Key permissions
+
+Your Datadog Application Key must have the following **Feature Flags** scopes enabled:
+
+| Scope | Description |
+|---|---|
+| `feature_flag_config_read` | View Feature Flag Configurations |
+| `feature_flag_config_write` | Edit Feature Flag Configurations |
+| `feature_flag_environment_config_read` | Ability to view Feature Flag Environment settings |
+| `feature_flag_environment_config_write` | Ability to modify Feature Flag Environment settings |
+
+To set these permissions, go to **Organization Settings → Application Keys**, select your key, and enable the scopes listed above under the **Feature Flags** section.
+
 ### For evaluation (`yarn evaluate`)
 
 Everything above, plus:
