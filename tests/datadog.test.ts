@@ -468,9 +468,7 @@ describe('syncAllocationsForEnvironment', () => {
 		const envId = 'env-uuid-456';
 		const existingId = 'existing-alloc-id-789';
 
-		mockGetPrereqs(flagId, [
-			{ id: existingId, key: 'my-flag-production' },
-		]);
+		mockGetPrereqs(flagId, [{ id: existingId, key: 'my-flag-production' }]);
 		mock
 			.onPut(
 				`${BASE}/api/v2/feature-flags/${flagId}/environments/${envId}/allocations`,
