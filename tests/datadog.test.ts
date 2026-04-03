@@ -398,19 +398,56 @@ describe('syncAllocationsForEnvironment', () => {
 		},
 	];
 
-	it('sends PUT to the correct URL with allocations as body', async () => {
+	// Helper to mock the GET allocations and GET flag (variants) calls
+	function mockGetPrereqs(
+		flagId: string,
+		existingAllocs: Array<{ id: string; key: string }> = [],
+		variants: Array<{ id: string; key: string }> = [
+			{ id: 'variant-uuid-on', key: 'on' },
+			{ id: 'variant-uuid-off', key: 'off' },
+		],
+		site = SITE,
+	) {
+		mock
+			.onGet(
+				`https://api.${site}/api/unstable/feature-flags/${flagId}/allocations`,
+			)
+			.reply(200, {
+				data: existingAllocs.map((a) => ({
+					id: a.id,
+					type: 'allocations',
+					attributes: { key: a.key },
+				})),
+			});
+		mock
+			.onGet(`https://api.${site}/api/v2/feature-flags/${flagId}`)
+			.reply(200, {
+				data: {
+					id: flagId,
+					type: 'feature-flags',
+					attributes: { variants },
+				},
+			});
+	}
+
+	it('sends PUT to the correct URL with variant_id resolved from flag', async () => {
 		const flagId = 'flag-uuid-123';
 		const envId = 'env-uuid-456';
 
+		mockGetPrereqs(flagId);
 		mock
 			.onPut(
 				`${BASE}/api/v2/feature-flags/${flagId}/environments/${envId}/allocations`,
 			)
 			.reply((config) => {
-				const body = JSON.parse(
-					config.data as string,
-				) as DatadogAllocationSyncRequest[];
-				expect(body).toEqual(allocations);
+				const body = JSON.parse(config.data as string);
+				expect(body.data).toHaveLength(1);
+				expect(body.data[0].type).toBe('allocations');
+				// variant_key should be resolved to variant_id (UUID)
+				expect(body.data[0].attributes.variant_weights).toEqual([
+					{ variant_id: 'variant-uuid-on', value: 50 },
+					{ variant_id: 'variant-uuid-off', value: 50 },
+				]);
 				return [200, { data: [] }];
 			});
 
@@ -426,7 +463,37 @@ describe('syncAllocationsForEnvironment', () => {
 		).resolves.toBeUndefined();
 	});
 
+	it('includes existing allocation IDs when keys match', async () => {
+		const flagId = 'flag-uuid-123';
+		const envId = 'env-uuid-456';
+		const existingId = 'existing-alloc-id-789';
+
+		mockGetPrereqs(flagId, [
+			{ id: existingId, key: 'my-flag-production' },
+		]);
+		mock
+			.onPut(
+				`${BASE}/api/v2/feature-flags/${flagId}/environments/${envId}/allocations`,
+			)
+			.reply((config) => {
+				const body = JSON.parse(config.data as string);
+				expect(body.data[0].id).toBe(existingId);
+				expect(body.data[0].attributes.key).toBe('my-flag-production');
+				return [200, { data: [] }];
+			});
+
+		await syncAllocationsForEnvironment(
+			API_KEY,
+			APP_KEY,
+			flagId,
+			envId,
+			allocations,
+			SITE,
+		);
+	});
+
 	it('sends auth headers', async () => {
+		mockGetPrereqs('f1');
 		mock
 			.onPut(`${BASE}/api/v2/feature-flags/f1/environments/e1/allocations`)
 			.reply((config) => {
@@ -447,6 +514,7 @@ describe('syncAllocationsForEnvironment', () => {
 
 	it('uses the site parameter in the URL', async () => {
 		const eu = 'datadoghq.eu';
+		mockGetPrereqs('f1', [], undefined, eu);
 		mock
 			.onPut(
 				`https://api.${eu}/api/v2/feature-flags/f1/environments/e1/allocations`,
@@ -486,14 +554,14 @@ describe('syncAllocationsForEnvironment', () => {
 			},
 		];
 
+		mockGetPrereqs('f1');
 		mock
 			.onPut(`${BASE}/api/v2/feature-flags/f1/environments/e1/allocations`)
 			.reply((config) => {
-				const body = JSON.parse(
-					config.data as string,
-				) as DatadogAllocationSyncRequest[];
-				expect(body[0].targeting_rules).toHaveLength(1);
-				expect(body[0].targeting_rules?.[0].conditions[0].attribute).toBe(
+				const body = JSON.parse(config.data as string);
+				const attrs = body.data[0].attributes;
+				expect(attrs.targeting_rules).toHaveLength(1);
+				expect(attrs.targeting_rules?.[0].conditions[0].attribute).toBe(
 					'country',
 				);
 				return [200, { data: [] }];
@@ -510,6 +578,7 @@ describe('syncAllocationsForEnvironment', () => {
 	});
 
 	it('throws on HTTP error', async () => {
+		mockGetPrereqs('f1');
 		mock
 			.onPut(`${BASE}/api/v2/feature-flags/f1/environments/e1/allocations`)
 			.reply(400, {

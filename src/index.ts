@@ -98,10 +98,16 @@ function envLabel(env: EppoFlagEnvironment, flagCount: number): string {
 }
 
 function formatAxiosError(err: unknown): string {
-	return axios.isAxiosError(err)
-		? ((err.response?.data as { errors?: Array<{ detail?: string }> })
-				?.errors?.[0]?.detail ?? err.message)
-		: String(err);
+	if (!axios.isAxiosError(err)) return String(err);
+	const status = err.response?.status;
+	const data = err.response?.data;
+	const detail = (data as { errors?: Array<{ detail?: string }> })?.errors?.[0]
+		?.detail;
+	if (detail) return detail;
+	const method = err.config?.method?.toUpperCase() ?? '?';
+	const url = err.config?.url ?? '';
+	const bodyPreview = data ? JSON.stringify(data).slice(0, 300) : 'no body';
+	return `${method} ${url} — ${status ?? 'no status'}: ${bodyPreview}`;
 }
 
 function flagLabel(flag: EppoFlag, inDatadog: boolean): string {
