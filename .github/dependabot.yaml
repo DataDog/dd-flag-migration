@@ -34,6 +34,8 @@ updates:
       include: 'scope'
 
   # GitHub Actions dependencies
+    cooldown:
+      default-days: 2
   - package-ecosystem: 'github-actions'
     directory: '/'
     schedule:
@@ -51,3 +53,5 @@ updates:
     commit-message:
       prefix: '👷 ci(deps)'
       include: 'scope'
+    cooldown:
+      default-days: 2
