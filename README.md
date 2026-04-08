@@ -2,7 +2,7 @@
 
 A CLI tool for migrating feature flags from your current provider into [Datadog Feature Flags](https://docs.datadoghq.com/getting_started/feature_flags/), with side-by-side evaluation to verify the migration before you switch over.
 
-**Supported providers:** Eppo (LaunchDarkly coming soon)
+**Supported providers:** Eppo, LaunchDarkly
 
 ---
 
@@ -44,11 +44,23 @@ To fix this:
 
 ### For migration (`yarn migrate`)
 
+#### Eppo
+
 | Credential | Where to find it |
 |---|---|
 | **Eppo Admin API key** | Eppo → Configuration → API Keys |
 | **Datadog API key** | Datadog → Organization Settings → API Keys |
 | **Datadog Application key** | Datadog → Organization Settings → Application Keys |
+
+#### LaunchDarkly
+
+| Credential | Where to find it |
+|---|---|
+| **LaunchDarkly API access token** | LaunchDarkly → Account settings → Authorization → Access tokens |
+| **Datadog API key** | Datadog → Organization Settings → API Keys |
+| **Datadog Application key** | Datadog → Organization Settings → Application Keys |
+
+Your LaunchDarkly access token needs **Reader** role permissions (or a custom role with `viewProject` access) to read projects, environments, and flag configurations.
 
 #### Datadog Application Key permissions
 
@@ -84,14 +96,33 @@ yarn migrate
 
 The tool will walk you through:
 
-1. **Select your provider** — currently Eppo
-2. **Enter your Eppo Admin API key** — used to fetch your flags
+1. **Select your provider** — Eppo or LaunchDarkly
+2. **Enter your provider API key** — used to fetch your flags
 3. **Enter your Datadog API and Application keys** — used to create flags in Datadog
-4. **Map environments** — link each Eppo environment (e.g. `production`) to the corresponding Datadog environment
+4. **Map environments** — link each source environment (e.g. `production`) to the corresponding Datadog environment
 5. **Select flags** — choose which flags to migrate; flags already in Datadog are marked and skipped automatically
 6. **Confirm and migrate** — flags are created in Datadog and enabled in the mapped environments
 
 When the migration completes, a record is saved to `~/.dd-flag-migration/migration-<timestamp>.json`. You can optionally export results to an `.xlsx` file.
+
+### LaunchDarkly-specific workflow
+
+When migrating from LaunchDarkly, the tool adds these steps:
+
+1. **Select a LaunchDarkly project** — flags in LaunchDarkly are scoped to a project, so you pick one project at a time
+2. **Select LaunchDarkly environments** — choose which environments within that project to migrate
+3. **Link environments** — map each selected LaunchDarkly environment to a Datadog environment
+4. **Select flags** — flags already in Datadog are shown with a checkmark and will have their targeting synced for new environments rather than being re-created
+
+The tool translates LaunchDarkly targeting rules, individual user targets, percentage rollouts, and fallthrough variations into equivalent Datadog targeting filters. Flags that use unsupported operators (`segmentMatch`, `before`, `after`) are automatically skipped with an explanation. Flags with prerequisites are migrated with a warning, since Datadog does not enforce prerequisites.
+
+#### SDK key considerations
+
+LaunchDarkly SDK keys are **project-scoped** — each project has its own set of SDK keys per environment. If you are migrating multiple LaunchDarkly projects that share the same flag keys, the flags will collide within a single Datadog organization.
+
+For larger migrations with multiple projects, a good practice is to create **Datadog sub-organizations** so that each project's flags live in an independent org. Sub-organizations have their own API keys, environments, and flag namespaces, which avoids key conflicts entirely.
+
+To create and manage sub-organizations, see [Multi-Organization Accounts](https://docs.datadoghq.com/account_management/multi_organization/). When using sub-organizations, generate separate Datadog API and Application keys for each sub-org and run the migration tool once per org.
 
 ### Dry run
 
@@ -175,16 +206,33 @@ If your Datadog organization is on a regional site (EU, US3, US5, etc.), add the
 
 ### Migration
 
+#### Eppo
+
 For each selected flag, the tool:
 
-- Reads the flag's variations, allocations, and targeting rules from Eppo
+- Reads the flag's variations, targeting filters, and targeting rules from Eppo
 - Creates an equivalent flag in Datadog via the Feature Flags API
 - Enables the flag in the Datadog environments that correspond to active Eppo environments
 
 Flags of type `BANDIT` or `LAYER` are skipped (not yet supported).
 
+#### LaunchDarkly
+
+For each selected flag, the tool:
+
+- Reads the flag's variations, targeting rules, individual targets, and rollout configuration from LaunchDarkly
+- Maps the flag type (`boolean` or `multivariate`) to the corresponding Datadog value type (`BOOLEAN`, `STRING`, `NUMERIC`, or `JSON`)
+- Converts individual user targets into targeting filters with `ONE_OF` conditions on the `key` attribute
+- Translates each targeting rule's clauses into Datadog targeting rule conditions, mapping operators like `in`, `contains`, `startsWith`, `endsWith`, `matches`, and semver comparisons to their Datadog equivalents
+- Converts percentage rollouts from LaunchDarkly's 100,000-weight scale to Datadog's 0-100 scale
+- Creates a fallthrough (default) targeting filter for the environment
+- For flags that already exist in Datadog, syncs targeting for newly mapped environments instead of re-creating the flag
+- Enables the flag in Datadog environments where it was enabled (`on: true`) in LaunchDarkly
+
+Archived flags and flags using unsupported operators (`segmentMatch`, `before`, `after`) are skipped automatically.
+
 ### Evaluation
 
-The evaluation tool generates test cases automatically from each flag's targeting rules — producing inputs that should match each rule and inputs that should not. It then calls the Eppo SDK and the Datadog feature flag CDN with the same subject ID and attributes, and compares the results.
+The evaluation tool generates test cases automatically from each flag's targeting rules — producing inputs that should match each rule and inputs that should not. It then calls the source provider's SDK and the Datadog feature flag CDN with the same subject ID and attributes, and compares the results.
 
 This lets you verify that flag targeting logic was translated correctly before you cut over your application.
