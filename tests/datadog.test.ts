@@ -398,7 +398,7 @@ describe('syncAllocationsForEnvironment', () => {
 		},
 	];
 
-	// Helper to mock the GET allocations and GET flag (variants) calls
+	// Helper to mock the GET flag detail call (returns variants + allocations)
 	function mockGetPrereqs(
 		flagId: string,
 		existingAllocs: Array<{ id: string; key: string }> = [],
@@ -407,25 +407,23 @@ describe('syncAllocationsForEnvironment', () => {
 			{ id: 'variant-uuid-off', key: 'off' },
 		],
 		site = SITE,
+		envId = 'env-uuid-456',
 	) {
-		mock
-			.onGet(
-				`https://api.${site}/api/unstable/feature-flags/${flagId}/allocations`,
-			)
-			.reply(200, {
-				data: existingAllocs.map((a) => ({
-					id: a.id,
-					type: 'allocations',
-					attributes: { key: a.key },
-				})),
-			});
 		mock
 			.onGet(`https://api.${site}/api/v2/feature-flags/${flagId}`)
 			.reply(200, {
 				data: {
 					id: flagId,
 					type: 'feature-flags',
-					attributes: { variants },
+					attributes: {
+						variants,
+						feature_flag_environments: [
+							{
+								environment_id: envId,
+								allocations: existingAllocs.length ? existingAllocs : null,
+							},
+						],
+					},
 				},
 			});
 	}
