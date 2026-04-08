@@ -11,12 +11,7 @@ import type { LDFlag, LDMigrationFile } from './types.js';
 
 // ─── LaunchDarkly Migration Export ───────────────────────────────────────────
 
-type LDMigrationRowStatus =
-	| 'Created'
-	| 'Synced'
-	| 'Failed'
-	| 'Skipped'
-	| 'Not Migrated';
+type LDMigrationRowStatus = 'Created' | 'Synced' | 'Failed' | 'Skipped';
 
 interface LDMigrationSheetRow {
 	flag: LDFlag;
@@ -47,10 +42,6 @@ function buildLDMigrationRows(
 		}
 	}
 
-	for (const flag of migration.unmigrated ?? []) {
-		rows.push({ flag, status: 'Not Migrated', error: '' });
-	}
-
 	return rows.sort(
 		(a, b) =>
 			(
@@ -68,7 +59,6 @@ const LD_MIGRATION_STATUS_ARGB: Record<LDMigrationRowStatus, string> = {
 	Synced: ARGB.created,
 	Failed: ARGB.failed,
 	Skipped: ARGB.skipped,
-	'Not Migrated': ARGB.notMigrated,
 };
 
 function formatLDMaintainer(flag: LDFlag): string {
@@ -138,7 +128,7 @@ export async function exportLDMigrationToXlsx(
 		ws,
 		headers.length,
 		'Flag Migration Report — LaunchDarkly → Datadog',
-		`Migration completed on ${dateLabel}. Flags with status 'Created' require a code change: update your flag evaluation calls to reference the Datadog flag key shown in the 'Action Required' column. Flags with status 'Skipped' were not migrated (unsupported operator or archived). Flags with status 'Not Migrated' were not selected during this migration run.`,
+		`Migration completed on ${dateLabel}. Flags with status 'Created' require a code change: update your flag evaluation calls to reference the Datadog flag key shown in the 'Action Required' column. Flags with status 'Skipped' were not migrated (unsupported operator or archived).`,
 	);
 	addHeaderRow(ws, headers);
 
@@ -175,7 +165,6 @@ export async function exportLDMigrationToXlsx(
 		synced: rows.filter((r) => r.status === 'Synced').length,
 		failed: rows.filter((r) => r.status === 'Failed').length,
 		skipped: rows.filter((r) => r.status === 'Skipped').length,
-		notMigrated: rows.filter((r) => r.status === 'Not Migrated').length,
 	};
 
 	console.log();
@@ -183,7 +172,7 @@ export async function exportLDMigrationToXlsx(
 	console.log(`  ${chalk.cyan(filepath)}`);
 	console.log(
 		chalk.gray(
-			`  ${rows.length} flag${rows.length === 1 ? '' : 's'} exported (${counts.created} created, ${counts.synced} synced, ${counts.failed} failed, ${counts.skipped} skipped, ${counts.notMigrated} not migrated)`,
+			`  ${rows.length} flag${rows.length === 1 ? '' : 's'} exported (${counts.created} created, ${counts.synced} synced, ${counts.failed} failed, ${counts.skipped} skipped)`,
 		),
 	);
 	console.log();

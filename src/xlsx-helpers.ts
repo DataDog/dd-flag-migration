@@ -7,7 +7,6 @@ export const ARGB = {
 	created: 'FFD9EAD3',
 	failed: 'FFFCE8E6',
 	skipped: 'FFFFF2CC',
-	notMigrated: 'FFE8EAF6',
 	matchGreen: 'FFD9EAD3',
 	diffYellow: 'FFFFF2CC',
 	errorRed: 'FFFCE8E6',

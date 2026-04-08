@@ -12,7 +12,7 @@ import type { EppoFlag, MigrationFile } from './types.js';
 
 // ─── Migration Export ─────────────────────────────────────────────────────────
 
-type MigrationRowStatus = 'Created' | 'Failed' | 'Skipped' | 'Not Migrated';
+type MigrationRowStatus = 'Created' | 'Failed' | 'Skipped';
 
 interface MigrationSheetRow {
 	flag: EppoFlag;
@@ -41,10 +41,6 @@ function buildMigrationRows(migration: MigrationFile): MigrationSheetRow[] {
 		}
 	}
 
-	for (const flag of migration.unmigrated ?? []) {
-		rows.push({ flag, status: 'Not Migrated', error: '' });
-	}
-
 	return rows.sort(
 		(a, b) =>
 			(a.flag.owner?.name ?? '').localeCompare(b.flag.owner?.name ?? '') ||
@@ -56,7 +52,6 @@ const MIGRATION_STATUS_ARGB: Record<MigrationRowStatus, string> = {
 	Created: ARGB.created,
 	Failed: ARGB.failed,
 	Skipped: ARGB.skipped,
-	'Not Migrated': ARGB.notMigrated,
 };
 
 export async function exportMigrationToXlsx(
@@ -100,7 +95,7 @@ export async function exportMigrationToXlsx(
 		ws,
 		headers.length,
 		'Flag Migration Report — Eppo → Datadog',
-		`Migration completed on ${dateLabel}. Flags with status 'Created' require a code change: update your flag evaluation calls to reference the Datadog flag key shown in the 'Action Required' column. Flags with status 'Skipped' were not migrated (unsupported type or allocation). Flags with status 'Not Migrated' were not selected during this migration run.`,
+		`Migration completed on ${dateLabel}. Flags with status 'Created' require a code change: update your flag evaluation calls to reference the Datadog flag key shown in the 'Action Required' column. Flags with status 'Skipped' were not migrated (unsupported type or targeting).`,
 	);
 	addHeaderRow(ws, headers);
 
@@ -137,7 +132,6 @@ export async function exportMigrationToXlsx(
 		created: rows.filter((r) => r.status === 'Created').length,
 		failed: rows.filter((r) => r.status === 'Failed').length,
 		skipped: rows.filter((r) => r.status === 'Skipped').length,
-		notMigrated: rows.filter((r) => r.status === 'Not Migrated').length,
 	};
 
 	console.log();
@@ -145,7 +139,7 @@ export async function exportMigrationToXlsx(
 	console.log(`  ${chalk.cyan(filepath)}`);
 	console.log(
 		chalk.gray(
-			`  ${rows.length} flag${rows.length === 1 ? '' : 's'} exported (${counts.created} created, ${counts.failed} failed, ${counts.skipped} skipped, ${counts.notMigrated} not migrated)`,
+			`  ${rows.length} flag${rows.length === 1 ? '' : 's'} exported (${counts.created} created, ${counts.failed} failed, ${counts.skipped} skipped)`,
 		),
 	);
 	console.log();
