@@ -24,6 +24,7 @@ function buildLDMigrationRows(
 ): LDMigrationSheetRow[] {
 	const failedKeys = new Set(migration.failures.map((f) => f.key));
 	const skippedKeys = new Set((migration.skippedFlags ?? []).map((f) => f.key));
+	const syncedKeys = new Set(migration.syncedFlagKeys ?? []);
 	const errorByKey = new Map(migration.failures.map((f) => [f.key, f.error]));
 
 	const rows: LDMigrationSheetRow[] = [];
@@ -37,6 +38,8 @@ function buildLDMigrationRows(
 			});
 		} else if (skippedKeys.has(flag.key)) {
 			rows.push({ flag, status: 'Skipped', error: '' });
+		} else if (syncedKeys.has(flag.key)) {
+			rows.push({ flag, status: 'Synced', error: '' });
 		} else {
 			rows.push({ flag, status: 'Created', error: '' });
 		}

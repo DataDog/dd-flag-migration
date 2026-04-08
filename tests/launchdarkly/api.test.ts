@@ -163,8 +163,13 @@ describe('fetchProjectEnvironments', () => {
 
 		const envs = await fetchProjectEnvironments(API_KEY, 'my-project');
 		expect(envs).toEqual([
-			{ key: 'dev', name: 'Development', color: '00ff00' },
-			{ key: 'production', name: 'Production', color: 'ff0000' },
+			{ key: 'dev', name: 'Development', color: '00ff00', archived: false },
+			{
+				key: 'production',
+				name: 'Production',
+				color: 'ff0000',
+				archived: false,
+			},
 		]);
 	});
 

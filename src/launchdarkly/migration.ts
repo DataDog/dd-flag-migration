@@ -100,7 +100,27 @@ export function mapOperator(
 	}
 
 	if (directMap[op]) {
-		// Numeric/semver comparisons don't have a standard negate — pass through as-is
+		if (negate) {
+			// Negate by mapping to the inverse comparison operator
+			const negateMap: Record<string, string> = {
+				LT: 'GTE',
+				LTE: 'GT',
+				GT: 'LTE',
+				GTE: 'LT',
+				SEMVER_LT: 'SEMVER_GTE',
+				SEMVER_GT: 'SEMVER_LTE',
+				SEMVER_LTE: 'SEMVER_GT',
+				SEMVER_GTE: 'SEMVER_LT',
+			};
+			const mapped = directMap[op];
+			const negated = negateMap[mapped];
+			if (!negated) {
+				return {
+					skip: `Negated "${op}" cannot be mapped to a Datadog operator`,
+				};
+			}
+			return { operator: negated, values: strValues };
+		}
 		return { operator: directMap[op], values: strValues };
 	}
 

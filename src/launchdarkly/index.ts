@@ -159,24 +159,30 @@ async function selectLDEnvironments(
 	ldEnvs: LDEnvironment[],
 	previouslySelected: string[] = [],
 ): Promise<LDEnvironment[] | null> {
+	const activeEnvs = ldEnvs.filter((env) => !env.archived);
+	const archivedCount = ldEnvs.length - activeEnvs.length;
+
 	const previousSet = new Set(previouslySelected);
 
 	console.log();
 	console.log(
 		chalk.bold(
-			`Found ${chalk.green(String(ldEnvs.length))} environment(s) in the project`,
-		),
+			`Found ${chalk.green(String(activeEnvs.length))} environment(s) in the project`,
+		) +
+			(archivedCount > 0
+				? chalk.gray(` (${archivedCount} archived environment(s) hidden)`)
+				: ''),
 	);
 	console.log();
 
 	const pageSize = Math.max(
 		3,
-		Math.min(ldEnvs.length, (process.stdout.rows ?? 24) - 9),
+		Math.min(activeEnvs.length, (process.stdout.rows ?? 24) - 9),
 	);
 
 	return filterableCheckbox<LDEnvironment>({
 		message: 'Select LaunchDarkly environments to migrate:',
-		choices: ldEnvs.map((env) => {
+		choices: activeEnvs.map((env) => {
 			const label =
 				env.name !== env.key
 					? `${env.name} ${chalk.gray(`(${env.key})`)}`
@@ -400,6 +406,7 @@ async function executeMigration(
 	const failures: Array<{ key: string; error: string }> = [];
 	const enableFailures: Array<{ key: string; env: string; error: string }> = [];
 	const skippedFlags: Array<{ key: string; reason: string }> = [];
+	const syncedFlagKeys: string[] = [];
 	const dryRunRequests: Array<{ method: string; path: string; body: unknown }> =
 		[];
 
@@ -500,6 +507,7 @@ async function executeMigration(
 					`${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} ` +
 						`(${syncFilterLabel}${syncRuleLabel}${enableLabel})`,
 				);
+				syncedFlagKeys.push(flag.key);
 				synced++;
 			} else {
 				try {
@@ -552,6 +560,7 @@ async function executeMigration(
 					spinner.succeed(
 						`Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${enableLabel})`,
 					);
+					syncedFlagKeys.push(flag.key);
 					synced++;
 				} catch (err) {
 					spinner.fail(
@@ -722,6 +731,7 @@ async function executeMigration(
 			failures,
 			enableFailures,
 			skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
+			syncedFlagKeys: syncedFlagKeys.length > 0 ? syncedFlagKeys : undefined,
 			flags: detailedFlags,
 			unmigrated: unmigratedFlags.length > 0 ? unmigratedFlags : undefined,
 			environmentMapping: environmentMappingArr,

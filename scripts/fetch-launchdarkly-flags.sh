@@ -103,15 +103,20 @@ api_get() {
     RL_ROUTE_RESET=$(grep -i '^x-ratelimit-reset:' "$RESPONSE_HEADERS_FILE" | tr -d '\r' | awk '{print $2}' || true)
     RL_TOKEN_RESET=$(grep -i '^x-ratelimit-auth-token-reset:' "$RESPONSE_HEADERS_FILE" | tr -d '\r' | awk '{print $2}' || true)
 
-    # If we got 429, sleep and retry once
+    # If we got 429, sleep and retry (max 3 attempts)
     if [[ "$HTTP_STATUS" == "429" ]]; then
-        log "Got 429 Too Many Requests — backing off"
+        local retries="${2:-0}"
+        if (( retries >= 3 )); then
+            log "ERROR: Got 429 Too Many Requests after $retries retries — giving up"
+            return 1
+        fi
+        log "Got 429 Too Many Requests — backing off (attempt $((retries + 1))/3)"
         if [[ -n "$RL_ROUTE_RESET" ]]; then
             sleep_until_reset "$RL_ROUTE_RESET" "429-retry"
         else
             sleep 10
         fi
-        api_get "$url"
+        api_get "$url" "$((retries + 1))"
         return
     fi
 

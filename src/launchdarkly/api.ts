@@ -50,8 +50,15 @@ export async function fetchProjectEnvironments(
 ): Promise<LDEnvironment[]> {
 	const response = await axios.get<{
 		environments:
-			| { items: Array<{ key: string; name: string; color: string }> }
-			| Array<{ key: string; name: string; color: string }>;
+			| {
+					items: Array<{
+						key: string;
+						name: string;
+						color: string;
+						archived?: boolean;
+					}>;
+			  }
+			| Array<{ key: string; name: string; color: string; archived?: boolean }>;
 	}>(`${LD_BASE_URL}/api/v2/projects/${projectKey}`, {
 		headers: ldHeaders(apiKey),
 		params: { expand: 'environments' },
@@ -60,7 +67,12 @@ export async function fetchProjectEnvironments(
 	const rawEnvs = response.data.environments;
 	const envs = Array.isArray(rawEnvs) ? rawEnvs : (rawEnvs?.items ?? []);
 	return envs
-		.map((e) => ({ key: e.key, name: e.name, color: e.color }))
+		.map((e) => ({
+			key: e.key,
+			name: e.name,
+			color: e.color,
+			archived: e.archived ?? false,
+		}))
 		.sort((a, b) => a.name.localeCompare(b.name));
 }
 

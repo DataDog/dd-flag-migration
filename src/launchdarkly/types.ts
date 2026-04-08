@@ -4,6 +4,7 @@ export interface LDEnvironment {
 	key: string;
 	name: string;
 	color: string;
+	archived: boolean;
 }
 
 // ─── LaunchDarkly Flag Types ─────────────────────────────────────────────────
@@ -112,6 +113,7 @@ export interface LDMigrationFile {
 	failures: Array<{ key: string; error: string }>;
 	enableFailures: Array<{ key: string; env: string; error: string }>;
 	skippedFlags?: Array<{ key: string; reason: string }>;
+	syncedFlagKeys?: string[];
 	flags: LDFlag[];
 	unmigrated?: LDFlag[];
 	environmentMapping: Array<{
