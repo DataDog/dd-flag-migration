@@ -123,6 +123,52 @@ export async function fetchFlag(
 	return response.data;
 }
 
+// ─── Releases ────────────────────────────────────────────────────────────────
+
+export interface LDReleasePhase {
+	_id: string;
+	_name: string;
+	status: 'NotStarted' | 'ReadyToStart' | 'Started' | 'Paused' | 'Complete';
+	complete: boolean;
+}
+
+export interface LDRelease {
+	phases: LDReleasePhase[];
+}
+
+/**
+ * Fetch the release for a flag. Returns null if the flag has no release
+ * (404 from the API).
+ */
+export async function fetchFlagRelease(
+	apiKey: string,
+	projectKey: string,
+	flagKey: string,
+): Promise<LDRelease | null> {
+	try {
+		const response = await axios.get<LDRelease>(
+			`${LD_BASE_URL}/api/v2/flags/${projectKey}/${flagKey}/release`,
+			{ headers: ldHeaders(apiKey) },
+		);
+		return response.data;
+	} catch (err) {
+		if (axios.isAxiosError(err) && err.response?.status === 404) {
+			return null;
+		}
+		throw err;
+	}
+}
+
+/**
+ * Check if a flag's release has any in-progress (non-complete) phases.
+ * Returns true if the progressive rollout is still active.
+ */
+export function isReleaseInProgress(release: LDRelease): boolean {
+	return release.phases.some(
+		(phase) => phase.status !== 'Complete',
+	);
+}
+
 // ─── Validation ──────────────────────────────────────────────────────────────
 
 /** Validate a LaunchDarkly API key by attempting to list projects. */

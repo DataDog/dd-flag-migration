@@ -1,4 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
+import { isReleaseInProgress, type LDRelease } from '../../src/launchdarkly/api.js';
 import {
 	buildAllocations,
 	buildTargetingRules,
@@ -346,6 +347,114 @@ describe('shouldSkipFlag', () => {
 		expect(shouldSkipFlag(flag, ['dev'])).toEqual({ skip: false });
 		// Checking production — should skip
 		expect(shouldSkipFlag(flag, ['production']).skip).toBe(true);
+	});
+
+	it('flags progressive rollout on fallthrough for release status check', () => {
+		const flag = makeFlag({
+			key: 'test',
+			environments: {
+				production: {
+					on: true,
+					archived: false,
+					targets: [],
+					contextTargets: [],
+					rules: [],
+					fallthrough: {
+						progressiveRolloutConfig: {
+							controlVariation: 1,
+							endVariation: 0,
+							steps: [
+								{ rolloutWeight: 10000, duration: { quantity: 1, unit: 'hour' } },
+								{ rolloutWeight: 50000, duration: { quantity: 1, unit: 'hour' } },
+							],
+						},
+					},
+					offVariation: 1,
+					prerequisites: [],
+					_environmentName: 'Production',
+				},
+			},
+		});
+		const result = shouldSkipFlag(flag, ['production']);
+		expect(result.skip).toBe(false);
+		expect(result.hasProgressiveRollout).toBe(true);
+	});
+
+	it('flags progressive rollout on a rule for release status check', () => {
+		const flag = makeFlag({
+			key: 'test',
+			environments: {
+				production: {
+					on: true,
+					archived: false,
+					targets: [],
+					contextTargets: [],
+					rules: [
+						{
+							_id: 'r1',
+							progressiveRolloutConfig: {
+								controlVariation: 1,
+								endVariation: 0,
+								steps: [
+									{ rolloutWeight: 50000, duration: { quantity: 2, unit: 'hour' } },
+								],
+							},
+							clauses: [makeClause({ op: 'in' })],
+							trackEvents: false,
+						},
+					],
+					fallthrough: { variation: 0 },
+					offVariation: 1,
+					prerequisites: [],
+					_environmentName: 'Production',
+				},
+			},
+		});
+		const result = shouldSkipFlag(flag, ['production']);
+		expect(result.skip).toBe(false);
+		expect(result.hasProgressiveRollout).toBe(true);
+	});
+});
+
+// ─── isReleaseInProgress ──────────────────────────────────────────────────────
+
+describe('isReleaseInProgress', () => {
+	it('returns true when a phase is still in progress', () => {
+		const release: LDRelease = {
+			phases: [
+				{ _id: 'p1', _name: 'Phase 1', status: 'Complete', complete: true },
+				{ _id: 'p2', _name: 'Phase 2', status: 'Started', complete: false },
+			],
+		};
+		expect(isReleaseInProgress(release)).toBe(true);
+	});
+
+	it('returns false when all phases are complete', () => {
+		const release: LDRelease = {
+			phases: [
+				{ _id: 'p1', _name: 'Phase 1', status: 'Complete', complete: true },
+				{ _id: 'p2', _name: 'Phase 2', status: 'Complete', complete: true },
+			],
+		};
+		expect(isReleaseInProgress(release)).toBe(false);
+	});
+
+	it('returns true when a phase is paused', () => {
+		const release: LDRelease = {
+			phases: [
+				{ _id: 'p1', _name: 'Phase 1', status: 'Paused', complete: false },
+			],
+		};
+		expect(isReleaseInProgress(release)).toBe(true);
+	});
+
+	it('returns true when a phase is not started', () => {
+		const release: LDRelease = {
+			phases: [
+				{ _id: 'p1', _name: 'Phase 1', status: 'NotStarted', complete: false },
+			],
+		};
+		expect(isReleaseInProgress(release)).toBe(true);
 	});
 });
 

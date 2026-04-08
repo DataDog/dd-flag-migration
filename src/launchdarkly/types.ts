@@ -31,10 +31,21 @@ export interface LDRollout {
 	contextKind?: string;
 }
 
+export interface LDProgressiveRolloutConfig {
+	contextKind?: string;
+	controlVariation: number;
+	endVariation: number;
+	steps: Array<{
+		rolloutWeight: number;
+		duration: { quantity: number; unit: string };
+	}>;
+}
+
 export interface LDRule {
 	_id: string;
 	variation?: number;
 	rollout?: LDRollout;
+	progressiveRolloutConfig?: LDProgressiveRolloutConfig;
 	clauses: LDClause[];
 	trackEvents: boolean;
 	description?: string;
@@ -59,7 +70,7 @@ export interface LDEnvironmentConfig {
 	targets: LDTarget[];
 	contextTargets: unknown[];
 	rules: LDRule[];
-	fallthrough: { variation?: number; rollout?: LDRollout };
+	fallthrough: { variation?: number; rollout?: LDRollout; progressiveRolloutConfig?: LDProgressiveRolloutConfig };
 	offVariation: number;
 	prerequisites: LDPrerequisite[];
 	_environmentName: string;

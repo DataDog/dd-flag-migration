@@ -24,9 +24,11 @@ import { toSyncRequests } from '../migration.js';
 import type { DatadogCreateFlagRequest, DatadogEnvironment } from '../types.js';
 import {
 	fetchFlag,
+	fetchFlagRelease,
 	fetchFlags,
 	fetchProjectEnvironments,
 	fetchProjects,
+	isReleaseInProgress,
 	type LDProject,
 	validateLDApiKey,
 } from './api.js';
@@ -423,6 +425,31 @@ async function executeMigration(
 			});
 			skipped++;
 			continue;
+		}
+
+		// Check progressive rollout status via releases API
+		if (skipResult.hasProgressiveRollout) {
+			try {
+				const release = await fetchFlagRelease(ldApiKey, projectKey, flag.key);
+				if (release && isReleaseInProgress(release)) {
+					spinner.warn(`Skipped ${chalk.cyan(flag.key)} — progressive rollout is in progress`);
+					skippedFlags.push({
+						key: flag.key,
+						reason: 'Progressive rollout is in progress',
+					});
+					skipped++;
+					continue;
+				}
+				// Release is complete or not found — safe to migrate
+			} catch (err) {
+				spinner.warn(`Skipped ${chalk.cyan(flag.key)} — failed to check progressive rollout status`);
+				skippedFlags.push({
+					key: flag.key,
+					reason: 'Failed to check progressive rollout status',
+				});
+				skipped++;
+				continue;
+			}
 		}
 
 		if (skipResult.warn) {

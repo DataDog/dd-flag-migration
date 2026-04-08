@@ -138,6 +138,7 @@ export interface SkipResult {
 	skip: boolean;
 	reason?: string;
 	warn?: string;
+	hasProgressiveRollout?: boolean;
 }
 
 /** Check if a flag should be skipped, checking only the selected environments */
@@ -146,7 +147,16 @@ export function shouldSkipFlag(flag: LDFlag, envNames: string[]): SkipResult {
 		const envConfig = flag.environments?.[envName];
 		if (!envConfig) continue;
 
+		// Check for progressive rollouts — need async release status check
+		if (envConfig.fallthrough.progressiveRolloutConfig) {
+			return { skip: false, hasProgressiveRollout: true };
+		}
+
 		for (const rule of envConfig.rules) {
+			if (rule.progressiveRolloutConfig) {
+				return { skip: false, hasProgressiveRollout: true };
+			}
+
 			for (const clause of rule.clauses) {
 				if (UNSUPPORTED_OPS.has(clause.op)) {
 					const result = mapOperator(clause.op, clause.negate, clause.values);
