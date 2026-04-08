@@ -25,7 +25,7 @@ describe('fetchDatadogEnvironments', () => {
 	let mock: AxiosMockAdapter;
 
 	beforeEach(() => {
-		mock = new AxiosMockAdapter(axios);
+		mock = new AxiosMockAdapter(axios as never);
 	});
 
 	afterEach(() => {
@@ -129,7 +129,7 @@ describe('validateDatadogKeys', () => {
 	let mock: AxiosMockAdapter;
 
 	beforeEach(() => {
-		mock = new AxiosMockAdapter(axios);
+		mock = new AxiosMockAdapter(axios as never);
 	});
 
 	afterEach(() => {
@@ -166,7 +166,7 @@ describe('fetchDatadogFlagKeys', () => {
 	let mock: AxiosMockAdapter;
 
 	beforeEach(() => {
-		mock = new AxiosMockAdapter(axios);
+		mock = new AxiosMockAdapter(axios as never);
 	});
 
 	afterEach(() => {
@@ -255,7 +255,7 @@ describe('createFeatureFlag', () => {
 	let mock: AxiosMockAdapter;
 
 	beforeEach(() => {
-		mock = new AxiosMockAdapter(axios);
+		mock = new AxiosMockAdapter(axios as never);
 	});
 
 	afterEach(() => {
@@ -324,7 +324,7 @@ describe('enableFeatureFlagEnvironment', () => {
 	let mock: AxiosMockAdapter;
 
 	beforeEach(() => {
-		mock = new AxiosMockAdapter(axios);
+		mock = new AxiosMockAdapter(axios as never);
 	});
 
 	afterEach(() => {
@@ -379,7 +379,7 @@ describe('syncAllocationsForEnvironment', () => {
 	let mock: AxiosMockAdapter;
 
 	beforeEach(() => {
-		mock = new AxiosMockAdapter(axios);
+		mock = new AxiosMockAdapter(axios as never);
 	});
 
 	afterEach(() => {

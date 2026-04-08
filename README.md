@@ -2,7 +2,7 @@
 
 A CLI tool for migrating feature flags from your current provider into [Datadog Feature Flags](https://docs.datadoghq.com/getting_started/feature_flags/), with side-by-side evaluation to verify the migration before you switch over.
 
-**Supported providers:** Eppo (LaunchDarkly and Statsig coming soon)
+**Supported providers:** Eppo (LaunchDarkly coming soon)
 
 ---
 

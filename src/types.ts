@@ -67,6 +67,7 @@ export interface DatadogEnvironment {
 export interface Config {
 	eppoApiKey?: string;
 	eppoSdkKeys?: Record<string, string>;
+	launchdarklyApiKey?: string;
 	datadogApiKey?: string;
 	datadogAppKey?: string;
 	datadogClientToken?: string;
@@ -74,7 +75,7 @@ export interface Config {
 }
 
 export interface MigrationEnvironmentMapping {
-	sourceEnvId: number;
+	sourceEnvId: number | string;
 	sourceEnvName: string;
 	datadogEnvId: string;
 	datadogEnvName: string;

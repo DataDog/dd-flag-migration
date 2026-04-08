@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
 import { confirm, password, select } from '@inquirer/prompts';
@@ -7,52 +6,44 @@ import chalk from 'chalk';
 import ora from 'ora';
 import {
 	CONFIG_DIR,
-	getDatadogKeys,
-	getDatadogSite,
-	getEppoApiKey,
-	saveDatadogKeys,
-	saveEppoApiKey,
-} from './config.js';
+	getLaunchDarklyApiKey,
+	saveLaunchDarklyApiKey,
+} from '../config.js';
 import {
 	createFeatureFlag,
 	enableFeatureFlagEnvironment,
 	fetchDatadogEnvironments,
 	fetchDatadogFlagKeys,
 	syncAllocationsForEnvironment,
-	validateDatadogKeys,
-} from './datadog.js';
+} from '../datadog.js';
 import {
-	extractEnvironments,
-	fetchEppoFlags,
-	validateEppoApiKey,
-} from './eppo.js';
-import { filterableCheckbox } from './filterable-checkbox.js';
+	filterableCheckbox,
+	filterableSelect,
+} from '../filterable-checkbox.js';
+import { toSyncRequests } from '../migration.js';
+import type { DatadogCreateFlagRequest, DatadogEnvironment } from '../types.js';
+import {
+	fetchFlag,
+	fetchFlags,
+	fetchProjectEnvironments,
+	fetchProjects,
+	type LDProject,
+	validateLDApiKey,
+} from './api.js';
 import {
 	buildAllocations,
+	buildVariants,
 	getEnvsToEnable,
-	mapVariationType,
-	toSyncRequests,
+	mapFlagType,
+	shouldSkipFlag,
 } from './migration.js';
-import type {
-	DatadogCreateFlagRequest,
-	DatadogEnvironment,
-	DryRunFile,
-	EppoFlag,
-	EppoFlagEnvironment,
-	MigrationEnvironmentMapping,
-	MigrationFile,
-} from './types.js';
+import type { LDEnvironment, LDFlag, LDMigrationFile } from './types.js';
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// ─── UI Helpers ──────────────────────────────────────────────────────────────
 
-const PROVIDERS = [
-	{ name: 'Eppo', value: 'eppo' },
-	{ name: 'LaunchDarkly', value: 'launchdarkly' },
-] as const;
-
-type ProviderValue = (typeof PROVIDERS)[number]['value'];
-
-// ─── UI Helpers ───────────────────────────────────────────────────────────────
+function clearScreen(): void {
+	process.stdout.write('\x1Bc');
+}
 
 function printHeader(): void {
 	const purple = chalk.bold.hex('#632CA6');
@@ -65,15 +56,11 @@ function printHeader(): void {
 	);
 	console.log(
 		purple('║') +
-			chalk.hex('#632CA6')('            Migrate to Datadog            ') +
+			chalk.hex('#632CA6')('          LaunchDarkly → Datadog          ') +
 			purple('║'),
 	);
 	console.log(purple('╚══════════════════════════════════════════╝'));
 	console.log();
-}
-
-function clearScreen(): void {
-	process.stdout.write('\x1Bc');
 }
 
 function ddEnvLabel(env: DatadogEnvironment): string {
@@ -81,11 +68,6 @@ function ddEnvLabel(env: DatadogEnvironment): string {
 		? `  ${chalk.bgHex('#632CA6').white(' Prod ')}`
 		: '';
 	return `${env.name}${prodBadge}`;
-}
-
-function envLabel(env: EppoFlagEnvironment, flagCount: number): string {
-	const prodBadge = env.is_production ? `  ${chalk.bgRed.white(' Prod ')}` : '';
-	return `${env.name}${prodBadge}  ${chalk.gray(`(${flagCount} flags)`)}`;
 }
 
 function formatAxiosError(err: unknown): string {
@@ -101,35 +83,25 @@ function formatAxiosError(err: unknown): string {
 	return `${method} ${url} — ${status ?? 'no status'}: ${bodyPreview}`;
 }
 
-function flagLabel(flag: EppoFlag, inDatadog: boolean): string {
+function flagLabel(flag: LDFlag, inDatadog: boolean): string {
 	const indicator = inDatadog ? chalk.green('✓') : ' ';
 	const name = flag.name;
 	const key = chalk.gray(`(${flag.key})`);
 	const badge = inDatadog
 		? `  ${chalk.bgGreen.black(' In Datadog — will sync targeting ')}`
 		: '';
-	return `${indicator}  ${name}  ${key}${badge}`;
+	const kind = flag.kind === 'boolean' ? '' : chalk.dim(` [${flag.kind}]`);
+	return `${indicator}  ${name}  ${key}${kind}${badge}`;
 }
 
-// ─── Prompt Steps ─────────────────────────────────────────────────────────────
+// ─── Prompt Steps ────────────────────────────────────────────────────────────
 
-async function selectProvider(): Promise<ProviderValue> {
-	return select<ProviderValue>({
-		message: 'Which feature flagging solution are you migrating from?',
-		choices: PROVIDERS.map((p) => ({
-			name: p.name,
-			value: p.value,
-			short: p.name,
-		})),
-	});
-}
-
-async function promptForApiKey(): Promise<string> {
-	const storedKey = getEppoApiKey();
+async function promptForLDApiKey(): Promise<string> {
+	const storedKey = getLaunchDarklyApiKey();
 
 	if (storedKey) {
 		const useStored = await confirm({
-			message: 'Use your saved Eppo API key?',
+			message: 'Use your saved LaunchDarkly API key?',
 			default: true,
 		});
 		if (useStored) return storedKey;
@@ -138,88 +110,98 @@ async function promptForApiKey(): Promise<string> {
 	// eslint-disable-next-line no-constant-condition
 	while (true) {
 		const apiKey = await password({
-			message: 'Enter your Eppo API key:',
+			message: 'Enter your LaunchDarkly API key:',
 			validate: (input) =>
 				input.trim().length > 0 ? true : 'API key cannot be empty',
 		});
 
 		const spinner = ora('Validating API key…').start();
-		const valid = await validateEppoApiKey(apiKey.trim());
+		const valid = await validateLDApiKey(apiKey.trim());
 
 		if (valid) {
 			spinner.succeed('API key validated!');
-			saveEppoApiKey(apiKey.trim());
+			saveLaunchDarklyApiKey(apiKey.trim());
 			console.log(chalk.gray('  Key saved for future sessions.\n'));
 			return apiKey.trim();
-		} else {
-			spinner.fail(chalk.red('Invalid API key. Please try again.'));
 		}
+		spinner.fail(chalk.red('Invalid API key. Please try again.'));
 	}
 }
 
-async function promptForDatadogKeys(): Promise<{
-	apiKey: string;
-	appKey: string;
-}> {
-	const stored = getDatadogKeys();
+async function selectProject(projects: LDProject[]): Promise<LDProject | null> {
+	console.log();
+	console.log(
+		chalk.bold(
+			`Found ${chalk.green(String(projects.length))} LaunchDarkly project(s)`,
+		),
+	);
+	console.log();
 
-	if (stored.apiKey && stored.appKey) {
-		const useStored = await confirm({
-			message: 'Use your saved Datadog API keys?',
-			default: true,
-		});
-		if (useStored) return { apiKey: stored.apiKey, appKey: stored.appKey };
-	}
+	const pageSize = Math.max(
+		3,
+		Math.min(projects.length, (process.stdout.rows ?? 24) - 9),
+	);
 
-	// eslint-disable-next-line no-constant-condition
-	while (true) {
-		const apiKey = await password({
-			message: 'Enter your Datadog API key:',
-			validate: (input) =>
-				input.trim().length > 0 ? true : 'API key cannot be empty',
-		});
-		console.log(
-			chalk.gray(
-				'  Your Application key needs these scopes: feature_flag_config_read,\n' +
-					'  feature_flag_config_write, feature_flag_environment_config_read,\n' +
-					'  feature_flag_environment_config_write',
-			),
-		);
-		const appKey = await password({
-			message: 'Enter your Datadog Application key:',
-			validate: (input) =>
-				input.trim().length > 0 ? true : 'Application key cannot be empty',
-		});
+	const choices = projects.map((p) => ({
+		name: `${p.name}  ${chalk.gray(`(${p.key})`)}`,
+		value: p,
+		short: p.name,
+	}));
 
-		const spinner = ora('Validating Datadog keys…').start();
-		const valid = await validateDatadogKeys(
-			apiKey.trim(),
-			appKey.trim(),
-			getDatadogSite() ?? 'datadoghq.com',
-		);
+	return filterableSelect<LDProject>({
+		message: 'Select a LaunchDarkly project to migrate:',
+		choices,
+		pageSize,
+	});
+}
 
-		if (valid) {
-			spinner.succeed('Datadog keys validated!');
-			saveDatadogKeys(apiKey.trim(), appKey.trim());
-			console.log(chalk.gray('  Keys saved for future sessions.\n'));
-			return { apiKey: apiKey.trim(), appKey: appKey.trim() };
-		} else {
-			spinner.fail(chalk.red('Invalid Datadog API keys. Please try again.'));
-		}
-	}
+async function selectLDEnvironments(
+	ldEnvs: LDEnvironment[],
+	previouslySelected: string[] = [],
+): Promise<LDEnvironment[] | null> {
+	const previousSet = new Set(previouslySelected);
+
+	console.log();
+	console.log(
+		chalk.bold(
+			`Found ${chalk.green(String(ldEnvs.length))} environment(s) in the project`,
+		),
+	);
+	console.log();
+
+	const pageSize = Math.max(
+		3,
+		Math.min(ldEnvs.length, (process.stdout.rows ?? 24) - 9),
+	);
+
+	return filterableCheckbox<LDEnvironment>({
+		message: 'Select LaunchDarkly environments to migrate:',
+		choices: ldEnvs.map((env) => {
+			const label =
+				env.name !== env.key
+					? `${env.name} ${chalk.gray(`(${env.key})`)}`
+					: env.key;
+			return {
+				name: label,
+				value: env,
+				checked: previousSet.has(env.key),
+			};
+		}),
+		pageSize,
+	});
 }
 
 async function linkEnvironments(
-	eppoEnvs: EppoFlagEnvironment[],
+	ldEnvs: LDEnvironment[],
 	ddEnvs: DatadogEnvironment[],
-	previousMapping: Map<number, DatadogEnvironment>,
-): Promise<Map<number, DatadogEnvironment> | null> {
-	const mapping = new Map<number, DatadogEnvironment>(previousMapping);
+	previousMapping: Map<string, DatadogEnvironment>,
+): Promise<Map<string, DatadogEnvironment> | null> {
+	const mapping = new Map<string, DatadogEnvironment>(previousMapping);
 	let i = 0;
 
-	while (i < eppoEnvs.length) {
-		const eppoEnv = eppoEnvs[i];
-		const prevChoice = mapping.get(eppoEnv.id);
+	while (i < ldEnvs.length) {
+		const ldEnv = ldEnvs[i];
+		const prevChoice = mapping.get(ldEnv.key);
 
 		clearScreen();
 		printHeader();
@@ -227,10 +209,10 @@ async function linkEnvironments(
 			chalk.bold('Linking environment ') +
 				chalk.green(`${i + 1}`) +
 				chalk.bold(' of ') +
-				chalk.green(`${eppoEnvs.length}`) +
+				chalk.green(`${ldEnvs.length}`) +
 				chalk.bold(':') +
-				`  ${chalk.cyan(eppoEnv.name)}` +
-				(eppoEnv.is_production ? `  ${chalk.bgRed.white(' Prod ')}` : ''),
+				`  ${chalk.cyan(ldEnv.name)}` +
+				(ldEnv.name !== ldEnv.key ? chalk.gray(` (${ldEnv.key})`) : ''),
 		);
 		console.log();
 
@@ -250,10 +232,10 @@ async function linkEnvironments(
 		});
 
 		if (result === null) {
-			if (i === 0) return null; // back to Eppo env selection
+			if (i === 0) return null;
 			i--;
 		} else {
-			mapping.set(eppoEnv.id, result);
+			mapping.set(ldEnv.key, result);
 			i++;
 		}
 	}
@@ -261,67 +243,18 @@ async function linkEnvironments(
 	return mapping;
 }
 
-async function selectEnvironments(
-	flags: EppoFlag[],
-	environments: EppoFlagEnvironment[],
-	previouslySelected: EppoFlagEnvironment[] = [],
-): Promise<EppoFlagEnvironment[] | null> {
-	const flagCount = new Map<number, number>();
-	for (const flag of flags) {
-		for (const env of flag.environments ?? []) {
-			flagCount.set(env.id, (flagCount.get(env.id) ?? 0) + 1);
-		}
-	}
-
-	const previousIds = new Set(previouslySelected.map((e) => e.id));
-
-	console.log();
-	console.log(
-		chalk.bold(
-			`Found ${chalk.green(String(environments.length))} environments in Eppo`,
-		),
-	);
-	console.log();
-
-	const pageSize = Math.max(
-		3,
-		Math.min(environments.length, (process.stdout.rows ?? 24) - 9),
-	);
-
-	return filterableCheckbox<EppoFlagEnvironment>({
-		message: 'Select environments to migrate from:',
-		choices: environments.map((env) => ({
-			name: envLabel(env, flagCount.get(env.id) ?? 0),
-			value: env,
-			checked: previousIds.has(env.id),
-		})),
-		pageSize,
-	});
-}
-
 async function selectFlags(
-	flags: EppoFlag[],
+	flags: LDFlag[],
 	datadogKeys: Map<string, string>,
-	selectedEnvs: EppoFlagEnvironment[],
-	previouslySelected: EppoFlag[] = [],
-): Promise<EppoFlag[] | null> {
-	const selectedEnvIds = new Set(selectedEnvs.map((e) => e.id));
-	const visibleFlags =
-		selectedEnvIds.size > 0
-			? flags.filter((f) =>
-					f.environments?.some((e) => selectedEnvIds.has(e.id)),
-				)
-			: flags;
-
-	const inDatadogCount = visibleFlags.filter((f) =>
-		datadogKeys.has(f.key),
-	).length;
+	previouslySelected: LDFlag[] = [],
+): Promise<LDFlag[] | null> {
+	const inDatadogCount = flags.filter((f) => datadogKeys.has(f.key)).length;
 	const previousKeys = new Set(previouslySelected.map((f) => f.key));
 
 	console.log();
 	console.log(
 		chalk.bold(
-			`Found ${chalk.green(String(visibleFlags.length))} feature flags in Eppo`,
+			`Found ${chalk.green(String(flags.length))} feature flags in the project`,
 		),
 	);
 	if (inDatadogCount > 0) {
@@ -333,18 +266,16 @@ async function selectFlags(
 	}
 	console.log();
 
-	const sortedFlags = visibleFlags.slice().sort((a, b) => {
-		// Flags already in Datadog float to the top
+	const sortedFlags = flags.slice().sort((a, b) => {
 		const aDD = datadogKeys.has(a.key) ? 0 : 1;
 		const bDD = datadogKeys.has(b.key) ? 0 : 1;
 		if (aDD !== bDD) return aDD - bDD;
 		return a.name.localeCompare(b.name);
 	});
 
-	// Reserve lines for: found header (~3), prompt message, filter line, help tip, buffer
 	const pageSize = Math.max(5, (process.stdout.rows ?? 24) - 9);
 
-	return filterableCheckbox<EppoFlag>({
+	return filterableCheckbox<LDFlag>({
 		message: 'Select flags to migrate to Datadog:',
 		choices: sortedFlags.map((flag) => ({
 			name: flagLabel(flag, datadogKeys.has(flag.key)),
@@ -355,18 +286,49 @@ async function selectFlags(
 	});
 }
 
+// ─── Flag Detail Loading ─────────────────────────────────────────────────────
+
+/** Fetch full flag details (with environment configs) for selected flags. */
+async function loadFlagDetails(
+	ldApiKey: string,
+	projectKey: string,
+	flags: LDFlag[],
+): Promise<LDFlag[]> {
+	const detailed: LDFlag[] = [];
+	for (const flag of flags) {
+		if (flag.environments) {
+			detailed.push(flag);
+		} else {
+			const full = await fetchFlag(ldApiKey, projectKey, flag.key);
+			detailed.push(full);
+		}
+	}
+	return detailed;
+}
+
+// ─── Migration Execution ─────────────────────────────────────────────────────
+
 type ConfirmAction = 'migrate' | 'select-more' | 'cancel';
 
-async function confirmMigration(
-	flags: EppoFlag[],
-	allEppoFlags: EppoFlag[],
-	ddApiKey: string,
-	ddAppKey: string,
-	envMapping: Map<number, DatadogEnvironment>,
+interface MigrationOptions {
+	ldApiKey: string;
+	projectKey: string;
+	ddApiKey: string;
+	ddAppKey: string;
+	ddSite: string;
+	dryRun: boolean;
+}
+
+async function executeMigration(
+	flags: LDFlag[],
+	allFlags: LDFlag[],
+	envMapping: Map<string, DatadogEnvironment>,
 	datadogKeys: Map<string, string>,
-	provider: string,
-	site: string,
+	selectedEnvs: string[],
+	opts: MigrationOptions,
 ): Promise<ConfirmAction> {
+	const { ldApiKey, projectKey, ddApiKey, ddAppKey, ddSite, dryRun } = opts;
+
 	if (flags.length === 0) {
 		console.log(chalk.yellow('\nNo flags selected — nothing to migrate.'));
 		const action = await select<'select-more' | 'cancel'>({
@@ -383,9 +345,9 @@ async function confirmMigration(
 	console.log(
 		chalk.bold(`You selected ${chalk.green(String(flags.length))} flag(s):`),
 	);
-	flags.forEach((f) => {
+	for (const f of flags) {
 		console.log(chalk.gray(`  •  ${f.name}`) + chalk.dim(`  (${f.key})`));
-	});
+	}
 	console.log();
 
 	const action = await select<ConfirmAction>({
@@ -409,14 +371,27 @@ async function confirmMigration(
 		return 'cancel';
 	}
 
-	if (action === 'select-more') {
-		return 'select-more';
+	if (action === 'select-more') return 'select-more';
+
+	// Fetch full flag details for selected flags
+	const detailSpinner = ora(
+		`Fetching details for ${flags.length} flag(s)…`,
+	).start();
+	let detailedFlags: LDFlag[];
+	try {
+		detailedFlags = await loadFlagDetails(ldApiKey, projectKey, flags);
+		detailSpinner.succeed(`Loaded details for ${detailedFlags.length} flag(s)`);
+	} catch (err) {
+		detailSpinner.fail('Failed to fetch flag details');
+		console.error(chalk.red(`  ${formatAxiosError(err)}`));
+		return 'cancel';
 	}
 
 	if (dryRun) {
 		console.log(chalk.bold.yellow('  Dry run — no flags will be created\n'));
 	}
 	console.log();
+
 	let created = 0,
 		synced = 0,
 		skipped = 0,
@@ -428,46 +403,36 @@ async function confirmMigration(
 	const dryRunRequests: Array<{ method: string; path: string; body: unknown }> =
 		[];
 
-	for (const flag of flags) {
+	for (const flag of detailedFlags) {
 		let spinner = ora(`Migrating ${chalk.cyan(flag.key)}…`).start();
 
-		if (flag.type === 'BANDIT') {
-			spinner.warn(
-				`Skipped ${chalk.cyan(flag.key)} — BANDIT type not supported`,
-			);
+		// Check skip conditions
+		const skipResult = shouldSkipFlag(flag, selectedEnvs);
+		if (skipResult.skip) {
+			spinner.warn(`Skipped ${chalk.cyan(flag.key)} — ${skipResult.reason}`);
 			skippedFlags.push({
 				key: flag.key,
-				reason: 'BANDIT flags not supported',
+				reason: skipResult.reason ?? 'Unknown',
 			});
 			skipped++;
 			continue;
 		}
-		if (flag.type === 'LAYER') {
-			spinner.warn(
-				`Skipped ${chalk.cyan(flag.key)} — LAYER type not supported`,
-			);
-			skippedFlags.push({ key: flag.key, reason: 'LAYER flags not supported' });
+
+		if (skipResult.warn) {
+			console.log(chalk.yellow(`  ⚠ ${flag.key}: ${skipResult.warn}`));
+		}
+
+		if (flag.archived) {
+			spinner.warn(`Skipped ${chalk.cyan(flag.key)} — flag is archived`);
+			skippedFlags.push({ key: flag.key, reason: 'Flag is archived' });
 			skipped++;
 			continue;
 		}
-		if ((flag.allocations ?? []).some((a) => a.type === 'SWITCHBACK')) {
-			spinner.warn(
-				`Skipped ${chalk.cyan(flag.key)} — SWITCHBACK targeting not supported`,
-			);
-			skippedFlags.push({
-				key: flag.key,
-				reason: 'SWITCHBACK targeting not supported',
-			});
-			skipped++;
-			continue;
-		}
-		const variants = (flag.variations ?? []).map((v) => ({
-			key: v.variant_key,
-			name: v.name,
-			value: v.variant_key,
-		}));
+
+		const variants = buildVariants(flag);
 		if (variants.length === 0) {
 			spinner.warn(`Skipped ${chalk.cyan(flag.key)} — no variants`);
+			skippedFlags.push({ key: flag.key, reason: 'No variants' });
 			skipped++;
 			continue;
 		}
@@ -476,7 +441,6 @@ async function confirmMigration(
 		const envsToEnable = getEnvsToEnable(flag, envMapping);
 		const existingFlagId = datadogKeys.get(flag.key);
 
-		// Count targeting rules for reporting (all environments — used for new-flag path)
 		const allRuleCount = allocations.reduce(
 			(sum, a) => sum + (a.targeting_rules?.length ?? 0),
 			0,
@@ -485,7 +449,6 @@ async function confirmMigration(
 		const allRuleLabel = allRuleCount > 0 ? `, ${allRuleCount} rule(s)` : '';
 
 		if (existingFlagId) {
-			// Flag already exists in Datadog — sync targeting and enable in new environments
 			if (envsToEnable.length === 0) {
 				spinner.succeed(
 					`${chalk.cyan(flag.key)} — already in Datadog, nothing to sync`,
@@ -540,7 +503,6 @@ async function confirmMigration(
 				synced++;
 			} else {
 				try {
-					// Sync targeting for each target environment
 					let syncedAllocCount = 0;
 					let syncedRuleCount = 0;
 					for (const ddEnv of envsToEnable) {
@@ -552,7 +514,7 @@ async function confirmMigration(
 								existingFlagId,
 								ddEnv.id,
 								syncReqs,
-								site,
+								ddSite,
 							);
 							syncedAllocCount += syncReqs.length;
 							syncedRuleCount += syncReqs.reduce(
@@ -562,7 +524,6 @@ async function confirmMigration(
 						}
 					}
 
-					// Enable the flag in each environment
 					let enabledCount = 0;
 					for (const ddEnv of envsToEnable) {
 						try {
@@ -571,7 +532,7 @@ async function confirmMigration(
 								ddAppKey,
 								existingFlagId,
 								ddEnv.id,
-								site,
+								ddSite,
 							);
 							enabledCount++;
 						} catch (err) {
@@ -601,11 +562,10 @@ async function confirmMigration(
 				}
 			}
 		} else {
-			// Flag does not exist — create it with targeting rules
 			const request: DatadogCreateFlagRequest = {
 				key: flag.key,
 				name: flag.name,
-				value_type: mapVariationType(flag.variation_type),
+				value_type: mapFlagType(flag),
 				variants,
 				allocations: allocations.length > 0 ? allocations : undefined,
 			};
@@ -617,7 +577,6 @@ async function confirmMigration(
 					body: { data: { type: 'feature-flags', attributes: request } },
 				});
 				for (const ddEnv of envsToEnable) {
-					// flag.key used as placeholder — real ID assigned on creation
 					dryRunRequests.push({
 						method: 'POST',
 						path: `/api/v2/feature-flags/${flag.key}/environments/${ddEnv.id}/enable`,
@@ -640,10 +599,9 @@ async function confirmMigration(
 						ddApiKey,
 						ddAppKey,
 						request,
-						site,
+						ddSite,
 					);
 
-					// Enable the flag in each DD environment where it was active in Eppo
 					let enabledCount = 0;
 					for (const ddEnv of envsToEnable) {
 						try {
@@ -652,7 +610,7 @@ async function confirmMigration(
 								ddAppKey,
 								createdFlag.id,
 								ddEnv.id,
-								site,
+								ddSite,
 							);
 							enabledCount++;
 						} catch (err) {
@@ -670,7 +628,6 @@ async function confirmMigration(
 					spinner.succeed(
 						`Created ${chalk.cyan(flag.key)} (${allFilterLabel}${allRuleLabel}${enableLabel})`,
 					);
-
 					created++;
 				} catch (err) {
 					spinner.fail(
@@ -683,6 +640,7 @@ async function confirmMigration(
 		}
 	}
 
+	// ─── Summary ───────────────────────────────────────────────────────────────
 	console.log();
 	console.log(chalk.bold(dryRun ? 'Dry run complete!' : 'Migration complete!'));
 	const syncedSummary =
@@ -698,9 +656,9 @@ async function confirmMigration(
 	);
 	if (failures.length > 0) {
 		console.log();
-		failures.forEach((f) => {
+		for (const f of failures) {
 			console.log(`  ${chalk.red('✗')} ${f.key}: ${f.error}`);
-		});
+		}
 	}
 	if (enableFailures.length > 0) {
 		console.log();
@@ -709,20 +667,18 @@ async function confirmMigration(
 				'  Flags created but could not be enabled in some environments:',
 			),
 		);
-		enableFailures.forEach((f) => {
+		for (const f of enableFailures) {
 			console.log(`  ${chalk.yellow('⚠')} ${f.key} / ${f.env}: ${f.error}`);
-		});
+		}
 	}
 
+	// ─── Persist Results ───────────────────────────────────────────────────────
 	const timestamp = new Date().toISOString();
-	const environmentMapping: MigrationEnvironmentMapping[] = [];
-	for (const [eppoEnvId, ddEnv] of envMapping) {
-		const eppoEnv = flags
-			.flatMap((f) => f.environments ?? [])
-			.find((e) => e.id === eppoEnvId);
-		environmentMapping.push({
-			sourceEnvId: eppoEnvId,
-			sourceEnvName: eppoEnv?.name ?? String(eppoEnvId),
+	const environmentMappingArr: LDMigrationFile['environmentMapping'] = [];
+	for (const [ldEnvKey, ddEnv] of envMapping) {
+		environmentMappingArr.push({
+			sourceEnvId: ldEnvKey,
+			sourceEnvName: ldEnvKey,
 			datadogEnvId: ddEnv.id,
 			datadogEnvName: ddEnv.name,
 			datadogDdEnvNames: ddEnv.queries,
@@ -730,16 +686,20 @@ async function confirmMigration(
 	}
 
 	if (dryRun && dryRunRequests.length > 0) {
-		const dryRunData: DryRunFile = {
-			provider,
+		const dryRunData = {
+			provider: 'launchdarkly',
 			migratedAt: timestamp,
 			success: true,
 			summary: { created, synced, skipped, errored: 0, enabled: 0 },
 			failures: [],
 			enableFailures: [],
 			skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
-			flags,
-			environmentMapping,
+			flags: detailedFlags.map((f) => ({
+				key: f.key,
+				name: f.name,
+				kind: f.kind,
+			})),
+			environmentMapping: environmentMappingArr,
 			requests: dryRunRequests,
 		};
 		const filename = `dry-run-${timestamp}.json`;
@@ -749,21 +709,22 @@ async function confirmMigration(
 	}
 
 	if (!dryRun && (created > 0 || synced > 0 || errored > 0)) {
-		const selectedFlagKeys = new Set(flags.map((f) => f.key));
-		const unmigratedFlags = allEppoFlags.filter(
+		const selectedFlagKeys = new Set(detailedFlags.map((f) => f.key));
+		const unmigratedFlags = allFlags.filter(
 			(f) => !selectedFlagKeys.has(f.key),
 		);
-		const migrationData: MigrationFile = {
-			provider,
+
+		const migrationData: LDMigrationFile = {
+			provider: 'launchdarkly',
 			migratedAt: timestamp,
 			success: errored === 0,
 			summary: { created, synced, skipped, errored, enabled: totalEnabled },
 			failures,
 			enableFailures,
 			skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
-			flags,
+			flags: detailedFlags,
 			unmigrated: unmigratedFlags.length > 0 ? unmigratedFlags : undefined,
-			environmentMapping,
+			environmentMapping: environmentMappingArr,
 		};
 		const filename = `migration-${timestamp}.json`;
 		if (!fs.existsSync(CONFIG_DIR))
@@ -772,14 +733,13 @@ async function confirmMigration(
 		fs.writeFileSync(filepath, JSON.stringify(migrationData, null, 2));
 		console.log(chalk.gray(`  Migration saved to ${filepath}`));
 
-		const { confirm } = await import('@inquirer/prompts');
 		const exportToSheets = await confirm({
 			message: 'Would you like to export migration results to an .xlsx file?',
 			default: false,
 		});
 		if (exportToSheets) {
-			const { exportMigrationToXlsx } = await import('./xlsx.js');
-			await exportMigrationToXlsx(migrationData);
+			const { exportLDMigrationToXlsx } = await import('./xlsx.js');
+			await exportLDMigrationToXlsx(migrationData);
 		}
 	}
 
@@ -787,11 +747,18 @@ async function confirmMigration(
 	return 'migrate';
 }
 
-// ─── Main ─────────────────────────────────────────────────────────────────────
+// ─── Main Entry Point ────────────────────────────────────────────────────────
 
-const dryRun = process.argv.includes('--dry-run');
+export async function runLaunchDarklyMigration(
+	ddApiKey: string,
+	ddAppKey: string,
+	ddSite: string,
+	dryRun: boolean,
+): Promise<void> {
+	// Prompt for LD API key
+	const ldApiKey = await promptForLDApiKey();
 
-async function main(): Promise<void> {
+	// Fetch projects from LD API
 	clearScreen();
 	printHeader();
 	if (dryRun) {
@@ -800,148 +767,148 @@ async function main(): Promise<void> {
 		);
 	}
 
-	const provider = await selectProvider();
-
-	console.log();
-	console.log(
-		chalk.bold('Provider: ') +
-			chalk.green(provider === 'eppo' ? 'Eppo' : 'LaunchDarkly'),
-	);
-	console.log();
-
-	if (provider === 'launchdarkly') {
-		const { apiKey: ddApiKey, appKey: ddAppKey } = await promptForDatadogKeys();
-		const ddSite = getDatadogSite() ?? 'datadoghq.com';
-		const { runLaunchDarklyMigration } = await import(
-			'./launchdarkly/index.js'
-		);
-		await runLaunchDarklyMigration(ddApiKey, ddAppKey, ddSite, dryRun);
-		return;
-	}
-
-	const apiKey = await promptForApiKey();
-
-	console.log();
-	const { apiKey: ddApiKey, appKey: ddAppKey } = await promptForDatadogKeys();
-	const ddSite = getDatadogSite() ?? 'datadoghq.com';
-
-	const spinner = ora('Loading data…').start();
-	let flags: EppoFlag[] = [];
-	let datadogKeys: Map<string, string> = new Map();
-	let datadogEnvs: DatadogEnvironment[] = [];
-
+	const projectSpinner = ora('Fetching LaunchDarkly projects…').start();
+	let projects: LDProject[];
 	try {
-		[flags, datadogKeys, datadogEnvs] = await Promise.all([
-			fetchEppoFlags(apiKey),
-			fetchDatadogFlagKeys(ddApiKey, ddAppKey, ddSite),
-			fetchDatadogEnvironments(ddApiKey, ddAppKey, ddSite),
-		]);
-		spinner.succeed(
-			`Loaded ${flags.length} Eppo flag(s) · ${datadogEnvs.length} Datadog environment(s)`,
-		);
+		projects = await fetchProjects(ldApiKey);
+		projectSpinner.succeed(`Found ${projects.length} LaunchDarkly project(s)`);
 	} catch (err) {
-		spinner.fail('Failed to load data');
+		projectSpinner.fail('Failed to fetch LaunchDarkly projects');
 		if (axios.isAxiosError(err)) {
 			const msg =
 				(err.response?.data as { message?: string } | undefined)?.message ??
 				err.message;
 			console.error(chalk.red(`  ${msg}`));
 		}
-		process.exit(1);
+		return;
 	}
 
-	const eppoEnvironments = extractEnvironments(flags);
+	if (projects.length === 0) {
+		console.log(chalk.yellow('\n  No projects found in LaunchDarkly.\n'));
+		return;
+	}
 
-	let prevSelectedEnvs: EppoFlagEnvironment[] = [];
-	let prevEnvMapping = new Map<number, DatadogEnvironment>();
-	let prevSelectedFlags: EppoFlag[] = [];
+	// Select a project
+	const selectedProject = await selectProject(projects);
+	if (!selectedProject) {
+		console.log(chalk.yellow('\n  No project selected.\n'));
+		return;
+	}
+
+	console.log();
+	console.log(
+		chalk.bold('Project: ') +
+			chalk.green(selectedProject.name) +
+			chalk.gray(` (${selectedProject.key})`),
+	);
+
+	// Fetch flags, project environments, and DD data in parallel
+	const loadSpinner = ora('Fetching flags and Datadog data…').start();
+	let allFlags: LDFlag[];
+	let ldEnvironments: LDEnvironment[];
+	let datadogKeys: Map<string, string> = new Map();
+	let datadogEnvs: DatadogEnvironment[] = [];
+	try {
+		[allFlags, ldEnvironments, datadogKeys, datadogEnvs] = await Promise.all([
+			fetchFlags(ldApiKey, selectedProject.key),
+			fetchProjectEnvironments(ldApiKey, selectedProject.key),
+			fetchDatadogFlagKeys(ddApiKey, ddAppKey, ddSite),
+			fetchDatadogEnvironments(ddApiKey, ddAppKey, ddSite),
+		]);
+		loadSpinner.succeed(
+			`Loaded ${allFlags.length} LD flag(s) · ${ldEnvironments.length} LD environment(s) · ${datadogEnvs.length} Datadog environment(s)`,
+		);
+	} catch (err) {
+		loadSpinner.fail('Failed to load data');
+		if (axios.isAxiosError(err)) {
+			const url = err.config?.url ?? 'unknown URL';
+			const status = err.response?.status ?? 'no status';
+			const msg =
+				(err.response?.data as { message?: string } | undefined)?.message ??
+				err.message;
+			console.error(
+				chalk.red(
+					`  ${err.config?.method?.toUpperCase() ?? 'GET'} ${url} → ${status}: ${msg}`,
+				),
+			);
+		} else if (err instanceof Error) {
+			console.error(chalk.red(`  ${err.message}`));
+		}
+		return;
+	}
+
+	if (allFlags.length === 0) {
+		console.log(chalk.yellow('\n  No flags found in this project.\n'));
+		return;
+	}
+
+	let prevSelectedEnvKeys: string[] = [];
+	let prevEnvMapping = new Map<string, DatadogEnvironment>();
+	let prevSelectedFlags: LDFlag[] = [];
 
 	// eslint-disable-next-line no-constant-condition
 	outer: while (true) {
-		let selectedEnvs: EppoFlagEnvironment[];
-
-		if (eppoEnvironments.length > 0) {
-			clearScreen();
-			printHeader();
-			const envResult = await selectEnvironments(
-				flags,
-				eppoEnvironments,
-				prevSelectedEnvs,
-			);
-			if (envResult === null) break; // escaped → exit
-			if (envResult.length === 0) {
-				console.log(
-					chalk.yellow(
-						'\n  Please select at least one environment to migrate from.\n',
-					),
-				);
-				continue;
-			}
-			prevSelectedEnvs = envResult;
-			selectedEnvs = envResult;
-			// Reset flag selections if the environment selection changed
-			const envIds = new Set(envResult.map((e) => e.id));
-			const prevEnvIds = new Set(
-				prevSelectedFlags.flatMap(
-					(f) => f.environments?.map((e) => e.id) ?? [],
+		// Select LD environments
+		clearScreen();
+		printHeader();
+		const envResult = await selectLDEnvironments(
+			ldEnvironments,
+			prevSelectedEnvKeys,
+		);
+		if (envResult === null) break;
+		if (envResult.length === 0) {
+			console.log(
+				chalk.yellow(
+					'\n  Please select at least one environment to migrate from.\n',
 				),
 			);
-			if ([...envIds].some((id) => !prevEnvIds.has(id))) prevSelectedFlags = [];
-		} else {
-			selectedEnvs = [];
+			continue;
 		}
+		prevSelectedEnvKeys = envResult.map((e) => e.key);
 
-		// Link each selected Eppo environment to a Datadog environment
+		// Link LD environments → DD environments
 		while (true) {
 			const mapping = await linkEnvironments(
-				selectedEnvs,
+				envResult,
 				datadogEnvs,
 				prevEnvMapping,
 			);
-			if (mapping === null) break; // escaped → back to Eppo env selection
+			if (mapping === null) break;
 
 			prevEnvMapping = mapping;
 
+			// Select flags
 			while (true) {
 				clearScreen();
 				printHeader();
 				const flagResult = await selectFlags(
-					flags,
+					allFlags,
 					datadogKeys,
-					selectedEnvs,
 					prevSelectedFlags,
 				);
-				if (flagResult === null) break; // escaped → back to linking
+				if (flagResult === null) break;
 
 				prevSelectedFlags = flagResult;
 				clearScreen();
 				printHeader();
-				const action = await confirmMigration(
+				const action = await executeMigration(
 					prevSelectedFlags,
-					flags,
-					ddApiKey,
-					ddAppKey,
+					allFlags,
 					prevEnvMapping,
 					datadogKeys,
-					provider,
-					ddSite,
+					prevSelectedEnvKeys,
+					{
+						ldApiKey,
+						projectKey: selectedProject.key,
+						ddApiKey,
+						ddAppKey,
+						ddSite,
+						dryRun,
+					},
 				);
 				if (action === 'cancel') break outer;
 				if (action === 'migrate') break outer;
-				// action === 'select-more': loop back to selectFlags
 			}
 		}
-
-		if (eppoEnvironments.length === 0) break; // nothing to go back to
 	}
 }
-
-main().catch((err: unknown) => {
-	// Gracefully handle Ctrl+C
-	if (err instanceof Error && err.name === 'ExitPromptError') {
-		console.log(chalk.gray('\nBye!'));
-		process.exit(0);
-	}
-	console.error(chalk.red('\nUnexpected error:'), err);
-	process.exit(1);
-});

@@ -35,6 +35,16 @@ export function saveEppoApiKey(key: string): void {
 	saveConfig(config);
 }
 
+export function getLaunchDarklyApiKey(): string | undefined {
+	return loadConfig().launchdarklyApiKey;
+}
+
+export function saveLaunchDarklyApiKey(key: string): void {
+	const config = loadConfig();
+	config.launchdarklyApiKey = key;
+	saveConfig(config);
+}
+
 export function getDatadogKeys(): { apiKey?: string; appKey?: string } {
 	const config = loadConfig();
 	return { apiKey: config.datadogApiKey, appKey: config.datadogAppKey };

@@ -142,7 +142,7 @@ describe('fetchEppoFlags', () => {
 	let mock: AxiosMockAdapter;
 
 	beforeEach(() => {
-		mock = new AxiosMockAdapter(axios);
+		mock = new AxiosMockAdapter(axios as never);
 	});
 
 	afterEach(() => {
