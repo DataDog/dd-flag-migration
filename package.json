@@ -28,14 +28,14 @@
 		"ora": "^9.3.0"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^2.4.5",
+		"@biomejs/biome": "^2.4.10",
 		"@lavamoat/allow-scripts": "^3.4.3",
 		"@lavamoat/preinstall-always-fail": "^2.1.0",
 		"@types/jest": "^30.0.0",
-		"@types/node": "^25.3.3",
+		"@types/node": "^25.5.2",
 		"axios-mock-adapter": "^2.1.0",
-		"jest": "^30.2.0",
-		"ts-jest": "^29.4.6",
+		"jest": "^30.3.0",
+		"ts-jest": "^29.4.9",
 		"tsx": "^4.0.0",
 		"typescript": "^5.0.0"
 	},
