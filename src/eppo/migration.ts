@@ -78,21 +78,7 @@ export function buildAllocations(
 		);
 
 		if (envAllocs.length === 0) {
-			// No Eppo allocations for this env — create a simple equal-weight fallback
-			// only if the flag is active in this environment
-			if (!activeEnvIds.has(eppoEnvId)) continue;
-			const equalWeight = 100.0 / variations.length;
-			const allocationKey = `${flag.key}-${ddEnv.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
-			allocations.push({
-				environment_id: ddEnv.id,
-				name: ddEnv.name,
-				key: allocationKey,
-				type: 'FEATURE_GATE',
-				variant_weights: variations.map((v) => ({
-					variant_key: v.variant_key,
-					value: equalWeight,
-				})),
-			});
+			// No Eppo allocations — the flag will serve its default value
 			continue;
 		}
 
