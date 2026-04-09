@@ -10,6 +10,7 @@ import {
 	getEnvsToEnable,
 	mapVariationType,
 } from '../../src/eppo/migration.js';
+import type { EppoFlag } from '../../src/eppo/types.js';
 import type {
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,

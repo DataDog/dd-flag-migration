@@ -67,7 +67,7 @@ export function buildAllocations(
 	for (const v of variations) variationIdToKey.set(v.id, v.variant_key);
 
 	const eppoAllocations = flag.allocations ?? [];
-	const activeEnvIds = new Set(
+	const _activeEnvIds = new Set(
 		(flag.environments ?? []).filter((e) => e.active).map((e) => e.id),
 	);
 	const allocations: DatadogAllocationForFlagCreation[] = [];

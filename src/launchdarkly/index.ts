@@ -443,7 +443,7 @@ async function executeMigration(
 					continue;
 				}
 				// Release is complete or not found — safe to migrate
-			} catch (err) {
+			} catch (_err) {
 				spinner.warn(
 					`Skipped ${chalk.cyan(flag.key)} — failed to check progressive rollout status`,
 				);
