@@ -432,7 +432,9 @@ async function executeMigration(
 			try {
 				const release = await fetchFlagRelease(ldApiKey, projectKey, flag.key);
 				if (release && isReleaseInProgress(release)) {
-					spinner.warn(`Skipped ${chalk.cyan(flag.key)} — progressive rollout is in progress`);
+					spinner.warn(
+						`Skipped ${chalk.cyan(flag.key)} — progressive rollout is in progress`,
+					);
 					skippedFlags.push({
 						key: flag.key,
 						reason: 'Progressive rollout is in progress',
@@ -442,7 +444,9 @@ async function executeMigration(
 				}
 				// Release is complete or not found — safe to migrate
 			} catch (err) {
-				spinner.warn(`Skipped ${chalk.cyan(flag.key)} — failed to check progressive rollout status`);
+				spinner.warn(
+					`Skipped ${chalk.cyan(flag.key)} — failed to check progressive rollout status`,
+				);
 				skippedFlags.push({
 					key: flag.key,
 					reason: 'Failed to check progressive rollout status',

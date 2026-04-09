@@ -1,5 +1,8 @@
 import { describe, expect, it } from '@jest/globals';
-import { isReleaseInProgress, type LDRelease } from '../../src/launchdarkly/api.js';
+import {
+	isReleaseInProgress,
+	type LDRelease,
+} from '../../src/launchdarkly/api.js';
 import {
 	buildAllocations,
 	buildTargetingRules,
@@ -364,8 +367,14 @@ describe('shouldSkipFlag', () => {
 							controlVariation: 1,
 							endVariation: 0,
 							steps: [
-								{ rolloutWeight: 10000, duration: { quantity: 1, unit: 'hour' } },
-								{ rolloutWeight: 50000, duration: { quantity: 1, unit: 'hour' } },
+								{
+									rolloutWeight: 10000,
+									duration: { quantity: 1, unit: 'hour' },
+								},
+								{
+									rolloutWeight: 50000,
+									duration: { quantity: 1, unit: 'hour' },
+								},
 							],
 						},
 					},
@@ -396,7 +405,10 @@ describe('shouldSkipFlag', () => {
 								controlVariation: 1,
 								endVariation: 0,
 								steps: [
-									{ rolloutWeight: 50000, duration: { quantity: 2, unit: 'hour' } },
+									{
+										rolloutWeight: 50000,
+										duration: { quantity: 2, unit: 'hour' },
+									},
 								],
 							},
 							clauses: [makeClause({ op: 'in' })],

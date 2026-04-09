@@ -10,58 +10,8 @@ import {
 	mapOperator,
 	mapVariationType,
 } from '../../src/eppo/migration.js';
-import type { EppoAllocation, EppoFlag } from '../../src/eppo/types.js';
 import type { DatadogEnvironment } from '../../src/types.js';
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const ddDev: DatadogEnvironment = {
-	id: 'dd-dev',
-	name: 'Development',
-	is_production: false,
-	queries: ['dev'],
-};
-
-const ddProd: DatadogEnvironment = {
-	id: 'dd-prod',
-	name: 'Production',
-	is_production: true,
-	queries: ['prod'],
-};
-
-function makeFlag(
-	overrides: Partial<EppoFlag> & { id: number; key: string },
-): EppoFlag {
-	return {
-		name: overrides.key,
-		variation_type: 'BOOLEAN',
-		tag_names: [],
-		updated_at: '2024-01-01T00:00:00Z',
-		created_at: '2024-01-01T00:00:00Z',
-		variations: [
-			{ id: 1, name: 'On', variant_key: 'on' },
-			{ id: 2, name: 'Off', variant_key: 'off' },
-		],
-		environments: [],
-		allocations: [],
-		...overrides,
-	};
-}
-
-function makeAllocation(
-	overrides: Partial<EppoAllocation> & { id: number },
-): EppoAllocation {
-	return {
-		key: `alloc-${overrides.id}`,
-		name: `Allocation ${overrides.id}`,
-		type: 'FEATURE_GATE',
-		percent_exposure: 100,
-		is_default: false,
-		variation_weight: [],
-		targeting_rules: [],
-		...overrides,
-	};
-}
+import { ddDev, ddProd, makeAllocation, makeFlag } from './helpers.js';
 
 // ─── mapVariationType ─────────────────────────────────────────────────────────
 
@@ -336,7 +286,7 @@ describe('buildAllocations', () => {
 		]);
 	});
 
-	it('creates equal-weight fallback for active env with no allocations', () => {
+	it('returns no allocations for active env with no Eppo allocations (serves default)', () => {
 		const flag = makeFlag({
 			id: 1,
 			key: 'test-flag',
@@ -353,15 +303,10 @@ describe('buildAllocations', () => {
 		const mapping = new Map<number, DatadogEnvironment>([[10, ddDev]]);
 		const allocations = buildAllocations(flag, mapping);
 
-		expect(allocations).toHaveLength(1);
-		expect(allocations[0].environment_id).toBe('dd-dev');
-		expect(allocations[0].variant_weights).toEqual([
-			{ variant_key: 'on', value: 50 },
-			{ variant_key: 'off', value: 50 },
-		]);
+		expect(allocations).toHaveLength(0);
 	});
 
-	it('skips inactive env with no allocations', () => {
+	it('returns no allocations for inactive env with no Eppo allocations', () => {
 		const flag = makeFlag({
 			id: 1,
 			key: 'test-flag',

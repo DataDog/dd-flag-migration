@@ -164,9 +164,7 @@ export async function fetchFlagRelease(
  * Returns true if the progressive rollout is still active.
  */
 export function isReleaseInProgress(release: LDRelease): boolean {
-	return release.phases.some(
-		(phase) => phase.status !== 'Complete',
-	);
+	return release.phases.some((phase) => phase.status !== 'Complete');
 }
 
 // ─── Validation ──────────────────────────────────────────────────────────────

@@ -70,7 +70,11 @@ export interface LDEnvironmentConfig {
 	targets: LDTarget[];
 	contextTargets: unknown[];
 	rules: LDRule[];
-	fallthrough: { variation?: number; rollout?: LDRollout; progressiveRolloutConfig?: LDProgressiveRolloutConfig };
+	fallthrough: {
+		variation?: number;
+		rollout?: LDRollout;
+		progressiveRolloutConfig?: LDProgressiveRolloutConfig;
+	};
 	offVariation: number;
 	prerequisites: LDPrerequisite[];
 	_environmentName: string;
