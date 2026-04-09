@@ -178,7 +178,7 @@ describe('buildAllocations', () => {
 		]);
 	});
 
-	it('creates equal-weight fallback when env has no Eppo allocations but is active', () => {
+	it('returns no allocations when env has no Eppo allocations (serves default)', () => {
 		const flag = makeFlag({
 			id: 1,
 			name: 'Flag',
@@ -196,11 +196,7 @@ describe('buildAllocations', () => {
 		const mapping = new Map<number, DatadogEnvironment>([[10, ddDev]]);
 		const result = buildAllocations(flag, mapping);
 
-		expect(result).toHaveLength(1);
-		expect(result[0].variant_weights).toEqual([
-			{ variant_key: 'on', value: 50 },
-			{ variant_key: 'off', value: 50 },
-		]);
+		expect(result).toHaveLength(0);
 	});
 
 	it('skips inactive environments with no allocations', () => {

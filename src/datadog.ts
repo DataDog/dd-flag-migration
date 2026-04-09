@@ -126,58 +126,49 @@ export async function enableFeatureFlagEnvironment(
 	);
 }
 
-type JsonApiAllocation = {
-	id: string;
-	type: string;
-	attributes: { key: string };
-};
-
 type JsonApiFlagDetail = {
 	id: string;
 	type: string;
 	attributes: {
 		variants: Array<{ id: string; key: string }>;
+		feature_flag_environments: Array<{
+			environment_id: string;
+			allocations: Array<{ id: string; key: string }> | null;
+		}>;
 	};
 };
 
-export async function fetchVariantKeyToId(
+export async function fetchFlagDetail(
 	apiKey: string,
 	appKey: string,
 	flagId: string,
 	site = 'datadoghq.com',
-): Promise<Map<string, string>> {
+): Promise<{
+	variantKeyToId: Map<string, string>;
+	allocationKeyToIdByEnv: Map<string, Map<string, string>>;
+}> {
 	const baseUrl = `https://api.${site}`;
 	const response = await axios.get<{ data: JsonApiFlagDetail }>(
 		`${baseUrl}/api/v2/feature-flags/${flagId}`,
 		{ headers: ddHeaders(apiKey, appKey) },
 	);
-	const keyToId = new Map<string, string>();
-	for (const v of response.data.data.attributes.variants ?? []) {
-		keyToId.set(v.key, v.id);
-	}
-	return keyToId;
-}
+	const { variants, feature_flag_environments } = response.data.data.attributes;
 
-export async function fetchAllocationsForFlagEnvironment(
-	apiKey: string,
-	appKey: string,
-	flagId: string,
-	environmentId: string,
-	site = 'datadoghq.com',
-): Promise<Map<string, string>> {
-	const baseUrl = `https://api.${site}`;
-	const response = await axios.get<{ data: JsonApiAllocation[] }>(
-		`${baseUrl}/api/unstable/feature-flags/${flagId}/allocations`,
-		{
-			headers: ddHeaders(apiKey, appKey),
-			params: { environmentIDs: environmentId },
-		},
-	);
-	const keyToId = new Map<string, string>();
-	for (const item of response.data.data ?? []) {
-		keyToId.set(item.attributes.key, item.id);
+	const variantKeyToId = new Map<string, string>();
+	for (const v of variants ?? []) {
+		variantKeyToId.set(v.key, v.id);
 	}
-	return keyToId;
+
+	const allocationKeyToIdByEnv = new Map<string, Map<string, string>>();
+	for (const env of feature_flag_environments ?? []) {
+		const allocKeyToId = new Map<string, string>();
+		for (const alloc of env.allocations ?? []) {
+			allocKeyToId.set(alloc.key, alloc.id);
+		}
+		allocationKeyToIdByEnv.set(env.environment_id, allocKeyToId);
+	}
+
+	return { variantKeyToId, allocationKeyToIdByEnv };
 }
 
 export async function syncAllocationsForEnvironment(
@@ -190,18 +181,16 @@ export async function syncAllocationsForEnvironment(
 ): Promise<void> {
 	const baseUrl = `https://api.${site}`;
 
-	// Fetch existing allocation IDs so the sync endpoint treats them as updates
-	// and variant key→UUID mapping so we send variant_id instead of variant_key
-	const [existingKeyToId, variantKeyToId] = await Promise.all([
-		fetchAllocationsForFlagEnvironment(
-			apiKey,
-			appKey,
-			flagId,
-			environmentId,
-			site,
-		),
-		fetchVariantKeyToId(apiKey, appKey, flagId, site),
-	]);
+	// Fetch flag detail to get existing allocation IDs (so the sync endpoint
+	// treats them as updates) and variant key→UUID mapping
+	const { variantKeyToId, allocationKeyToIdByEnv } = await fetchFlagDetail(
+		apiKey,
+		appKey,
+		flagId,
+		site,
+	);
+	const existingKeyToId =
+		allocationKeyToIdByEnv.get(environmentId) ?? new Map<string, string>();
 
 	const body = {
 		data: allocations.map((alloc) => ({

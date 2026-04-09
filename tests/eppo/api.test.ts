@@ -1,8 +1,16 @@
+/**
+ * Tests for Eppo API: fetching flags, extracting environments,
+ * and validating API keys.
+ */
 import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import axios from 'axios';
 import AxiosMockAdapter from 'axios-mock-adapter';
-import { extractEnvironments, fetchEppoFlags } from '../src/eppo/api.js';
-import type { EppoFlag } from '../src/eppo/types.js';
+import {
+	extractEnvironments,
+	fetchEppoFlags,
+	validateEppoApiKey,
+} from '../../src/eppo/api.js';
+import type { EppoFlag } from '../../src/eppo/types.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -188,5 +196,41 @@ describe('fetchEppoFlags', () => {
 	it('throws on HTTP error', async () => {
 		mock.onGet('https://eppo.cloud/api/v1/feature-flags').reply(401);
 		await expect(fetchEppoFlags('bad-key')).rejects.toThrow();
+	});
+
+	it('requests detailed allocations with limit=-1', async () => {
+		mock.onGet('https://eppo.cloud/api/v1/feature-flags').reply((config) => {
+			expect(config.params?.limit).toBe(-1);
+			expect(config.params?.include_detailed_allocations).toBe(true);
+			return [200, []];
+		});
+
+		await fetchEppoFlags('test-key');
+	});
+});
+
+// ─── validateEppoApiKey ──────────────────────────────────────────────────────
+
+describe('validateEppoApiKey', () => {
+	let mock: AxiosMockAdapter;
+
+	beforeEach(() => {
+		mock = new AxiosMockAdapter(axios as never);
+	});
+
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('returns true for valid API key', async () => {
+		mock.onGet('https://eppo.cloud/api/v1/feature-flags').reply(200, []);
+
+		expect(await validateEppoApiKey('valid-key')).toBe(true);
+	});
+
+	it('returns false for invalid API key', async () => {
+		mock.onGet('https://eppo.cloud/api/v1/feature-flags').reply(401);
+
+		expect(await validateEppoApiKey('bad-key')).toBe(false);
 	});
 });

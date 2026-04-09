@@ -1,0 +1,11 @@
+@base-url = https://app.launchdarkly.com
+@api-key = <SEE 1PASSWORD>
+@project-key = health-app
+
+### List all projects
+GET {{base-url}}/api/v2/projects    
+Authorization: {{api-key}}
+
+### List all feature flags for a project
+GET {{base-url}}/api/v2/flags/{{project-key}}
+Authorization: {{api-key}}

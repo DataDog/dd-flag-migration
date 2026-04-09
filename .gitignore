@@ -1,3 +1,4 @@
+launchdarkly-requests/
 node_modules/
 dist/
 *.js.map

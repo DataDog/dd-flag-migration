@@ -194,3 +194,126 @@ const _filterableCheckbox = createPrompt(
 export const filterableCheckbox = _filterableCheckbox as unknown as <T>(
 	config: Config<T>,
 ) => Promise<T[] | null>;
+
+// ─── Single-select variant ──────────────────────────────────────────────────
+
+const _filterableSelect = createPrompt(
+	<T>(config: Config<T>, done: (value: T | null) => void) => {
+		const { pageSize = 10 } = config;
+		const builtTheme = makeTheme(theme, (config as { theme?: object }).theme);
+		const prefix = usePrefix({ theme: builtTheme });
+
+		const [filterText, setFilterText] = useState('');
+		const items = useMemo<NormalizedChoice<T>[]>(
+			() =>
+				config.choices.map((c) => ({
+					name: c.name,
+					value: c.value,
+					checked: false,
+				})),
+			[],
+		);
+		const [active, setActive] = useState(0);
+		const [status, setStatus] = useState<'idle' | 'done' | 'escaped'>('idle');
+
+		const filteredItems = useMemo(() => {
+			const lower = filterText.toLowerCase();
+			if (!lower) return items;
+			return items.filter((item) =>
+				stripAnsi(item.name).toLowerCase().includes(lower),
+			);
+		}, [items, filterText]);
+
+		const safeActive = Math.min(active, Math.max(0, filteredItems.length - 1));
+
+		useKeypress((key) => {
+			if (isEnterKey(key)) {
+				const selected = filteredItems[safeActive];
+				setStatus('done');
+				done(selected ? selected.value : null);
+				return;
+			}
+
+			if (isUpKey(key)) {
+				setActive(Math.max(0, safeActive - 1));
+			} else if (isDownKey(key)) {
+				setActive(Math.min(filteredItems.length - 1, safeActive + 1));
+			} else if (key.name === 'pageup') {
+				setActive(Math.max(0, safeActive - pageSize));
+			} else if (key.name === 'pagedown') {
+				setActive(Math.min(filteredItems.length - 1, safeActive + pageSize));
+			} else if (key.name === 'escape') {
+				setStatus('escaped');
+				done(null);
+				return;
+			} else if (isBackspaceKey(key) && (key as { meta?: boolean }).meta) {
+				setFilterText(filterText.replace(/\S+\s*$/, ''));
+				setActive(0);
+			} else if (isBackspaceKey(key)) {
+				setFilterText(filterText.slice(0, -1));
+				setActive(0);
+			} else {
+				const { meta, sequence } = key as { meta?: boolean; sequence?: string };
+				if (
+					!key.ctrl &&
+					!meta &&
+					sequence &&
+					sequence.length === 1 &&
+					sequence.charCodeAt(0) >= 32
+				) {
+					setFilterText(filterText + sequence);
+					setActive(0);
+				}
+			}
+		});
+
+		const message = builtTheme.style.message(
+			config.message,
+			status === 'escaped' ? 'idle' : status,
+		);
+
+		if (status === 'done') {
+			const selected = filteredItems[safeActive];
+			const answer = selected ? chalk.cyan(selected.name) : chalk.dim('(none)');
+			return `${prefix} ${message} ${answer}`;
+		}
+
+		if (status === 'escaped') {
+			return `${prefix} ${message} ${chalk.dim('(cancelled)')}`;
+		}
+
+		const filterLine =
+			chalk.cyan('Filter: ') +
+			(filterText ? chalk.bold(filterText) : chalk.dim('type to filter…'));
+
+		const page = usePagination({
+			items: filteredItems,
+			active: safeActive,
+			renderItem({ item, isActive }) {
+				const cursor = isActive ? theme.icon.cursor : ' ';
+				const label = isActive ? chalk.cyan(item.name) : item.name;
+				return `${cursor} ${label}`;
+			},
+			pageSize,
+			loop: false,
+		});
+
+		const helpTip = chalk.dim(
+			'↑↓/pgup/pgdn navigate  ·  esc back  ·  ⏎ select',
+		);
+
+		const emptyMsg =
+			filteredItems.length === 0 ? chalk.yellow('  No matches') : '';
+
+		return (
+			[`${prefix} ${message}`, filterLine, emptyMsg || page, helpTip]
+				.filter(Boolean)
+				.join('\n') + cursorHide
+		);
+	},
+);
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const filterableSelect = _filterableSelect as unknown as <T>(
+	config: Config<T>,
+) => Promise<T | null>;
