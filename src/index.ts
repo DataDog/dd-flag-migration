@@ -60,7 +60,7 @@ async function promptForDatadogKeys(): Promise<{
 
 	if (stored.apiKey && stored.appKey) {
 		const useStored = await confirm({
-			message: 'Use your saved Datadog API keys?',
+			message: 'Use your saved Datadog keys?',
 			default: true,
 		});
 		if (useStored) return { apiKey: stored.apiKey, appKey: stored.appKey };
@@ -68,11 +68,6 @@ async function promptForDatadogKeys(): Promise<{
 
 	// eslint-disable-next-line no-constant-condition
 	while (true) {
-		const apiKey = await password({
-			message: 'Enter your Datadog API key:',
-			validate: (input) =>
-				input.trim().length > 0 ? true : 'API key cannot be empty',
-		});
 		console.log(
 			chalk.gray(
 				'  Your Application key needs these scopes: feature_flag_config_read,\n' +
@@ -80,6 +75,11 @@ async function promptForDatadogKeys(): Promise<{
 					'  feature_flag_environment_config_write',
 			),
 		);
+		const apiKey = await password({
+			message: 'Enter your Datadog API key:',
+			validate: (input) =>
+				input.trim().length > 0 ? true : 'API key cannot be empty',
+		});
 		const appKey = await password({
 			message: 'Enter your Datadog Application key:',
 			validate: (input) =>
