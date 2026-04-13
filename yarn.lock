@@ -996,10 +996,10 @@
     type-fest "4.41.0"
     yargs "17.7.2"
 
-"@lavamoat/preinstall-always-fail@^2.1.0":
-  version "2.1.1"
-  resolved "https://registry.yarnpkg.com/@lavamoat/preinstall-always-fail/-/preinstall-always-fail-2.1.1.tgz#1df713b4c6ede11461b148a80615a8ec92d682b3"
-  integrity sha512-8eyQm26cQtEek2z1vM+iSVOoKrchkHBEvUQ3VnbDEqQ7hDL5sU/rhHo/FnoMgY8J31r6LSesEzpwYQe4omgqbA==
+"@lavamoat/preinstall-always-fail@^3.0.0":
+  version "3.0.0"
+  resolved "https://registry.yarnpkg.com/@lavamoat/preinstall-always-fail/-/preinstall-always-fail-3.0.0.tgz#97690363515454c77c788192f7a85730e7017420"
+  integrity sha512-O2TfrjwX0GbMtdtbtZn9RVHoNBkaX3pdsSRUFU9AYGeHcqEJA5AAQLg7JLIjeQs/D83uDvB+KptdA9vlVIBeMA==
 
 "@napi-rs/wasm-runtime@^0.2.11":
   version "0.2.12"
