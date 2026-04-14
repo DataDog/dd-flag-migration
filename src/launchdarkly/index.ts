@@ -13,7 +13,7 @@ import {
 	createFeatureFlag,
 	enableFeatureFlagEnvironment,
 	fetchDatadogEnvironments,
-	fetchDatadogFlagKeys,
+	fetchDatadogFlags,
 	syncAllocationsForEnvironment,
 } from '../datadog.js';
 import {
@@ -21,7 +21,11 @@ import {
 	filterableSelect,
 } from '../filterable-checkbox.js';
 import { toSyncRequests } from '../migration.js';
-import type { DatadogCreateFlagRequest, DatadogEnvironment } from '../types.js';
+import type {
+	DatadogCreateFlagRequest,
+	DatadogEnvironment,
+	DatadogFlagEntry,
+} from '../types.js';
 import {
 	fetchFlag,
 	fetchFlagRelease,
@@ -85,13 +89,45 @@ function formatAxiosError(err: unknown): string {
 	return `${method} ${url} — ${status ?? 'no status'}: ${bodyPreview}`;
 }
 
-function flagLabel(flag: LDFlag, inDatadog: boolean): string {
-	const indicator = inDatadog ? chalk.green('✓') : ' ';
+/** Find the DD flag that matches this LD flag for the given project. */
+function findMatchingDatadogFlag(
+	datadogFlags: DatadogFlagEntry[],
+	projectKey: string,
+	flagKey: string,
+): DatadogFlagEntry | undefined {
+	return datadogFlags.find(
+		(f) =>
+			f.migration_metadata?.project_key === projectKey &&
+			f.migration_metadata?.flag_key === flagKey,
+	);
+}
+
+/** Check if a DD flag with the same key exists but belongs to a different LD project. */
+function hasKeyConflict(
+	datadogFlags: DatadogFlagEntry[],
+	projectKey: string,
+	flagKey: string,
+): boolean {
+	const match = findMatchingDatadogFlag(datadogFlags, projectKey, flagKey);
+	if (match) return false;
+	return datadogFlags.some((f) => f.key === flagKey);
+}
+
+function flagLabel(
+	flag: LDFlag,
+	datadogFlags: DatadogFlagEntry[],
+	projectKey: string,
+): string {
+	const match = findMatchingDatadogFlag(datadogFlags, projectKey, flag.key);
+	const conflict = !match && hasKeyConflict(datadogFlags, projectKey, flag.key);
+	const indicator = match ? chalk.green('✓') : conflict ? chalk.red('✗') : ' ';
 	const name = flag.name;
 	const key = chalk.gray(`(${flag.key})`);
-	const badge = inDatadog
+	const badge = match
 		? `  ${chalk.bgGreen.black(' In Datadog — will sync targeting ')}`
-		: '';
+		: conflict
+			? `  ${chalk.bgRed.white(' Key conflict — different project ')}`
+			: '';
 	const kind = flag.kind === 'boolean' ? '' : chalk.dim(` [${flag.kind}]`);
 	return `${indicator}  ${name}  ${key}${kind}${badge}`;
 }
@@ -253,10 +289,18 @@ async function linkEnvironments(
 
 async function selectFlags(
 	flags: LDFlag[],
-	datadogKeys: Map<string, string>,
+	datadogFlags: DatadogFlagEntry[],
+	projectKey: string,
 	previouslySelected: LDFlag[] = [],
 ): Promise<LDFlag[] | null> {
-	const inDatadogCount = flags.filter((f) => datadogKeys.has(f.key)).length;
+	const inDatadogCount = flags.filter(
+		(f) => findMatchingDatadogFlag(datadogFlags, projectKey, f.key) != null,
+	).length;
+	const conflictCount = flags.filter(
+		(f) =>
+			!findMatchingDatadogFlag(datadogFlags, projectKey, f.key) &&
+			hasKeyConflict(datadogFlags, projectKey, f.key),
+	).length;
 	const previousKeys = new Set(previouslySelected.map((f) => f.key));
 
 	console.log();
@@ -272,11 +316,20 @@ async function selectFlags(
 			) + chalk.green('✓'),
 		);
 	}
+	if (conflictCount > 0) {
+		console.log(
+			chalk.red(
+				`  ${conflictCount} flag(s) have key conflicts with flags from other LaunchDarkly projects`,
+			),
+		);
+	}
 	console.log();
 
 	const sortedFlags = flags.slice().sort((a, b) => {
-		const aDD = datadogKeys.has(a.key) ? 0 : 1;
-		const bDD = datadogKeys.has(b.key) ? 0 : 1;
+		const aMatch = findMatchingDatadogFlag(datadogFlags, projectKey, a.key);
+		const bMatch = findMatchingDatadogFlag(datadogFlags, projectKey, b.key);
+		const aDD = aMatch ? 0 : 1;
+		const bDD = bMatch ? 0 : 1;
 		if (aDD !== bDD) return aDD - bDD;
 		return a.name.localeCompare(b.name);
 	});
@@ -286,7 +339,7 @@ async function selectFlags(
 	return filterableCheckbox<LDFlag>({
 		message: 'Select flags to migrate to Datadog:',
 		choices: sortedFlags.map((flag) => ({
-			name: flagLabel(flag, datadogKeys.has(flag.key)),
+			name: flagLabel(flag, datadogFlags, projectKey),
 			value: flag,
 			checked: previousKeys.has(flag.key),
 		})),
@@ -331,7 +384,7 @@ async function executeMigration(
 	flags: LDFlag[],
 	allFlags: LDFlag[],
 	envMapping: Map<string, DatadogEnvironment>,
-	datadogKeys: Map<string, string>,
+	datadogFlags: DatadogFlagEntry[],
 	selectedEnvs: string[],
 	opts: MigrationOptions,
 ): Promise<ConfirmAction> {
@@ -477,7 +530,26 @@ async function executeMigration(
 
 		const allocations = buildAllocations(flag, envMapping);
 		const envsToEnable = getEnvsToEnable(flag, envMapping);
-		const existingFlagId = datadogKeys.get(flag.key);
+		const existingFlag = findMatchingDatadogFlag(
+			datadogFlags,
+			projectKey,
+			flag.key,
+		);
+		const existingFlagId = existingFlag?.id;
+
+		// Check for key conflict (same key, different LD project)
+		if (!existingFlag && hasKeyConflict(datadogFlags, projectKey, flag.key)) {
+			spinner.warn(
+				`Skipped ${chalk.cyan(flag.key)} — key already used by a flag from a different LaunchDarkly project`,
+			);
+			skippedFlags.push({
+				key: flag.key,
+				reason:
+					'Key conflict: flag key already exists in Datadog from a different LaunchDarkly project',
+			});
+			skipped++;
+			continue;
+		}
 
 		const allRuleCount = allocations.reduce(
 			(sum, a) => sum + (a.targeting_rules?.length ?? 0),
@@ -608,6 +680,10 @@ async function executeMigration(
 				value_type: mapFlagType(flag),
 				variants,
 				allocations: allocations.length > 0 ? allocations : undefined,
+				migration_metadata: {
+					project_key: projectKey,
+					flag_key: flag.key,
+				},
 			};
 
 			if (dryRun) {
@@ -847,17 +923,17 @@ export async function runLaunchDarklyMigration(
 	const loadSpinner = ora('Fetching flags and Datadog data…').start();
 	let allFlags: LDFlag[];
 	let ldEnvironments: LDEnvironment[];
-	let datadogKeys: Map<string, string> = new Map();
+	let datadogFlags: DatadogFlagEntry[] = [];
 	let datadogEnvs: DatadogEnvironment[] = [];
 	try {
-		[allFlags, ldEnvironments, datadogKeys, datadogEnvs] = await Promise.all([
+		[allFlags, ldEnvironments, datadogFlags, datadogEnvs] = await Promise.all([
 			fetchFlags(ldApiKey, selectedProject.key),
 			fetchProjectEnvironments(ldApiKey, selectedProject.key),
-			fetchDatadogFlagKeys(ddApiKey, ddAppKey, ddSite),
+			fetchDatadogFlags(ddApiKey, ddAppKey, ddSite),
 			fetchDatadogEnvironments(ddApiKey, ddAppKey, ddSite),
 		]);
 		loadSpinner.succeed(
-			`Loaded ${allFlags.length} LD flag(s) · ${ldEnvironments.length} LD environment(s) · ${datadogEnvs.length} Datadog environment(s)`,
+			`Loaded ${allFlags.length} LD flag(s) · ${ldEnvironments.length} LD environment(s) · ${datadogFlags.length} Datadog flag(s) · ${datadogEnvs.length} Datadog environment(s)`,
 		);
 	} catch (err) {
 		loadSpinner.fail('Failed to load data');
@@ -924,7 +1000,8 @@ export async function runLaunchDarklyMigration(
 				printHeader();
 				const flagResult = await selectFlags(
 					allFlags,
-					datadogKeys,
+					datadogFlags,
+					selectedProject.key,
 					prevSelectedFlags,
 				);
 				if (flagResult === null) break;
@@ -936,7 +1013,7 @@ export async function runLaunchDarklyMigration(
 					prevSelectedFlags,
 					allFlags,
 					prevEnvMapping,
-					datadogKeys,
+					datadogFlags,
 					prevSelectedEnvKeys,
 					{
 						ldApiKey,

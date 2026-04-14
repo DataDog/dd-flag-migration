@@ -16,6 +16,17 @@ export type {
 
 // ─── Datadog Types ───────────────────────────────────────────────────────────
 
+export interface MigrationMetadata {
+	project_key: string;
+	flag_key: string;
+}
+
+export interface DatadogFlagEntry {
+	id: string;
+	key: string;
+	migration_metadata?: MigrationMetadata;
+}
+
 export interface DatadogEnvironment {
 	id: string;
 	name: string;
@@ -71,6 +82,7 @@ export interface DatadogCreateFlagRequest {
 	value_type: 'BOOLEAN' | 'INTEGER' | 'NUMERIC' | 'STRING' | 'JSON';
 	variants: Array<{ key: string; name: string; value: string }>;
 	allocations?: DatadogAllocationForFlagCreation[];
+	migration_metadata?: MigrationMetadata;
 }
 
 export interface DatadogCreatedFlag {

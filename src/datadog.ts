@@ -4,6 +4,8 @@ import type {
 	DatadogCreatedFlag,
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,
+	DatadogFlagEntry,
+	MigrationMetadata,
 } from './types.js';
 
 function ddHeaders(apiKey: string, appKey: string) {
@@ -59,7 +61,11 @@ export async function validateDatadogKeys(
 type JsonApiFlag = {
 	id: string;
 	type: string;
-	attributes: { key: string; name: string };
+	attributes: {
+		key: string;
+		name: string;
+		migration_metadata?: MigrationMetadata;
+	};
 };
 
 export async function fetchDatadogFlagKeys(
@@ -85,6 +91,37 @@ export async function fetchDatadogFlagKeys(
 		offset += limit;
 	}
 	return keys;
+}
+
+export async function fetchDatadogFlags(
+	apiKey: string,
+	appKey: string,
+	site = 'datadoghq.com',
+): Promise<DatadogFlagEntry[]> {
+	const baseUrl = `https://api.${site}`;
+	const flags: DatadogFlagEntry[] = [];
+	let offset = 0;
+	const limit = 200;
+	while (true) {
+		const response = await axios.get<{ data: JsonApiFlag[] }>(
+			`${baseUrl}/api/v2/feature-flags`,
+			{
+				headers: ddHeaders(apiKey, appKey),
+				params: { limit, offset, is_archived: false },
+			},
+		);
+		const data = response.data.data ?? [];
+		for (const f of data) {
+			flags.push({
+				id: f.id,
+				key: f.attributes.key,
+				migration_metadata: f.attributes.migration_metadata,
+			});
+		}
+		if (data.length < limit) break;
+		offset += limit;
+	}
+	return flags;
 }
 
 export async function createFeatureFlag(
