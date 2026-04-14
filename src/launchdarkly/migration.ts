@@ -72,7 +72,7 @@ export function mapOperator(
 		const regexValues = strValues.map((v) => `.*${escapeRegex(v)}.*`);
 		return {
 			operator: negate ? 'NOT_MATCHES' : 'MATCHES',
-			values: regexValues,
+			values: [combineRegex(regexValues)],
 		};
 	}
 
@@ -80,7 +80,7 @@ export function mapOperator(
 		const regexValues = strValues.map((v) => `^${escapeRegex(v)}.*`);
 		return {
 			operator: negate ? 'NOT_MATCHES' : 'MATCHES',
-			values: regexValues,
+			values: [combineRegex(regexValues)],
 		};
 	}
 
@@ -88,14 +88,14 @@ export function mapOperator(
 		const regexValues = strValues.map((v) => `.*${escapeRegex(v)}$`);
 		return {
 			operator: negate ? 'NOT_MATCHES' : 'MATCHES',
-			values: regexValues,
+			values: [combineRegex(regexValues)],
 		};
 	}
 
 	if (op === 'matches') {
 		return {
 			operator: negate ? 'NOT_MATCHES' : 'MATCHES',
-			values: strValues,
+			values: [combineRegex(strValues)],
 		};
 	}
 
@@ -130,6 +130,12 @@ export function mapOperator(
 
 function escapeRegex(s: string): string {
 	return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Combine multiple regex patterns into one using alternation. Returns the pattern unchanged if there is only one. */
+function combineRegex(patterns: string[]): string {
+	if (patterns.length === 1) return patterns[0];
+	return patterns.map((p) => `(${p})`).join('|');
 }
 
 // ─── Skip Detection ──────────────────────────────────────────────────────────
