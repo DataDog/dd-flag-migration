@@ -202,6 +202,46 @@ describe('mapOperator', () => {
 		});
 	});
 
+	it('combines multiple "contains" values into a single regex', () => {
+		const result = mapOperator('contains', false, ['Core', 'CorePHR']);
+		expect(result).toEqual({
+			operator: 'MATCHES',
+			values: ['(.*Core.*)|(.*CorePHR.*)'],
+		});
+	});
+
+	it('combines multiple negated "contains" values into a single NOT_MATCHES regex', () => {
+		const result = mapOperator('contains', true, ['Core', 'CorePHR']);
+		expect(result).toEqual({
+			operator: 'NOT_MATCHES',
+			values: ['(.*Core.*)|(.*CorePHR.*)'],
+		});
+	});
+
+	it('combines multiple "startsWith" values into a single regex', () => {
+		const result = mapOperator('startsWith', false, ['pre', 'post']);
+		expect(result).toEqual({
+			operator: 'MATCHES',
+			values: ['(^pre.*)|(^post.*)'],
+		});
+	});
+
+	it('combines multiple "endsWith" values into a single regex', () => {
+		const result = mapOperator('endsWith', false, ['ing', 'ed']);
+		expect(result).toEqual({
+			operator: 'MATCHES',
+			values: ['(.*ing$)|(.*ed$)'],
+		});
+	});
+
+	it('combines multiple "matches" values into a single regex', () => {
+		const result = mapOperator('matches', false, ['^foo.*', '^bar.*']);
+		expect(result).toEqual({
+			operator: 'MATCHES',
+			values: ['(^foo.*)|(^bar.*)'],
+		});
+	});
+
 	it('passes through unknown operators uppercased', () => {
 		const result = mapOperator('customOp', false, ['val']);
 		expect(result).toEqual({ operator: 'CUSTOMOP', values: ['val'] });

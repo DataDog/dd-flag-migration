@@ -342,13 +342,13 @@ async function promptForDatadogKeys(
 	const stored = getDatadogKeys();
 
 	if (stored.apiKey && stored.appKey && useSavedKeys) {
-		console.log(chalk.gray('  Using saved Datadog API keys.\n'));
+		console.log(chalk.gray('  Using saved Datadog keys.\n'));
 		return { apiKey: stored.apiKey, appKey: stored.appKey };
 	}
 
 	if (stored.apiKey && stored.appKey) {
 		const useStored = await confirm({
-			message: 'Use your saved Datadog API keys?',
+			message: 'Use your saved Datadog keys?',
 			default: true,
 		});
 		if (useStored) return { apiKey: stored.apiKey, appKey: stored.appKey };
