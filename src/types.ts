@@ -19,6 +19,7 @@ export type {
 export interface MigrationMetadata {
 	project_key: string;
 	flag_key: string;
+	key_prefix?: string;
 }
 
 export interface DatadogFlagEntry {

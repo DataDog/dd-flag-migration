@@ -301,6 +301,39 @@ describe('fetchDatadogFlags', () => {
 		]);
 	});
 
+	it('parses key_prefix from migration_metadata', async () => {
+		mock.onGet(`${BASE}/api/v2/feature-flags`).reply(200, {
+			data: [
+				{
+					id: 'uuid-p',
+					type: 'feature-flags',
+					attributes: {
+						key: 'mobile-flag-a',
+						name: 'Flag A',
+						migration_metadata: {
+							project_key: 'proj-1',
+							flag_key: 'flag-a',
+							key_prefix: 'mobile',
+						},
+					},
+				},
+			],
+		});
+
+		const result = await fetchDatadogFlags(API_KEY, APP_KEY, SITE);
+		expect(result).toEqual([
+			{
+				id: 'uuid-p',
+				key: 'mobile-flag-a',
+				migration_metadata: {
+					project_key: 'proj-1',
+					flag_key: 'flag-a',
+					key_prefix: 'mobile',
+				},
+			},
+		]);
+	});
+
 	it('returns empty array when there are no flags', async () => {
 		mock.onGet(`${BASE}/api/v2/feature-flags`).reply(200, { data: [] });
 
@@ -427,6 +460,36 @@ describe('createFeatureFlag', () => {
 		});
 
 		await createFeatureFlag(API_KEY, APP_KEY, requestWithMeta, SITE);
+	});
+
+	it('includes key_prefix in migration_metadata when provided', async () => {
+		const requestWithPrefix: DatadogCreateFlagRequest = {
+			...request,
+			key: 'mobile-my-flag',
+			migration_metadata: {
+				project_key: 'my-ld-project',
+				flag_key: 'my-flag',
+				key_prefix: 'mobile',
+			},
+		};
+
+		mock.onPost(`${BASE}/api/v2/feature-flags`).reply((config) => {
+			const body = JSON.parse(config.data as string) as {
+				data: { type: string; attributes: DatadogCreateFlagRequest };
+			};
+			expect(body.data.attributes.migration_metadata).toEqual({
+				project_key: 'my-ld-project',
+				flag_key: 'my-flag',
+				key_prefix: 'mobile',
+			});
+			expect(body.data.attributes.key).toBe('mobile-my-flag');
+			return [
+				201,
+				{ data: { id: 'id-4', attributes: { key: 'mobile-my-flag' } } },
+			];
+		});
+
+		await createFeatureFlag(API_KEY, APP_KEY, requestWithPrefix, SITE);
 	});
 
 	it('throws on HTTP error', async () => {

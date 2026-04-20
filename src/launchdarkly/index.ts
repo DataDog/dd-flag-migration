@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { confirm, password, select } from '@inquirer/prompts';
+import { confirm, input, password, select } from '@inquirer/prompts';
 import axios from 'axios';
 import chalk from 'chalk';
 import ora from 'ora';
@@ -102,33 +102,74 @@ function findMatchingDatadogFlag(
 	);
 }
 
-/** Check if a DD flag with the same key exists but belongs to a different LD project. */
-function hasKeyConflict(
+export type ConflictType = 'none' | 'same_project' | 'manual' | 'cross_project';
+
+export interface ConflictClassification {
+	type: ConflictType;
+	existingFlag?: DatadogFlagEntry;
+}
+
+/** Classify the relationship between an LD flag and existing DD flags. */
+export function classifyConflict(
 	datadogFlags: DatadogFlagEntry[],
 	projectKey: string,
 	flagKey: string,
-): boolean {
-	const match = findMatchingDatadogFlag(datadogFlags, projectKey, flagKey);
-	if (match) return false;
-	return datadogFlags.some((f) => f.key === flagKey);
+): ConflictClassification {
+	const metadataMatch = findMatchingDatadogFlag(
+		datadogFlags,
+		projectKey,
+		flagKey,
+	);
+	if (metadataMatch)
+		return { type: 'same_project', existingFlag: metadataMatch };
+
+	const keyMatch = datadogFlags.find((f) => f.key === flagKey);
+	if (!keyMatch) return { type: 'none' };
+
+	if (keyMatch.migration_metadata) {
+		return { type: 'cross_project', existingFlag: keyMatch };
+	}
+	return { type: 'manual', existingFlag: keyMatch };
 }
+
+export type ConflictResolution =
+	| { action: 'skip' }
+	| { action: 'prefix'; prefix: string };
 
 function flagLabel(
 	flag: LDFlag,
 	datadogFlags: DatadogFlagEntry[],
 	projectKey: string,
+	conflictResolution?: ConflictResolution,
 ): string {
-	const match = findMatchingDatadogFlag(datadogFlags, projectKey, flag.key);
-	const conflict = !match && hasKeyConflict(datadogFlags, projectKey, flag.key);
-	const indicator = match ? chalk.green('✓') : conflict ? chalk.red('✗') : ' ';
+	const classification = classifyConflict(datadogFlags, projectKey, flag.key);
 	const name = flag.name;
 	const key = chalk.gray(`(${flag.key})`);
-	const badge = match
-		? `  ${chalk.bgGreen.black(' In Datadog — will sync targeting ')}`
-		: conflict
-			? `  ${chalk.bgRed.white(' Key conflict — different project ')}`
-			: '';
 	const kind = flag.kind === 'boolean' ? '' : chalk.dim(` [${flag.kind}]`);
+
+	let indicator: string;
+	let badge: string;
+
+	switch (classification.type) {
+		case 'same_project':
+		case 'manual':
+			indicator = chalk.green('✓');
+			badge = `  ${chalk.bgGreen.black(' In Datadog — will sync targeting ')}`;
+			break;
+		case 'cross_project':
+			if (conflictResolution?.action === 'prefix') {
+				indicator = chalk.hex('#632CA6')('⊕');
+				badge = `  ${chalk.bgHex('#632CA6').white(` Will prefix with ${conflictResolution.prefix}- `)}`;
+			} else {
+				indicator = chalk.red('✗');
+				badge = `  ${chalk.bgRed.white(' Key conflict — will skip ')}`;
+			}
+			break;
+		default:
+			indicator = ' ';
+			badge = '';
+	}
+
 	return `${indicator}  ${name}  ${key}${kind}${badge}`;
 }
 
@@ -292,15 +333,19 @@ async function selectFlags(
 	datadogFlags: DatadogFlagEntry[],
 	projectKey: string,
 	previouslySelected: LDFlag[] = [],
+	conflictResolution?: ConflictResolution,
 ): Promise<LDFlag[] | null> {
-	const inDatadogCount = flags.filter(
-		(f) => findMatchingDatadogFlag(datadogFlags, projectKey, f.key) != null,
-	).length;
-	const conflictCount = flags.filter(
-		(f) =>
-			!findMatchingDatadogFlag(datadogFlags, projectKey, f.key) &&
-			hasKeyConflict(datadogFlags, projectKey, f.key),
-	).length;
+	let inDatadogCount = 0;
+	let prefixedCount = 0;
+	let skipCount = 0;
+	for (const f of flags) {
+		const c = classifyConflict(datadogFlags, projectKey, f.key);
+		if (c.type === 'same_project' || c.type === 'manual') inDatadogCount++;
+		if (c.type === 'cross_project') {
+			if (conflictResolution?.action === 'prefix') prefixedCount++;
+			else skipCount++;
+		}
+	}
 	const previousKeys = new Set(previouslySelected.map((f) => f.key));
 
 	console.log();
@@ -316,20 +361,27 @@ async function selectFlags(
 			) + chalk.green('✓'),
 		);
 	}
-	if (conflictCount > 0) {
+	if (prefixedCount > 0) {
+		console.log(
+			chalk.hex('#632CA6')(
+				`  ${prefixedCount} flag(s) will be prefixed with ${(conflictResolution as { action: 'prefix'; prefix: string }).prefix}-`,
+			),
+		);
+	}
+	if (skipCount > 0) {
 		console.log(
 			chalk.red(
-				`  ${conflictCount} flag(s) have key conflicts with flags from other LaunchDarkly projects`,
+				`  ${skipCount} flag(s) have key conflicts and will be skipped`,
 			),
 		);
 	}
 	console.log();
 
 	const sortedFlags = flags.slice().sort((a, b) => {
-		const aMatch = findMatchingDatadogFlag(datadogFlags, projectKey, a.key);
-		const bMatch = findMatchingDatadogFlag(datadogFlags, projectKey, b.key);
-		const aDD = aMatch ? 0 : 1;
-		const bDD = bMatch ? 0 : 1;
+		const aType = classifyConflict(datadogFlags, projectKey, a.key).type;
+		const bType = classifyConflict(datadogFlags, projectKey, b.key).type;
+		const aDD = aType === 'same_project' || aType === 'manual' ? 0 : 1;
+		const bDD = bType === 'same_project' || bType === 'manual' ? 0 : 1;
 		if (aDD !== bDD) return aDD - bDD;
 		return a.name.localeCompare(b.name);
 	});
@@ -339,7 +391,7 @@ async function selectFlags(
 	return filterableCheckbox<LDFlag>({
 		message: 'Select flags to migrate to Datadog:',
 		choices: sortedFlags.map((flag) => ({
-			name: flagLabel(flag, datadogFlags, projectKey),
+			name: flagLabel(flag, datadogFlags, projectKey, conflictResolution),
 			value: flag,
 			checked: previousKeys.has(flag.key),
 		})),
@@ -378,6 +430,7 @@ interface MigrationOptions {
 	ddAppKey: string;
 	ddSite: string;
 	dryRun: boolean;
+	conflictResolution?: ConflictResolution;
 }
 
 async function executeMigration(
@@ -388,7 +441,15 @@ async function executeMigration(
 	selectedEnvs: string[],
 	opts: MigrationOptions,
 ): Promise<ConfirmAction> {
-	const { ldApiKey, projectKey, ddApiKey, ddAppKey, ddSite, dryRun } = opts;
+	const {
+		ldApiKey,
+		projectKey,
+		ddApiKey,
+		ddAppKey,
+		ddSite,
+		dryRun,
+		conflictResolution,
+	} = opts;
 
 	if (flags.length === 0) {
 		console.log(chalk.yellow('\nNo flags selected — nothing to migrate.'));
@@ -530,26 +591,30 @@ async function executeMigration(
 
 		const allocations = buildAllocations(flag, envMapping);
 		const envsToEnable = getEnvsToEnable(flag, envMapping);
-		const existingFlag = findMatchingDatadogFlag(
-			datadogFlags,
-			projectKey,
-			flag.key,
-		);
-		const existingFlagId = existingFlag?.id;
+		const conflict = classifyConflict(datadogFlags, projectKey, flag.key);
 
-		// Check for key conflict (same key, different LD project)
-		if (!existingFlag && hasKeyConflict(datadogFlags, projectKey, flag.key)) {
-			spinner.warn(
-				`Skipped ${chalk.cyan(flag.key)} — key already used by a flag from a different LaunchDarkly project`,
-			);
-			skippedFlags.push({
-				key: flag.key,
-				reason:
-					'Key conflict: flag key already exists in Datadog from a different LaunchDarkly project',
-			});
-			skipped++;
-			continue;
+		// Cross-project conflict: skip or prefix
+		if (conflict.type === 'cross_project') {
+			if (!conflictResolution || conflictResolution.action === 'skip') {
+				spinner.warn(
+					`Skipped ${chalk.cyan(flag.key)} — key already used by a flag from a different LaunchDarkly project`,
+				);
+				skippedFlags.push({
+					key: flag.key,
+					reason:
+						'Key conflict: flag key already exists in Datadog from a different LaunchDarkly project',
+				});
+				skipped++;
+				continue;
+			}
+			// prefix case: fall through to creation below
 		}
+
+		// For same_project and manual conflicts, sync onto the existing flag
+		const existingFlagId =
+			conflict.type === 'same_project' || conflict.type === 'manual'
+				? conflict.existingFlag?.id
+				: undefined;
 
 		const allRuleCount = allocations.reduce(
 			(sum, a) => sum + (a.targeting_rules?.length ?? 0),
@@ -674,8 +739,15 @@ async function executeMigration(
 				}
 			}
 		} else {
+			const usePrefix =
+				conflict.type === 'cross_project' &&
+				conflictResolution?.action === 'prefix';
+			const ddKey = usePrefix
+				? `${conflictResolution.prefix}-${flag.key}`
+				: flag.key;
+
 			const request: DatadogCreateFlagRequest = {
-				key: flag.key,
+				key: ddKey,
 				name: flag.name,
 				value_type: mapFlagType(flag),
 				variants,
@@ -683,6 +755,7 @@ async function executeMigration(
 				migration_metadata: {
 					project_key: projectKey,
 					flag_key: flag.key,
+					...(usePrefix ? { key_prefix: conflictResolution.prefix } : {}),
 				},
 			};
 
@@ -695,7 +768,7 @@ async function executeMigration(
 				for (const ddEnv of envsToEnable) {
 					dryRunRequests.push({
 						method: 'POST',
-						path: `/api/v2/feature-flags/${flag.key}/environments/${ddEnv.id}/enable`,
+						path: `/api/v2/feature-flags/${ddKey}/environments/${ddEnv.id}/enable`,
 						body: {},
 					});
 				}
@@ -705,7 +778,7 @@ async function executeMigration(
 						? `, would enable in ${envsToEnable.map((e) => e.name).join(', ')}`
 						: '';
 				spinner.succeed(
-					`${chalk.dim('[dry run]')} Would create ${chalk.cyan(flag.key)} ` +
+					`${chalk.dim('[dry run]')} Would create ${chalk.cyan(ddKey)} ` +
 						`(${allFilterLabel}${allRuleLabel}${enableLabel})`,
 				);
 				created++;
@@ -731,7 +804,7 @@ async function executeMigration(
 							enabledCount++;
 						} catch (err) {
 							enableFailures.push({
-								key: flag.key,
+								key: ddKey,
 								env: ddEnv.name,
 								error: formatAxiosError(err),
 							});
@@ -742,14 +815,14 @@ async function executeMigration(
 					const enableLabel =
 						enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
 					spinner.succeed(
-						`Created ${chalk.cyan(flag.key)} (${allFilterLabel}${allRuleLabel}${enableLabel})`,
+						`Created ${chalk.cyan(ddKey)} (${allFilterLabel}${allRuleLabel}${enableLabel})`,
 					);
 					created++;
 				} catch (err) {
 					spinner.fail(
-						`Failed ${chalk.cyan(flag.key)}: ${chalk.red(formatAxiosError(err))}`,
+						`Failed ${chalk.cyan(ddKey)}: ${chalk.red(formatAxiosError(err))}`,
 					);
-					failures.push({ key: flag.key, error: formatAxiosError(err) });
+					failures.push({ key: ddKey, error: formatAxiosError(err) });
 					errored++;
 				}
 			}
@@ -959,6 +1032,51 @@ export async function runLaunchDarklyMigration(
 		return;
 	}
 
+	// Detect cross-project conflicts and prompt for resolution
+	const crossProjectConflicts = allFlags.filter(
+		(f) =>
+			classifyConflict(datadogFlags, selectedProject.key, f.key).type ===
+			'cross_project',
+	);
+
+	let conflictResolution: ConflictResolution | undefined;
+	if (crossProjectConflicts.length > 0) {
+		console.log();
+		console.log(
+			chalk.yellow(
+				`  ${crossProjectConflicts.length} flag(s) have key conflicts with flags from other LaunchDarkly projects`,
+			),
+		);
+		console.log();
+
+		const action = await select<'skip' | 'prefix'>({
+			message: 'How would you like to handle these conflicts?',
+			choices: [
+				{ name: 'Skip conflicting flags', value: 'skip' },
+				{
+					name: 'Add a prefix to conflicting flag keys',
+					value: 'prefix',
+				},
+			],
+		});
+
+		if (action === 'skip') {
+			conflictResolution = { action: 'skip' };
+		} else {
+			const prefix = await input({
+				message: 'Enter a prefix for conflicting flag keys:',
+				validate: (val) => {
+					const trimmed = val.trim();
+					if (trimmed.length === 0) return 'Prefix cannot be empty';
+					if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(trimmed))
+						return 'Prefix must contain only lowercase letters, numbers, and hyphens';
+					return true;
+				},
+			});
+			conflictResolution = { action: 'prefix', prefix: prefix.trim() };
+		}
+	}
+
 	let prevSelectedEnvKeys: string[] = [];
 	let prevEnvMapping = new Map<string, DatadogEnvironment>();
 	let prevSelectedFlags: LDFlag[] = [];
@@ -1003,6 +1121,7 @@ export async function runLaunchDarklyMigration(
 					datadogFlags,
 					selectedProject.key,
 					prevSelectedFlags,
+					conflictResolution,
 				);
 				if (flagResult === null) break;
 
@@ -1022,6 +1141,7 @@ export async function runLaunchDarklyMigration(
 						ddAppKey,
 						ddSite,
 						dryRun,
+						conflictResolution,
 					},
 				);
 				if (action === 'cancel') break outer;
