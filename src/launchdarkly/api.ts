@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios, { type AxiosInstance, type AxiosResponse } from 'axios';
 import type { LDEnvironment, LDFlag } from './types.js';
 
 const LD_BASE_URL = 'https://app.launchdarkly.com';
@@ -6,6 +6,104 @@ const LD_BASE_URL = 'https://app.launchdarkly.com';
 function ldHeaders(apiKey: string) {
 	return { Authorization: apiKey };
 }
+
+// ─── Rate Limiting ──────────────────────────────────────────────────────────
+
+const ROUTE_REMAINING_THRESHOLD = 5;
+const TOKEN_REMAINING_THRESHOLD = 50;
+const MAX_RETRIES = 3;
+const RETRY_BASE_DELAY_MS = 1000;
+
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Read rate-limit headers from a LaunchDarkly API response and sleep if
+ * we're approaching either the per-route or per-token limit.
+ */
+async function respectRateLimit(response: AxiosResponse): Promise<void> {
+	const headers = response.headers;
+
+	const routeRemaining = Number(headers['x-ratelimit-route-remaining']);
+	const tokenRemaining = Number(headers['x-ratelimit-auth-token-remaining']);
+	const routeReset = Number(headers['x-ratelimit-reset']);
+	const tokenReset = Number(headers['x-ratelimit-auth-token-reset']);
+
+	let waitUntil: number | null = null;
+
+	if (
+		!Number.isNaN(routeRemaining) &&
+		routeRemaining <= ROUTE_REMAINING_THRESHOLD &&
+		!Number.isNaN(routeReset)
+	) {
+		waitUntil = routeReset;
+	}
+
+	if (
+		!Number.isNaN(tokenRemaining) &&
+		tokenRemaining <= TOKEN_REMAINING_THRESHOLD &&
+		!Number.isNaN(tokenReset)
+	) {
+		const candidate = tokenReset;
+		if (waitUntil === null || candidate > waitUntil) {
+			waitUntil = candidate;
+		}
+	}
+
+	if (waitUntil !== null) {
+		const delayMs = Math.max(0, waitUntil - Date.now()) + 500; // 500ms buffer for clock skew
+		if (delayMs > 0) {
+			await sleep(delayMs);
+		}
+	}
+}
+
+/**
+ * Create an axios instance that respects LaunchDarkly rate limits.
+ * After each successful response it checks remaining quotas and pauses
+ * if approaching the limit. On 429 responses it retries with exponential backoff.
+ */
+export function createLDClient(): AxiosInstance {
+	const client = axios.create();
+
+	client.interceptors.response.use(
+		async (response) => {
+			await respectRateLimit(response);
+			return response;
+		},
+		async (error) => {
+			if (!axios.isAxiosError(error) || error.response?.status !== 429) {
+				throw error;
+			}
+
+			const config = error.config;
+			if (!config) throw error;
+
+			const configAny = config as unknown as Record<string, unknown>;
+			const retryCount: number = (configAny.__retryCount as number) ?? 0;
+			if (retryCount >= MAX_RETRIES) throw error;
+
+			// Use Retry-After header if present, otherwise exponential backoff
+			const retryAfterSec = Number(error.response?.headers?.['retry-after']);
+			const delayMs =
+				!Number.isNaN(retryAfterSec) && retryAfterSec > 0
+					? retryAfterSec * 1000
+					: RETRY_BASE_DELAY_MS * 2 ** retryCount;
+
+			configAny.__retryCount = retryCount + 1;
+
+			await sleep(delayMs);
+			return client.request(config);
+		},
+	);
+
+	return client;
+}
+
+// Module-level client used by all LD API functions.
+// Exported for testing so AxiosMockAdapter can be attached to this instance.
+export const ldClient = createLDClient();
 
 // ─── Projects ────────────────────────────────────────────────────────────────
 
@@ -21,7 +119,7 @@ export async function fetchProjects(apiKey: string): Promise<LDProject[]> {
 	const limit = 20;
 
 	while (true) {
-		const response = await axios.get<{
+		const response = await ldClient.get<{
 			items: Array<{ key: string; name: string }>;
 			totalCount: number;
 		}>(`${LD_BASE_URL}/api/v2/projects`, {
@@ -48,7 +146,7 @@ export async function fetchProjectEnvironments(
 	apiKey: string,
 	projectKey: string,
 ): Promise<LDEnvironment[]> {
-	const response = await axios.get<{
+	const response = await ldClient.get<{
 		environments:
 			| {
 					items: Array<{
@@ -88,7 +186,7 @@ export async function fetchFlags(
 	const limit = 20;
 
 	while (true) {
-		const response = await axios.get<{
+		const response = await ldClient.get<{
 			items: LDFlag[];
 			totalCount: number;
 		}>(`${LD_BASE_URL}/api/v2/flags/${projectKey}`, {
@@ -116,7 +214,7 @@ export async function fetchFlag(
 	projectKey: string,
 	flagKey: string,
 ): Promise<LDFlag> {
-	const response = await axios.get<LDFlag>(
+	const response = await ldClient.get<LDFlag>(
 		`${LD_BASE_URL}/api/v2/flags/${projectKey}/${flagKey}`,
 		{ headers: ldHeaders(apiKey) },
 	);
@@ -146,7 +244,7 @@ export async function fetchFlagRelease(
 	flagKey: string,
 ): Promise<LDRelease | null> {
 	try {
-		const response = await axios.get<LDRelease>(
+		const response = await ldClient.get<LDRelease>(
 			`${LD_BASE_URL}/api/v2/flags/${projectKey}/${flagKey}/release`,
 			{ headers: ldHeaders(apiKey) },
 		);
@@ -172,7 +270,7 @@ export function isReleaseInProgress(release: LDRelease): boolean {
 /** Validate a LaunchDarkly API key by attempting to list projects. */
 export async function validateLDApiKey(apiKey: string): Promise<boolean> {
 	try {
-		await axios.get(`${LD_BASE_URL}/api/v2/projects`, {
+		await ldClient.get(`${LD_BASE_URL}/api/v2/projects`, {
 			headers: ldHeaders(apiKey),
 			params: { limit: 1 },
 		});

@@ -3,13 +3,14 @@
  * and project environments from the LD API.
  */
 import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
-import axios from 'axios';
 import AxiosMockAdapter from 'axios-mock-adapter';
 import {
+	createLDClient,
 	fetchFlag,
 	fetchFlags,
 	fetchProjectEnvironments,
 	fetchProjects,
+	ldClient,
 	validateLDApiKey,
 } from '../../src/launchdarkly/api.js';
 import type { LDFlag } from '../../src/launchdarkly/types.js';
@@ -82,7 +83,7 @@ describe('fetchProjects', () => {
 	let mock: AxiosMockAdapter;
 
 	beforeEach(() => {
-		mock = new AxiosMockAdapter(axios as never);
+		mock = new AxiosMockAdapter(ldClient as never);
 	});
 
 	afterEach(() => {
@@ -144,7 +145,7 @@ describe('fetchProjectEnvironments', () => {
 	let mock: AxiosMockAdapter;
 
 	beforeEach(() => {
-		mock = new AxiosMockAdapter(axios as never);
+		mock = new AxiosMockAdapter(ldClient as never);
 	});
 
 	afterEach(() => {
@@ -189,7 +190,7 @@ describe('fetchFlags', () => {
 	let mock: AxiosMockAdapter;
 
 	beforeEach(() => {
-		mock = new AxiosMockAdapter(axios as never);
+		mock = new AxiosMockAdapter(ldClient as never);
 	});
 
 	afterEach(() => {
@@ -245,7 +246,7 @@ describe('fetchFlag', () => {
 	let mock: AxiosMockAdapter;
 
 	beforeEach(() => {
-		mock = new AxiosMockAdapter(axios as never);
+		mock = new AxiosMockAdapter(ldClient as never);
 	});
 
 	afterEach(() => {
@@ -270,7 +271,7 @@ describe('validateLDApiKey', () => {
 	let mock: AxiosMockAdapter;
 
 	beforeEach(() => {
-		mock = new AxiosMockAdapter(axios as never);
+		mock = new AxiosMockAdapter(ldClient as never);
 	});
 
 	afterEach(() => {
@@ -292,4 +293,44 @@ describe('validateLDApiKey', () => {
 
 		expect(await validateLDApiKey('bad-key')).toBe(false);
 	});
+});
+
+// ─── Rate Limiting ──────────────────────────────────────────────────────────
+
+describe('rate limiting', () => {
+	let client: ReturnType<typeof createLDClient>;
+	let mock: AxiosMockAdapter;
+
+	beforeEach(() => {
+		client = createLDClient();
+		mock = new AxiosMockAdapter(client as never);
+	});
+
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('retries on 429 and succeeds', async () => {
+		mock
+			.onGet('https://app.launchdarkly.com/api/v2/projects')
+			.replyOnce(429, { message: 'Rate limited' }, { 'retry-after': '0.01' })
+			.onGet('https://app.launchdarkly.com/api/v2/projects')
+			.replyOnce(200, { items: [], totalCount: 0 });
+
+		const response = await client.get(
+			'https://app.launchdarkly.com/api/v2/projects',
+		);
+		expect(response.status).toBe(200);
+	});
+
+	it('throws after exhausting retries on 429', async () => {
+		// 4 replies: initial + 3 retries = all 429s, then should throw
+		mock
+			.onGet('https://app.launchdarkly.com/api/v2/projects')
+			.reply(429, { message: 'Rate limited' }, { 'retry-after': '0.01' });
+
+		await expect(
+			client.get('https://app.launchdarkly.com/api/v2/projects'),
+		).rejects.toThrow();
+	}, 30000);
 });
