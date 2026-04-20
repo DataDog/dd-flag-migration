@@ -28,7 +28,7 @@
 		"ora": "^9.3.0"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^2.4.11",
+		"@biomejs/biome": "^2.4.12",
 		"@lavamoat/allow-scripts": "^3.4.3",
 		"@lavamoat/preinstall-always-fail": "^2.1.0",
 		"@types/jest": "^30.0.0",
@@ -37,7 +37,7 @@
 		"jest": "^30.3.0",
 		"ts-jest": "^29.4.9",
 		"tsx": "^4.0.0",
-		"typescript": "^6.0.2"
+		"typescript": "^6.0.3"
 	},
 	"lavamoat": {
 		"allowScripts": {
