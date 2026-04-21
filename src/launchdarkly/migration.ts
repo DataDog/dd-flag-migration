@@ -376,3 +376,44 @@ export function getEnvsToEnable(
 
 	return envsToEnable;
 }
+
+// ─── Tag Building ────────────────────────────────────────────────────────────
+
+/**
+ * Derive team tags from a flag's maintainer fields plus the member-team cache.
+ * - maintainerTeamKey: present directly on the flag when a team is the maintainer
+ * - maintainerId + cache: for individual maintainers on Enterprise plans
+ * Returns tags in the form "team:<key>".
+ */
+export function buildTeamTags(
+	flag: LDFlag,
+	memberTeamCache: Map<string, string[]>,
+): string[] {
+	const teamKeys: string[] = [];
+
+	if (flag.maintainerTeamKey) {
+		teamKeys.push(flag.maintainerTeamKey);
+	}
+
+	if (flag.maintainerId) {
+		const cached = memberTeamCache.get(flag.maintainerId);
+		if (cached) {
+			teamKeys.push(...cached);
+		}
+	}
+
+	return [...new Set(teamKeys)].map((key) => `team:${key}`);
+}
+
+/**
+ * Build the full tags array for a new Datadog flag.
+ * Combines team tags (derived from maintainer) with the flag's LD source tags.
+ * Only called on the create path, never the sync path.
+ */
+export function buildFlagTags(
+	flag: LDFlag,
+	memberTeamCache: Map<string, string[]>,
+): string[] {
+	const teamTags = buildTeamTags(flag, memberTeamCache);
+	return [...teamTags, ...flag.tags];
+}

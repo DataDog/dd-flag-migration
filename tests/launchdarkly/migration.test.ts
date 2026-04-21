@@ -5,7 +5,9 @@ import {
 } from '../../src/launchdarkly/api.js';
 import {
 	buildAllocations,
+	buildFlagTags,
 	buildTargetingRules,
+	buildTeamTags,
 	buildVariants,
 	getEnvsToEnable,
 	mapFlagType,
@@ -913,5 +915,102 @@ describe('getEnvsToEnable', () => {
 
 		expect(result).toHaveLength(1);
 		expect(result[0].id).toBe('dd-dev');
+	});
+});
+
+// ─── buildTeamTags ───────────────────────────────────────────────────────────
+
+describe('buildTeamTags', () => {
+	const emptyCache = new Map<string, string[]>();
+
+	it('returns team tag from maintainerTeamKey', () => {
+		const flag = makeFlag({ key: 'f1', maintainerTeamKey: 'platform' });
+		expect(buildTeamTags(flag, emptyCache)).toEqual(['team:platform']);
+	});
+
+	it('returns team tags from cache for individual maintainer', () => {
+		const cache = new Map([['m1', ['eng', 'frontend']]]);
+		const flag = makeFlag({ key: 'f1', maintainerId: 'm1' });
+		expect(buildTeamTags(flag, cache)).toEqual(['team:eng', 'team:frontend']);
+	});
+
+	it('returns empty array when no maintainer is set', () => {
+		const flag = makeFlag({ key: 'f1' });
+		expect(buildTeamTags(flag, emptyCache)).toEqual([]);
+	});
+
+	it('returns empty array when maintainerId is not in cache', () => {
+		const flag = makeFlag({ key: 'f1', maintainerId: 'm1' });
+		expect(buildTeamTags(flag, emptyCache)).toEqual([]);
+	});
+
+	// Defensive: buildMemberTeamCache skips members for flags with maintainerTeamKey,
+	// so this cache state won't occur at runtime — but buildTeamTags still deduplicates
+	// correctly if both paths produce the same team key.
+	it('deduplicates when both maintainerTeamKey and cache have same team', () => {
+		const cache = new Map([['m1', ['platform', 'frontend']]]);
+		const flag = makeFlag({
+			key: 'f1',
+			maintainerTeamKey: 'platform',
+			maintainerId: 'm1',
+		});
+		expect(buildTeamTags(flag, cache)).toEqual([
+			'team:platform',
+			'team:frontend',
+		]);
+	});
+
+	it('combines maintainerTeamKey and cache when both present with different teams', () => {
+		const cache = new Map([['m1', ['eng']]]);
+		const flag = makeFlag({
+			key: 'f1',
+			maintainerTeamKey: 'platform',
+			maintainerId: 'm1',
+		});
+		expect(buildTeamTags(flag, cache)).toEqual(['team:platform', 'team:eng']);
+	});
+});
+
+// ─── buildFlagTags ───────────────────────────────────────────────────────────
+
+describe('buildFlagTags', () => {
+	const emptyCache = new Map<string, string[]>();
+
+	it('returns only team tags when flag has no LD source tags', () => {
+		const flag = makeFlag({ key: 'f1', maintainerTeamKey: 'platform' });
+		expect(buildFlagTags(flag, emptyCache)).toEqual(['team:platform']);
+	});
+
+	it('returns only LD source tags when flag has no maintainer', () => {
+		const flag = makeFlag({ key: 'f1', tags: ['ui', 'experiment'] });
+		expect(buildFlagTags(flag, emptyCache)).toEqual(['ui', 'experiment']);
+	});
+
+	it('returns team tags first then LD source tags', () => {
+		const flag = makeFlag({
+			key: 'f1',
+			maintainerTeamKey: 'platform',
+			tags: ['ui', 'experiment'],
+		});
+		expect(buildFlagTags(flag, emptyCache)).toEqual([
+			'team:platform',
+			'ui',
+			'experiment',
+		]);
+	});
+
+	it('returns empty array when neither maintainer nor LD tags exist', () => {
+		const flag = makeFlag({ key: 'f1' });
+		expect(buildFlagTags(flag, emptyCache)).toEqual([]);
+	});
+
+	it('includes team tags from cache for individual maintainer', () => {
+		const cache = new Map([['m1', ['eng']]]);
+		const flag = makeFlag({
+			key: 'f1',
+			maintainerId: 'm1',
+			tags: ['beta'],
+		});
+		expect(buildFlagTags(flag, cache)).toEqual(['team:eng', 'beta']);
 	});
 });

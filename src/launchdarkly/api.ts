@@ -1,10 +1,19 @@
 import axios, { type AxiosInstance, type AxiosResponse } from 'axios';
-import type { LDEnvironment, LDFlag } from './types.js';
+import type { LDEnvironment, LDFlag, LDMember } from './types.js';
 
 const LD_BASE_URL = 'https://app.launchdarkly.com';
 
 function ldHeaders(apiKey: string) {
 	return { Authorization: apiKey };
+}
+
+// ─── Errors ──────────────────────────────────────────────────────────────────
+
+export class ForbiddenError extends Error {
+	constructor(message = 'Forbidden') {
+		super(message);
+		this.name = 'ForbiddenError';
+	}
 }
 
 // ─── Rate Limiting ──────────────────────────────────────────────────────────
@@ -292,4 +301,69 @@ export async function validateLDApiKey(apiKey: string): Promise<boolean> {
 	} catch {
 		return false;
 	}
+}
+
+// ─── Members ─────────────────────────────────────────────────────────────────
+
+/**
+ * Fetch a single LaunchDarkly member by ID.
+ * Returns null for 404 (member not found / deleted).
+ * Throws ForbiddenError on 403 (Members API requires Enterprise plan).
+ */
+export async function fetchMember(
+	apiKey: string,
+	memberId: string,
+): Promise<LDMember | null> {
+	try {
+		const response = await ldClient.get<LDMember>(
+			`${LD_BASE_URL}/api/v2/members/${memberId}`,
+			{ headers: ldHeaders(apiKey) },
+		);
+		return response.data;
+	} catch (err) {
+		if (axios.isAxiosError(err) && err.response?.status === 404) {
+			return null;
+		}
+		if (axios.isAxiosError(err) && err.response?.status === 403) {
+			throw new ForbiddenError(
+				'Members API is not available on this LaunchDarkly plan (403)',
+			);
+		}
+		throw err;
+	}
+}
+
+/**
+ * Build a cache mapping member IDs to their team keys for the selected flags.
+ * Deduplicates member IDs before fetching. On 403 (non-Enterprise plan),
+ * returns an empty cache — callers should fall back to maintainerTeamKey only.
+ * @returns [cache, wasForbidden] — wasForbidden is true when the Members API returned 403
+ */
+export async function buildMemberTeamCache(
+	apiKey: string,
+	flags: LDFlag[],
+): Promise<[Map<string, string[]>, boolean]> {
+	const memberIds = new Set<string>();
+	for (const flag of flags) {
+		if (flag.maintainerId && !flag.maintainerTeamKey) {
+			memberIds.add(flag.maintainerId);
+		}
+	}
+
+	const cache = new Map<string, string[]>();
+
+	for (const memberId of memberIds) {
+		try {
+			const member = await fetchMember(apiKey, memberId);
+			const teamKeys = member?.teams?.items?.map((t) => t.key) ?? [];
+			cache.set(memberId, teamKeys);
+		} catch (err) {
+			if (err instanceof ForbiddenError) {
+				return [new Map(), true];
+			}
+			throw err;
+		}
+	}
+
+	return [cache, false];
 }

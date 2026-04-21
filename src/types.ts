@@ -84,6 +84,7 @@ export interface DatadogCreateFlagRequest {
 	variants: Array<{ key: string; name: string; value: string }>;
 	allocations?: DatadogAllocationForFlagCreation[];
 	migration_metadata?: MigrationMetadata;
+	tags?: string[];
 }
 
 export interface DatadogCreatedFlag {

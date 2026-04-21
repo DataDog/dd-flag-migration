@@ -27,6 +27,7 @@ import type {
 	DatadogFlagEntry,
 } from '../types.js';
 import {
+	buildMemberTeamCache,
 	fetchFlag,
 	fetchFlagRelease,
 	fetchFlags,
@@ -38,6 +39,7 @@ import {
 } from './api.js';
 import {
 	buildAllocations,
+	buildFlagTags,
 	buildVariants,
 	getEnvsToEnable,
 	mapFlagType,
@@ -509,6 +511,30 @@ async function executeMigration(
 		return 'cancel';
 	}
 
+	// Build member→teams cache for tag generation
+	const cacheSpinner = ora('Resolving team memberships…').start();
+	let memberTeamCache = new Map<string, string[]>();
+	try {
+		const [cache, wasForbidden] = await buildMemberTeamCache(
+			ldApiKey,
+			detailedFlags,
+		);
+		memberTeamCache = cache;
+		if (wasForbidden) {
+			cacheSpinner.warn(
+				'Members API returned 403 — team tags will only be set for flags with a team maintainer (requires Enterprise plan for individual maintainers)',
+			);
+		} else {
+			cacheSpinner.succeed(
+				`Resolved team memberships for ${memberTeamCache.size} member(s)`,
+			);
+		}
+	} catch (err) {
+		cacheSpinner.warn(
+			`Could not resolve team memberships: ${formatAxiosError(err)}`,
+		);
+	}
+
 	if (dryRun) {
 		console.log(chalk.bold.yellow('  Dry run — no flags will be created\n'));
 	}
@@ -746,6 +772,8 @@ async function executeMigration(
 				? `${conflictResolution.prefix}-${flag.key}`
 				: flag.key;
 
+			const tags = buildFlagTags(flag, memberTeamCache);
+
 			const request: DatadogCreateFlagRequest = {
 				key: ddKey,
 				name: flag.name,
@@ -757,6 +785,7 @@ async function executeMigration(
 					flag_key: flag.key,
 					...(usePrefix ? { key_prefix: conflictResolution.prefix } : {}),
 				},
+				...(tags.length > 0 ? { tags } : {}),
 			};
 
 			if (dryRun) {
