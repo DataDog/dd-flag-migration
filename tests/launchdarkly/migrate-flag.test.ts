@@ -1092,6 +1092,10 @@ function migrateFlagWithConflicts(
 	datadogFlags: DatadogFlagEntry[],
 	projectKey: string,
 	conflictResolution?: ConflictResolution,
+	tagOptions?: {
+		memberTeamCache?: Map<string, string[]>;
+		teamKeyMapping?: Map<string, string>;
+	},
 ): {
 	action: 'create' | 'sync' | 'skip';
 	skipReason?: string;
@@ -1154,6 +1158,12 @@ function migrateFlagWithConflicts(
 		...(usePrefix ? { key_prefix: conflictResolution.prefix } : {}),
 	};
 
+	const tags = buildFlagTags(
+		flag,
+		tagOptions?.memberTeamCache ?? new Map(),
+		tagOptions?.teamKeyMapping,
+	);
+
 	const request: DatadogCreateFlagRequest = {
 		key: ddKey,
 		name: flag.name,
@@ -1161,6 +1171,7 @@ function migrateFlagWithConflicts(
 		variants,
 		allocations: allocations.length > 0 ? allocations : undefined,
 		migration_metadata: metadata,
+		...(tags.length > 0 ? { tags } : {}),
 	};
 
 	return {
@@ -1628,5 +1639,370 @@ describe('migrate a flag with both maintainerTeamKey and maintainerId set', () =
 			);
 			expect(teamTags).toEqual(['team:platform']);
 		});
+	});
+});
+
+describe('migrate a flag where the LD team key does not match DD — user maps it', () => {
+	// The LD flag has maintainerTeamKey "ld-platform" but Datadog has a team
+	// with handle "platform-eng". The user interactively maps ld-platform →
+	// platform-eng before migration. The team tag should use the DD handle.
+	const flag: LDFlag = {
+		name: 'Mapped Team Feature',
+		kind: 'boolean',
+		key: 'mapped-team-feature',
+		variations: [
+			{ _id: 'v0', value: true, name: 'on' },
+			{ _id: 'v1', value: false, name: 'off' },
+		],
+		defaults: { onVariation: 0, offVariation: 1 },
+		environments: {
+			production: makeEnv({
+				_environmentName: 'Production',
+				on: true,
+				fallthrough: { variation: 0 },
+			}),
+		},
+		tags: ['infra'],
+		archived: false,
+		deprecated: false,
+		temporary: false,
+		maintainerTeamKey: 'ld-platform',
+		_maintainerTeam: { key: 'ld-platform', name: 'LD Platform' },
+	};
+
+	const envMapping = new Map([['production', ddProd]]);
+	const mapping = new Map([['ld-platform', 'platform-eng']]);
+	const result = migrateFlag(flag, envMapping, ['production'], {
+		teamKeyMapping: mapping,
+	});
+
+	it('uses the DD team handle, not the original LD team key', () => {
+		expect(result.request?.tags).toContain('team:platform-eng');
+	});
+
+	it('does not include the original LD team key as a tag', () => {
+		expect(result.request?.tags).not.toContain('team:ld-platform');
+	});
+
+	it('preserves LD source tags alongside the mapped team tag', () => {
+		expect(result.request?.tags).toEqual(['team:platform-eng', 'infra']);
+	});
+});
+
+describe('migrate a flag where the LD team key does not match DD — user skips mapping', () => {
+	// Same mismatch scenario, but the user declines to map. The original LD
+	// team key passes through as-is into the team tag.
+	const flag: LDFlag = {
+		name: 'Unmapped Team Feature',
+		kind: 'boolean',
+		key: 'unmapped-team-feature',
+		variations: [
+			{ _id: 'v0', value: true, name: 'on' },
+			{ _id: 'v1', value: false, name: 'off' },
+		],
+		defaults: { onVariation: 0, offVariation: 1 },
+		environments: {
+			production: makeEnv({
+				_environmentName: 'Production',
+				on: true,
+				fallthrough: { variation: 0 },
+			}),
+		},
+		tags: [],
+		archived: false,
+		deprecated: false,
+		temporary: false,
+		maintainerTeamKey: 'ld-platform',
+		_maintainerTeam: { key: 'ld-platform', name: 'LD Platform' },
+	};
+
+	const envMapping = new Map([['production', ddProd]]);
+	// No teamKeyMapping — user skipped mapping
+	const result = migrateFlag(flag, envMapping, ['production']);
+
+	it('uses the original LD team key as the tag', () => {
+		expect(result.request?.tags).toEqual(['team:ld-platform']);
+	});
+});
+
+describe('migrate a flag whose individual maintainer belongs to multiple teams', () => {
+	// The member is on 3 LD teams. All three should appear as team tags.
+	const flag: LDFlag = {
+		name: 'Multi-Team Member Flag',
+		kind: 'boolean',
+		key: 'multi-team-member',
+		variations: [
+			{ _id: 'v0', value: true, name: 'on' },
+			{ _id: 'v1', value: false, name: 'off' },
+		],
+		defaults: { onVariation: 0, offVariation: 1 },
+		environments: {
+			production: makeEnv({
+				_environmentName: 'Production',
+				on: true,
+				fallthrough: { variation: 0 },
+			}),
+		},
+		tags: ['beta'],
+		archived: false,
+		deprecated: false,
+		temporary: false,
+		maintainerId: 'member-multi',
+		_maintainer: {
+			_id: 'member-multi',
+			email: 'multi@example.com',
+			role: 'writer',
+		},
+	};
+
+	const envMapping = new Map([['production', ddProd]]);
+	const cache = new Map([['member-multi', ['platform', 'sre', 'frontend']]]);
+	const result = migrateFlag(flag, envMapping, ['production'], {
+		memberTeamCache: cache,
+	});
+
+	it('produces a team tag for each of the member teams', () => {
+		expect(result.request?.tags).toContain('team:platform');
+		expect(result.request?.tags).toContain('team:sre');
+		expect(result.request?.tags).toContain('team:frontend');
+	});
+
+	it('orders team tags before LD source tags', () => {
+		expect(result.request?.tags).toEqual([
+			'team:platform',
+			'team:sre',
+			'team:frontend',
+			'beta',
+		]);
+	});
+});
+
+describe('migrate a flag whose individual maintainer has no teams', () => {
+	// The member exists but belongs to zero LD teams. The flag gets no team
+	// tags — only its LD source tags survive.
+	const flag: LDFlag = {
+		name: 'Teamless Member Flag',
+		kind: 'boolean',
+		key: 'teamless-member',
+		variations: [
+			{ _id: 'v0', value: true, name: 'on' },
+			{ _id: 'v1', value: false, name: 'off' },
+		],
+		defaults: { onVariation: 0, offVariation: 1 },
+		environments: {
+			production: makeEnv({
+				_environmentName: 'Production',
+				on: true,
+				fallthrough: { variation: 0 },
+			}),
+		},
+		tags: ['cleanup'],
+		archived: false,
+		deprecated: false,
+		temporary: false,
+		maintainerId: 'member-lonely',
+		_maintainer: {
+			_id: 'member-lonely',
+			email: 'lonely@example.com',
+			role: 'writer',
+		},
+	};
+
+	const envMapping = new Map([['production', ddProd]]);
+	// Member exists in cache but has no teams
+	const cache = new Map([['member-lonely', []]]);
+	const result = migrateFlag(flag, envMapping, ['production'], {
+		memberTeamCache: cache,
+	});
+
+	it('produces no team tags', () => {
+		const teamTags = (result.request?.tags ?? []).filter((t: string) =>
+			t.startsWith('team:'),
+		);
+		expect(teamTags).toEqual([]);
+	});
+
+	it('still includes LD source tags', () => {
+		expect(result.request?.tags).toEqual(['cleanup']);
+	});
+});
+
+describe('migrate a cross-project prefixed flag that also has team tags', () => {
+	// A flag whose key conflicts with another LD project. The user chose to
+	// prefix with "mobile". The flag also has a team maintainer. Both the
+	// prefixed key and team tags should appear correctly in the request.
+	const flag: LDFlag = {
+		name: 'Feature Toggle',
+		kind: 'boolean',
+		key: 'feature-toggle',
+		variations: [
+			{ _id: 'v0', value: true, name: 'on' },
+			{ _id: 'v1', value: false, name: 'off' },
+		],
+		defaults: { onVariation: 0, offVariation: 1 },
+		environments: {
+			production: makeEnv({
+				_environmentName: 'Production',
+				on: true,
+				fallthrough: { variation: 0 },
+			}),
+		},
+		tags: ['mobile-app'],
+		archived: false,
+		deprecated: false,
+		temporary: false,
+		maintainerTeamKey: 'mobile-eng',
+		_maintainerTeam: { key: 'mobile-eng', name: 'Mobile Engineering' },
+	};
+
+	// A DD flag from a different project already has this key
+	const datadogFlags: DatadogFlagEntry[] = [
+		{
+			id: 'dd-uuid-web',
+			key: 'feature-toggle',
+			migration_metadata: {
+				project_key: 'web',
+				flag_key: 'feature-toggle',
+			},
+		},
+	];
+
+	const envMapping = new Map([['production', ddProd]]);
+	const result = migrateFlagWithConflicts(
+		flag,
+		envMapping,
+		['production'],
+		datadogFlags,
+		'mobile',
+		{ action: 'prefix', prefix: 'mobile' },
+	);
+
+	it('creates a new flag with prefixed key', () => {
+		expect(result.action).toBe('create');
+		expect(result.request?.key).toBe('mobile-feature-toggle');
+	});
+
+	it('includes team tag from the maintainer', () => {
+		expect(result.request?.tags).toContain('team:mobile-eng');
+	});
+
+	it('includes LD source tags', () => {
+		expect(result.request?.tags).toContain('mobile-app');
+	});
+
+	it('has both prefixed key and team tags in the same request', () => {
+		expect(result.request?.key).toBe('mobile-feature-toggle');
+		expect(result.request?.tags).toEqual(['team:mobile-eng', 'mobile-app']);
+		expect(result.request?.migration_metadata?.key_prefix).toBe('mobile');
+	});
+});
+
+describe('migrate a realistic flag with targets, rules, LD tags, and a team maintainer', () => {
+	// End-to-end: a flag with real-world complexity — targeting rules, rollout,
+	// LD source tags, and a team maintainer. Verifies that team tagging
+	// integrates cleanly with the full targeting pipeline.
+	const flag: LDFlag = {
+		name: 'Checkout V2',
+		kind: 'boolean',
+		key: 'checkout-v2',
+		variations: [
+			{ _id: 'v0', value: true, name: 'Enabled' },
+			{ _id: 'v1', value: false, name: 'Disabled' },
+		],
+		defaults: { onVariation: 0, offVariation: 1 },
+		environments: {
+			staging: makeEnv({
+				_environmentName: 'Staging',
+				on: true,
+				fallthrough: { variation: 0 },
+			}),
+			production: makeEnv({
+				_environmentName: 'Production',
+				on: true,
+				targets: [
+					{
+						values: ['user-qa-1', 'user-qa-2'],
+						variation: 0,
+						contextKind: 'user',
+					},
+				],
+				rules: [
+					{
+						_id: 'r1',
+						rollout: {
+							variations: [
+								{ variation: 0, weight: 20000 },
+								{ variation: 1, weight: 80000 },
+							],
+						},
+						clauses: [
+							{
+								_id: 'c1',
+								attribute: 'country',
+								op: 'in',
+								values: ['US', 'CA'],
+								contextKind: 'user',
+								negate: false,
+							},
+						],
+						trackEvents: false,
+						description: 'NA 20% rollout',
+					},
+				],
+				fallthrough: { variation: 1 },
+			}),
+		},
+		tags: ['checkout', 'q3-launch'],
+		archived: false,
+		deprecated: false,
+		temporary: false,
+		maintainerTeamKey: 'payments',
+		_maintainerTeam: { key: 'payments', name: 'Payments' },
+	};
+
+	const envMapping = new Map<string, DatadogEnvironment>([
+		['staging', ddStaging],
+		['production', ddProd],
+	]);
+	const result = migrateFlag(flag, envMapping, ['staging', 'production']);
+
+	it('produces the correct number of allocations (1 staging ft + 1 target + 1 rule + 1 prod ft)', () => {
+		expect(result.request?.allocations).toHaveLength(4);
+	});
+
+	it('includes team tag from the maintainer', () => {
+		expect(result.request?.tags).toContain('team:payments');
+	});
+
+	it('includes both LD source tags', () => {
+		expect(result.request?.tags).toContain('checkout');
+		expect(result.request?.tags).toContain('q3-launch');
+	});
+
+	it('produces the full tag list: team first, then LD tags', () => {
+		expect(result.request?.tags).toEqual([
+			'team:payments',
+			'checkout',
+			'q3-launch',
+		]);
+	});
+
+	it('has correct targeting on the production rule allocation', () => {
+		// staging fallthrough + prod target + prod rule + prod fallthrough
+		const prodRule = result.request?.allocations?.[2];
+		expect(prodRule?.name).toBe('NA 20% rollout');
+		expect(prodRule?.targeting_rules?.[0].conditions[0]).toEqual({
+			operator: 'ONE_OF',
+			attribute: 'country',
+			value: ['US', 'CA'],
+		});
+		expect(prodRule?.variant_weights).toEqual([
+			{ variant_key: 'enabled', value: 20 },
+			{ variant_key: 'disabled', value: 80 },
+		]);
+	});
+
+	it('enables both environments since both are on', () => {
+		expect(result.envsToEnable).toHaveLength(2);
 	});
 });
