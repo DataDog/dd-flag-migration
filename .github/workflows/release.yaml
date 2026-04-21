@@ -1,0 +1,88 @@
+name: Publish package on NPM
+
+permissions:
+  id-token: write # Required for OIDC - https://docs.npmjs.com/trusted-publishers#supported-cicd-providers
+  contents: read
+  packages: read
+
+on:
+  release:
+    types: [created]
+
+jobs:
+  validate-release:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Validate release version
+        run: |
+          # Check if the tag matches the version in package.json
+          RELEASE_VERSION="${{ github.event.release.tag_name }}"
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+
+          if [[ "v$PACKAGE_VERSION" != "$RELEASE_VERSION" ]]; then
+            echo "❌ Release tag $RELEASE_VERSION doesn't match package.json version v$PACKAGE_VERSION"
+            exit 1
+          fi
+
+          echo "✅ Release validation passed"
+
+  build-and-publish:
+    runs-on: ubuntu-latest
+    environment: production
+    needs: validate-release
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: '20.x'
+          cache: 'yarn'
+
+      - name: Install dependencies
+        run: yarn install --immutable && yarn allow-scripts
+
+      - name: Lint
+        run: yarn lint
+
+      - name: Type check
+        run: yarn typecheck
+
+      - name: Build
+        run: yarn build
+
+      - name: Test
+        run: yarn test
+
+      - name: Determine npm tag
+        id: npm-tag
+        run: |
+          RELEASE_TAG="${{ github.event.release.tag_name }}"
+          IS_PRERELEASE="${{ github.event.release.prerelease }}"
+
+          # For production releases, use 'latest' tag
+          if [[ "$IS_PRERELEASE" == "false" ]]; then
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+            echo "Using 'latest' npm tag for production release $RELEASE_TAG"
+          # For prereleases, determine tag based on version string
+          elif [[ "$RELEASE_TAG" =~ .*preview.* ]]; then
+            echo "tag=preview" >> "$GITHUB_OUTPUT"
+            echo "Using 'preview' npm tag for prerelease $RELEASE_TAG"
+          else
+            echo "tag=alpha" >> "$GITHUB_OUTPUT"
+            echo "Using 'alpha' npm tag for prerelease $RELEASE_TAG"
+          fi
+
+      - name: Publish to npm
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="${{ steps.npm-tag.outputs.tag }}"
+
+          if npm view "dd-flag-migration@$VERSION" --json > /dev/null 2>&1; then
+            echo "⏭️  dd-flag-migration@$VERSION already published, skipping"
+          else
+            echo "📦 Publishing dd-flag-migration@$VERSION with tag $TAG..."
+            npm publish --provenance --tag "$TAG"
+          fi
