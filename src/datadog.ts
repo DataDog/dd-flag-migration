@@ -143,6 +143,21 @@ export async function createFeatureFlag(
 	return { id: response.data.data.id, key: response.data.data.attributes.key };
 }
 
+export async function fetchFlagTags(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	site = 'datadoghq.com',
+): Promise<string[]> {
+	const baseUrl = `https://api.${site}`;
+	const response = await axios.get<{
+		data: { attributes: { tags?: string[] } };
+	}>(`${baseUrl}/api/v2/feature-flags/${flagId}`, {
+		headers: ddHeaders(apiKey, appKey),
+	});
+	return response.data.data.attributes.tags ?? [];
+}
+
 export async function updateFlagTags(
 	apiKey: string,
 	appKey: string,
@@ -150,9 +165,14 @@ export async function updateFlagTags(
 	tags: string[],
 	site = 'datadoghq.com',
 ): Promise<void> {
+	// The DD API replaces tags entirely on PUT, so fetch existing tags
+	// and merge to avoid dropping manually-added tags.
+	const existing = await fetchFlagTags(apiKey, appKey, flagId, site);
+	const merged = [...new Set([...tags, ...existing])];
+
 	const baseUrl = `https://api.${site}`;
 	const body = {
-		data: { type: 'feature-flags', attributes: { tags } },
+		data: { type: 'feature-flags', attributes: { tags: merged } },
 	};
 	await axios.put(`${baseUrl}/api/v2/feature-flags/${flagId}`, body, {
 		headers: {

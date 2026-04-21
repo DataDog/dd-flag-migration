@@ -8,6 +8,7 @@ import {
 	fetchDatadogFlagKeys,
 	fetchDatadogFlags,
 	fetchDatadogTeams,
+	fetchFlagTags,
 	syncAllocationsForEnvironment,
 	updateFlagTags,
 	validateDatadogKeys,
@@ -783,6 +784,36 @@ describe('syncAllocationsForEnvironment', () => {
 
 // ─── updateFlagTags ──────────────────────────────────────────────────────────
 
+describe('fetchFlagTags', () => {
+	let mock: AxiosMockAdapter;
+
+	beforeEach(() => {
+		mock = new AxiosMockAdapter(axios as never);
+	});
+
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('returns tags from flag response', async () => {
+		mock.onGet(`${BASE}/api/v2/feature-flags/flag-123`).reply(200, {
+			data: { attributes: { tags: ['team:eng', 'manual-tag'] } },
+		});
+
+		const tags = await fetchFlagTags(API_KEY, APP_KEY, 'flag-123', SITE);
+		expect(tags).toEqual(['team:eng', 'manual-tag']);
+	});
+
+	it('returns empty array when tags field is missing', async () => {
+		mock.onGet(`${BASE}/api/v2/feature-flags/flag-123`).reply(200, {
+			data: { attributes: {} },
+		});
+
+		const tags = await fetchFlagTags(API_KEY, APP_KEY, 'flag-123', SITE);
+		expect(tags).toEqual([]);
+	});
+});
+
 describe('updateFlagTags', () => {
 	let mock: AxiosMockAdapter;
 
@@ -794,7 +825,39 @@ describe('updateFlagTags', () => {
 		mock.restore();
 	});
 
-	it('sends PUT with tags in JSON:API format', async () => {
+	it('merges new tags with existing tags on the flag', async () => {
+		mock.onGet(`${BASE}/api/v2/feature-flags/flag-123`).reply(200, {
+			data: { attributes: { tags: ['manual-tag', 'ui'] } },
+		});
+		mock.onPut(`${BASE}/api/v2/feature-flags/flag-123`).reply((config) => {
+			const body = JSON.parse(config.data);
+			expect(body).toEqual({
+				data: {
+					type: 'feature-flags',
+					attributes: {
+						tags: ['team:eng', 'ui', 'manual-tag'],
+					},
+				},
+			});
+			return [
+				200,
+				{ data: { id: 'flag-123', type: 'feature-flags', attributes: {} } },
+			];
+		});
+
+		await updateFlagTags(
+			API_KEY,
+			APP_KEY,
+			'flag-123',
+			['team:eng', 'ui'],
+			SITE,
+		);
+	});
+
+	it('sends only new tags when flag has no existing tags', async () => {
+		mock.onGet(`${BASE}/api/v2/feature-flags/flag-123`).reply(200, {
+			data: { attributes: { tags: [] } },
+		});
 		mock.onPut(`${BASE}/api/v2/feature-flags/flag-123`).reply((config) => {
 			const body = JSON.parse(config.data);
 			expect(body).toEqual({
@@ -819,6 +882,9 @@ describe('updateFlagTags', () => {
 	});
 
 	it('throws on error response', async () => {
+		mock.onGet(`${BASE}/api/v2/feature-flags/flag-123`).reply(200, {
+			data: { attributes: { tags: [] } },
+		});
 		mock.onPut(`${BASE}/api/v2/feature-flags/flag-123`).reply(403);
 
 		await expect(
