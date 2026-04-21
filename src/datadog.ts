@@ -143,6 +143,67 @@ export async function createFeatureFlag(
 	return { id: response.data.data.id, key: response.data.data.attributes.key };
 }
 
+export async function updateFlagTags(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	tags: string[],
+	site = 'datadoghq.com',
+): Promise<void> {
+	const baseUrl = `https://api.${site}`;
+	const body = {
+		data: { type: 'feature-flags', attributes: { tags } },
+	};
+	await axios.put(`${baseUrl}/api/v2/feature-flags/${flagId}`, body, {
+		headers: {
+			...ddHeaders(apiKey, appKey),
+			'Content-Type': 'application/json',
+		},
+	});
+}
+
+export interface DatadogTeam {
+	id: string;
+	handle: string;
+	name: string;
+}
+
+export async function fetchDatadogTeams(
+	apiKey: string,
+	appKey: string,
+	site = 'datadoghq.com',
+): Promise<DatadogTeam[]> {
+	const baseUrl = `https://api.${site}`;
+	const teams: DatadogTeam[] = [];
+	let pageNumber = 0;
+	const pageSize = 100;
+	while (true) {
+		const response = await axios.get<{
+			data: Array<{
+				id: string;
+				attributes: { handle: string; name: string };
+			}>;
+		}>(`${baseUrl}/api/v2/team`, {
+			headers: ddHeaders(apiKey, appKey),
+			params: {
+				'page[size]': pageSize,
+				'page[number]': pageNumber,
+			},
+		});
+		const data = response.data.data ?? [];
+		for (const t of data) {
+			teams.push({
+				id: t.id,
+				handle: t.attributes.handle,
+				name: t.attributes.name,
+			});
+		}
+		if (data.length < pageSize) break;
+		pageNumber++;
+	}
+	return teams;
+}
+
 export async function enableFeatureFlagEnvironment(
 	apiKey: string,
 	appKey: string,
