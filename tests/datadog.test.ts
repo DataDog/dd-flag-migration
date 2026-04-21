@@ -7,7 +7,10 @@ import {
 	fetchDatadogEnvironments,
 	fetchDatadogFlagKeys,
 	fetchDatadogFlags,
+	fetchDatadogTeams,
+	fetchFlagTags,
 	syncAllocationsForEnvironment,
+	updateFlagTags,
 	validateDatadogKeys,
 } from '../src/datadog.js';
 import type {
@@ -776,5 +779,171 @@ describe('syncAllocationsForEnvironment', () => {
 				SITE,
 			),
 		).rejects.toThrow();
+	});
+});
+
+// ─── updateFlagTags ──────────────────────────────────────────────────────────
+
+describe('fetchFlagTags', () => {
+	let mock: AxiosMockAdapter;
+
+	beforeEach(() => {
+		mock = new AxiosMockAdapter(axios as never);
+	});
+
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('returns tags from flag response', async () => {
+		mock.onGet(`${BASE}/api/v2/feature-flags/flag-123`).reply(200, {
+			data: { attributes: { tags: ['team:eng', 'manual-tag'] } },
+		});
+
+		const tags = await fetchFlagTags(API_KEY, APP_KEY, 'flag-123', SITE);
+		expect(tags).toEqual(['team:eng', 'manual-tag']);
+	});
+
+	it('returns empty array when tags field is missing', async () => {
+		mock.onGet(`${BASE}/api/v2/feature-flags/flag-123`).reply(200, {
+			data: { attributes: {} },
+		});
+
+		const tags = await fetchFlagTags(API_KEY, APP_KEY, 'flag-123', SITE);
+		expect(tags).toEqual([]);
+	});
+});
+
+describe('updateFlagTags', () => {
+	let mock: AxiosMockAdapter;
+
+	beforeEach(() => {
+		mock = new AxiosMockAdapter(axios as never);
+	});
+
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('merges new tags with existing tags on the flag', async () => {
+		mock.onGet(`${BASE}/api/v2/feature-flags/flag-123`).reply(200, {
+			data: { attributes: { tags: ['manual-tag', 'ui'] } },
+		});
+		mock.onPut(`${BASE}/api/v2/feature-flags/flag-123`).reply((config) => {
+			const body = JSON.parse(config.data);
+			expect(body).toEqual({
+				data: {
+					type: 'feature-flags',
+					attributes: {
+						tags: ['team:eng', 'ui', 'manual-tag'],
+					},
+				},
+			});
+			return [
+				200,
+				{ data: { id: 'flag-123', type: 'feature-flags', attributes: {} } },
+			];
+		});
+
+		await updateFlagTags(
+			API_KEY,
+			APP_KEY,
+			'flag-123',
+			['team:eng', 'ui'],
+			SITE,
+		);
+	});
+
+	it('sends only new tags when flag has no existing tags', async () => {
+		mock.onGet(`${BASE}/api/v2/feature-flags/flag-123`).reply(200, {
+			data: { attributes: { tags: [] } },
+		});
+		mock.onPut(`${BASE}/api/v2/feature-flags/flag-123`).reply((config) => {
+			const body = JSON.parse(config.data);
+			expect(body).toEqual({
+				data: {
+					type: 'feature-flags',
+					attributes: { tags: ['team:eng', 'ui'] },
+				},
+			});
+			return [
+				200,
+				{ data: { id: 'flag-123', type: 'feature-flags', attributes: {} } },
+			];
+		});
+
+		await updateFlagTags(
+			API_KEY,
+			APP_KEY,
+			'flag-123',
+			['team:eng', 'ui'],
+			SITE,
+		);
+	});
+
+	it('throws on error response', async () => {
+		mock.onGet(`${BASE}/api/v2/feature-flags/flag-123`).reply(200, {
+			data: { attributes: { tags: [] } },
+		});
+		mock.onPut(`${BASE}/api/v2/feature-flags/flag-123`).reply(403);
+
+		await expect(
+			updateFlagTags(API_KEY, APP_KEY, 'flag-123', ['team:eng'], SITE),
+		).rejects.toThrow();
+	});
+});
+
+// ─── fetchDatadogTeams ───────────────────────────────────────────────────────
+
+describe('fetchDatadogTeams', () => {
+	let mock: AxiosMockAdapter;
+
+	beforeEach(() => {
+		mock = new AxiosMockAdapter(axios as never);
+	});
+
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('returns teams with handle and name', async () => {
+		mock.onGet(`${BASE}/api/v2/team`).reply(200, {
+			data: [
+				{ id: 't1', attributes: { handle: 'eng', name: 'Engineering' } },
+				{ id: 't2', attributes: { handle: 'platform', name: 'Platform' } },
+			],
+		});
+
+		const teams = await fetchDatadogTeams(API_KEY, APP_KEY, SITE);
+		expect(teams).toEqual([
+			{ id: 't1', handle: 'eng', name: 'Engineering' },
+			{ id: 't2', handle: 'platform', name: 'Platform' },
+		]);
+	});
+
+	it('paginates through multiple pages', async () => {
+		const page1 = Array.from({ length: 100 }, (_, i) => ({
+			id: `t${i}`,
+			attributes: { handle: `team-${i}`, name: `Team ${i}` },
+		}));
+		const page2 = [
+			{ id: 't100', attributes: { handle: 'team-100', name: 'Team 100' } },
+		];
+
+		mock
+			.onGet(`${BASE}/api/v2/team`)
+			.replyOnce(200, { data: page1 })
+			.onGet(`${BASE}/api/v2/team`)
+			.replyOnce(200, { data: page2 });
+
+		const teams = await fetchDatadogTeams(API_KEY, APP_KEY, SITE);
+		expect(teams).toHaveLength(101);
+	});
+
+	it('returns empty array when no teams exist', async () => {
+		mock.onGet(`${BASE}/api/v2/team`).reply(200, { data: [] });
+
+		const teams = await fetchDatadogTeams(API_KEY, APP_KEY, SITE);
+		expect(teams).toEqual([]);
 	});
 });

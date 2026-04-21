@@ -93,6 +93,17 @@ export interface LDMaintainerTeam {
 	name: string;
 }
 
+export interface LDTeamSummary {
+	key: string;
+	name: string;
+}
+
+export interface LDMember {
+	_id: string;
+	email: string;
+	teams?: { items: LDTeamSummary[] };
+}
+
 export interface LDFlag {
 	name: string;
 	kind: 'boolean' | 'multivariate';

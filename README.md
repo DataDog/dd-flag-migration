@@ -64,7 +64,7 @@ Your LaunchDarkly access token needs **Reader** role permissions (or a custom ro
 
 #### Datadog Application Key permissions
 
-Your Datadog Application Key must have the following **Feature Flags** scopes enabled:
+Your Datadog Application Key must have the following scopes enabled:
 
 | Scope | Description |
 |---|---|
@@ -72,8 +72,9 @@ Your Datadog Application Key must have the following **Feature Flags** scopes en
 | `feature_flag_config_write` | Edit Feature Flag Configurations |
 | `feature_flag_environment_config_read` | Ability to view Feature Flag Environment settings |
 | `feature_flag_environment_config_write` | Ability to modify Feature Flag Environment settings |
+| `teams_read` | View Teams *(optional — enables automatic team tagging of migrated flags)* |
 
-To set these permissions, go to **Organization Settings → Application Keys**, select your key, and enable the scopes listed above under the **Feature Flags** section.
+To set these permissions, go to **Organization Settings → Application Keys**, select your key, and enable the scopes listed above. The first four are under the **Feature Flags** section; `teams_read` is under **Teams**. If `teams_read` is not granted, migration will still succeed but team key mismatches cannot be detected.
 
 ### For evaluation (`yarn evaluate`)
 

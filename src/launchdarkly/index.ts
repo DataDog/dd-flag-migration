@@ -11,10 +11,13 @@ import {
 } from '../config.js';
 import {
 	createFeatureFlag,
+	type DatadogTeam,
 	enableFeatureFlagEnvironment,
 	fetchDatadogEnvironments,
 	fetchDatadogFlags,
+	fetchDatadogTeams,
 	syncAllocationsForEnvironment,
+	updateFlagTags,
 } from '../datadog.js';
 import {
 	filterableCheckbox,
@@ -27,6 +30,7 @@ import type {
 	DatadogFlagEntry,
 } from '../types.js';
 import {
+	buildMemberTeamCache,
 	fetchFlag,
 	fetchFlagRelease,
 	fetchFlags,
@@ -38,7 +42,9 @@ import {
 } from './api.js';
 import {
 	buildAllocations,
+	buildFlagTags,
 	buildVariants,
+	collectLDTeamKeys,
 	getEnvsToEnable,
 	mapFlagType,
 	shouldSkipFlag,
@@ -87,6 +93,33 @@ function formatAxiosError(err: unknown): string {
 	const url = err.config?.url ?? '';
 	const bodyPreview = data ? JSON.stringify(data).slice(0, 300) : 'no body';
 	return `${method} ${url} — ${status ?? 'no status'}: ${bodyPreview}`;
+}
+
+/** Prompt the user to select a DD team handle for a mismatched LD team key. */
+async function promptForTeamMapping(
+	ldTeamKey: string,
+	ddTeams: DatadogTeam[],
+): Promise<string | null> {
+	const pageSize = Math.max(
+		5,
+		Math.min(ddTeams.length + 1, (process.stdout.rows ?? 24) - 9),
+	);
+
+	const result = await filterableSelect<string | null>({
+		message: `Map LD team "${ldTeamKey}" → Datadog team:`,
+		choices: [
+			{
+				name: chalk.dim(`Skip — keep as "${ldTeamKey}"`),
+				value: null,
+			},
+			...ddTeams.map((t) => ({
+				name: `${t.name}  ${chalk.gray(`(${t.handle})`)}`,
+				value: t.handle,
+			})),
+		],
+		pageSize,
+	});
+	return result;
 }
 
 /** Find the DD flag that matches this LD flag for the given project. */
@@ -509,6 +542,83 @@ async function executeMigration(
 		return 'cancel';
 	}
 
+	// Build member→teams cache for tag generation
+	const cacheSpinner = ora('Resolving team memberships…').start();
+	let memberTeamCache = new Map<string, string[]>();
+	try {
+		const [cache, wasForbidden] = await buildMemberTeamCache(
+			ldApiKey,
+			detailedFlags,
+		);
+		memberTeamCache = cache;
+		if (wasForbidden) {
+			cacheSpinner.warn(
+				'Members API returned 403 — team tags will only be set for flags with a team maintainer (requires Enterprise plan for individual maintainers)',
+			);
+		} else {
+			cacheSpinner.succeed(
+				`Resolved team memberships for ${memberTeamCache.size} member(s)`,
+			);
+		}
+	} catch (err) {
+		cacheSpinner.warn(
+			`Could not resolve team memberships: ${formatAxiosError(err)}`,
+		);
+	}
+
+	// Detect LD→DD team key mismatches and prompt for interactive mapping
+	let teamKeyMapping: Map<string, string> | undefined;
+	const ldTeamKeys = collectLDTeamKeys(detailedFlags, memberTeamCache);
+
+	if (ldTeamKeys.size > 0) {
+		const teamSpinner = ora('Fetching Datadog teams…').start();
+		try {
+			const ddTeams = await fetchDatadogTeams(ddApiKey, ddAppKey, ddSite);
+			teamSpinner.succeed(`Found ${ddTeams.length} Datadog team(s)`);
+
+			const ddHandles = new Set(ddTeams.map((t) => t.handle));
+			const mismatched = [...ldTeamKeys].filter((k) => !ddHandles.has(k));
+
+			if (mismatched.length > 0) {
+				console.log();
+				console.log(
+					chalk.yellow(
+						`  ${mismatched.length} LD team key(s) do not match any Datadog team handle:`,
+					),
+				);
+				for (const key of mismatched) {
+					console.log(chalk.yellow(`    • ${key}`));
+				}
+				console.log();
+
+				const shouldMap = await confirm({
+					message: 'Would you like to map these to Datadog team handles now?',
+					default: true,
+				});
+
+				if (shouldMap) {
+					teamKeyMapping = new Map<string, string>();
+					for (const ldKey of mismatched) {
+						const ddHandle = await promptForTeamMapping(ldKey, ddTeams);
+						if (ddHandle) {
+							teamKeyMapping.set(ldKey, ddHandle);
+						}
+					}
+					if (teamKeyMapping.size > 0) {
+						console.log();
+						console.log(
+							chalk.green(`  Mapped ${teamKeyMapping.size} team key(s)`),
+						);
+					}
+				}
+			}
+		} catch (err) {
+			teamSpinner.warn(
+				`Could not fetch Datadog teams: ${formatAxiosError(err)}`,
+			);
+		}
+	}
+
 	if (dryRun) {
 		console.log(chalk.bold.yellow('  Dry run — no flags will be created\n'));
 	}
@@ -641,6 +751,8 @@ async function executeMigration(
 			);
 			spinner = ora(`Migrating ${chalk.cyan(flag.key)}…`).start();
 
+			const syncTags = buildFlagTags(flag, memberTeamCache, teamKeyMapping);
+
 			if (dryRun) {
 				let syncFilterCount = 0;
 				let syncRuleCount = 0;
@@ -664,16 +776,30 @@ async function executeMigration(
 						body: {},
 					});
 				}
+				if (syncTags.length > 0) {
+					dryRunRequests.push({
+						method: 'PUT',
+						path: `/api/v2/feature-flags/${existingFlagId}`,
+						body: {
+							data: {
+								type: 'feature-flags',
+								attributes: { tags: syncTags },
+							},
+						},
+					});
+				}
 				const syncFilterLabel = `${syncFilterCount} targeting filter(s)`;
 				const syncRuleLabel =
 					syncRuleCount > 0 ? `, ${syncRuleCount} rule(s)` : '';
+				const tagLabel =
+					syncTags.length > 0 ? `, ${syncTags.length} tag(s)` : '';
 				const enableLabel =
 					envsToEnable.length > 0
 						? `, would enable in ${envsToEnable.map((e) => e.name).join(', ')}`
 						: '';
 				spinner.succeed(
 					`${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} ` +
-						`(${syncFilterLabel}${syncRuleLabel}${enableLabel})`,
+						`(${syncFilterLabel}${syncRuleLabel}${tagLabel}${enableLabel})`,
 				);
 				syncedFlagKeys.push(flag.key);
 				synced++;
@@ -700,6 +826,17 @@ async function executeMigration(
 						}
 					}
 
+					// Update tags on existing flag
+					if (syncTags.length > 0) {
+						await updateFlagTags(
+							ddApiKey,
+							ddAppKey,
+							existingFlagId,
+							syncTags,
+							ddSite,
+						);
+					}
+
 					let enabledCount = 0;
 					for (const ddEnv of envsToEnable) {
 						try {
@@ -723,10 +860,12 @@ async function executeMigration(
 					totalEnabled += enabledCount;
 					const syncedRuleLabel =
 						syncedRuleCount > 0 ? `, ${syncedRuleCount} rule(s)` : '';
+					const tagLabel =
+						syncTags.length > 0 ? `, ${syncTags.length} tag(s)` : '';
 					const enableLabel =
 						enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
 					spinner.succeed(
-						`Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${enableLabel})`,
+						`Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${tagLabel}${enableLabel})`,
 					);
 					syncedFlagKeys.push(flag.key);
 					synced++;
@@ -746,6 +885,8 @@ async function executeMigration(
 				? `${conflictResolution.prefix}-${flag.key}`
 				: flag.key;
 
+			const tags = buildFlagTags(flag, memberTeamCache, teamKeyMapping);
+
 			const request: DatadogCreateFlagRequest = {
 				key: ddKey,
 				name: flag.name,
@@ -757,6 +898,7 @@ async function executeMigration(
 					flag_key: flag.key,
 					...(usePrefix ? { key_prefix: conflictResolution.prefix } : {}),
 				},
+				...(tags.length > 0 ? { tags } : {}),
 			};
 
 			if (dryRun) {

@@ -5,9 +5,12 @@
 import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import AxiosMockAdapter from 'axios-mock-adapter';
 import {
+	buildMemberTeamCache,
 	createLDClient,
+	ForbiddenError,
 	fetchFlag,
 	fetchFlags,
+	fetchMember,
 	fetchProjectEnvironments,
 	fetchProjects,
 	ldClient,
@@ -361,4 +364,197 @@ describe('rate limiting', () => {
 			client.get('https://app.launchdarkly.com/api/v2/projects'),
 		).rejects.toThrow();
 	}, 30000);
+});
+
+// ─── fetchMember ─────────────────────────────────────────────────────────────
+
+describe('fetchMember', () => {
+	let mock: AxiosMockAdapter;
+
+	beforeEach(() => {
+		mock = new AxiosMockAdapter(ldClient as never);
+	});
+
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('returns member with teams', async () => {
+		mock
+			.onGet('https://app.launchdarkly.com/api/v2/members/member-1')
+			.reply(200, {
+				_id: 'member-1',
+				email: 'alice@example.com',
+				teams: {
+					items: [
+						{ key: 'platform', name: 'Platform' },
+						{ key: 'frontend', name: 'Frontend' },
+					],
+				},
+			});
+
+		const member = await fetchMember(API_KEY, 'member-1');
+		expect(member).toEqual({
+			_id: 'member-1',
+			email: 'alice@example.com',
+			teams: {
+				items: [
+					{ key: 'platform', name: 'Platform' },
+					{ key: 'frontend', name: 'Frontend' },
+				],
+			},
+		});
+	});
+
+	it('returns member with no teams', async () => {
+		mock
+			.onGet('https://app.launchdarkly.com/api/v2/members/member-2')
+			.reply(200, {
+				_id: 'member-2',
+				email: 'bob@example.com',
+				teams: { items: [] },
+			});
+
+		const member = await fetchMember(API_KEY, 'member-2');
+		expect(member?.teams?.items).toEqual([]);
+	});
+
+	it('returns null on 404', async () => {
+		mock
+			.onGet('https://app.launchdarkly.com/api/v2/members/deleted-member')
+			.reply(404);
+
+		const member = await fetchMember(API_KEY, 'deleted-member');
+		expect(member).toBeNull();
+	});
+
+	it('throws ForbiddenError on 403', async () => {
+		mock
+			.onGet('https://app.launchdarkly.com/api/v2/members/member-1')
+			.reply(403);
+
+		await expect(fetchMember(API_KEY, 'member-1')).rejects.toThrow(
+			ForbiddenError,
+		);
+	});
+
+	it('propagates other errors', async () => {
+		mock
+			.onGet('https://app.launchdarkly.com/api/v2/members/member-1')
+			.reply(500);
+
+		await expect(fetchMember(API_KEY, 'member-1')).rejects.toThrow();
+	});
+});
+
+// ─── buildMemberTeamCache ────────────────────────────────────────────────────
+
+function makeFlagForCache(
+	overrides: Partial<LDFlag> & { key: string },
+): LDFlag {
+	return {
+		name: overrides.key,
+		kind: 'boolean',
+		variations: [
+			{ _id: 'v0', value: true, name: 'true' },
+			{ _id: 'v1', value: false, name: 'false' },
+		],
+		defaults: { onVariation: 0, offVariation: 1 },
+		tags: [],
+		archived: false,
+		deprecated: false,
+		temporary: false,
+		...overrides,
+	};
+}
+
+describe('buildMemberTeamCache', () => {
+	let mock: AxiosMockAdapter;
+
+	beforeEach(() => {
+		mock = new AxiosMockAdapter(ldClient as never);
+	});
+
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('returns empty cache when no flags have individual maintainers', async () => {
+		const flags = [
+			makeFlagForCache({ key: 'f1', maintainerTeamKey: 'team-a' }),
+		];
+		const [cache, wasForbidden] = await buildMemberTeamCache(API_KEY, flags);
+		expect(cache.size).toBe(0);
+		expect(wasForbidden).toBe(false);
+	});
+
+	it('fetches team memberships for individual maintainers', async () => {
+		mock.onGet('https://app.launchdarkly.com/api/v2/members/m1').reply(200, {
+			_id: 'm1',
+			email: 'a@ex.com',
+			teams: { items: [{ key: 'eng', name: 'Engineering' }] },
+		});
+
+		const flags = [makeFlagForCache({ key: 'f1', maintainerId: 'm1' })];
+		const [cache, wasForbidden] = await buildMemberTeamCache(API_KEY, flags);
+		expect(cache.get('m1')).toEqual(['eng']);
+		expect(wasForbidden).toBe(false);
+	});
+
+	it('deduplicates member IDs across flags', async () => {
+		mock
+			.onGet('https://app.launchdarkly.com/api/v2/members/m1')
+			.replyOnce(200, {
+				_id: 'm1',
+				email: 'a@ex.com',
+				teams: { items: [{ key: 'eng', name: 'Engineering' }] },
+			});
+
+		const flags = [
+			makeFlagForCache({ key: 'f1', maintainerId: 'm1' }),
+			makeFlagForCache({ key: 'f2', maintainerId: 'm1' }),
+		];
+		const [cache] = await buildMemberTeamCache(API_KEY, flags);
+		expect(cache.get('m1')).toEqual(['eng']);
+		// Only one API call was made (replyOnce would fail on a second call)
+	});
+
+	it('skips flags that already have maintainerTeamKey', async () => {
+		const flags = [
+			makeFlagForCache({
+				key: 'f1',
+				maintainerId: 'm1',
+				maintainerTeamKey: 'team-a',
+			}),
+		];
+		// No mock set up — if fetchMember were called it would throw
+		const [cache, wasForbidden] = await buildMemberTeamCache(API_KEY, flags);
+		expect(cache.size).toBe(0);
+		expect(wasForbidden).toBe(false);
+	});
+
+	it('returns wasForbidden=true on 403 and empty cache', async () => {
+		mock.onGet('https://app.launchdarkly.com/api/v2/members/m1').reply(403);
+
+		const flags = [makeFlagForCache({ key: 'f1', maintainerId: 'm1' })];
+		const [cache, wasForbidden] = await buildMemberTeamCache(API_KEY, flags);
+		expect(cache.size).toBe(0);
+		expect(wasForbidden).toBe(true);
+	});
+
+	it('handles member with no teams field', async () => {
+		mock
+			.onGet('https://app.launchdarkly.com/api/v2/members/m1')
+			.reply(200, { _id: 'm1', email: 'a@ex.com' });
+
+		const flags = [makeFlagForCache({ key: 'f1', maintainerId: 'm1' })];
+		const [cache] = await buildMemberTeamCache(API_KEY, flags);
+		expect(cache.get('m1')).toEqual([]);
+	});
+
+	it('returns empty cache for empty flags array', async () => {
+		const [cache, wasForbidden] = await buildMemberTeamCache(API_KEY, []);
+		expect(cache.size).toBe(0);
+		expect(wasForbidden).toBe(false);
+	});
 });

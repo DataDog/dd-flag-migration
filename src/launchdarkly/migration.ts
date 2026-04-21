@@ -376,3 +376,75 @@ export function getEnvsToEnable(
 
 	return envsToEnable;
 }
+
+// ─── Tag Building ────────────────────────────────────────────────────────────
+
+/**
+ * Collect all unique LD team keys that would be used for tagging the given flags.
+ * Used to detect mismatches with DD team handles before migration begins.
+ */
+export function collectLDTeamKeys(
+	flags: LDFlag[],
+	memberTeamCache: Map<string, string[]>,
+): Set<string> {
+	const keys = new Set<string>();
+	for (const flag of flags) {
+		if (flag.maintainerTeamKey) {
+			keys.add(flag.maintainerTeamKey);
+		}
+		if (flag.maintainerId) {
+			const cached = memberTeamCache.get(flag.maintainerId);
+			if (cached) {
+				for (const k of cached) keys.add(k);
+			}
+		}
+	}
+	return keys;
+}
+
+/**
+ * Derive team tags from a flag's maintainer fields plus the member-team cache.
+ * - maintainerTeamKey: present directly on the flag when a team is the maintainer
+ * - maintainerId + cache: for individual maintainers on Enterprise plans
+ * Applies teamKeyMapping to translate LD team keys → DD team handles when provided.
+ * Returns tags in the form "team:<handle>".
+ */
+export function buildTeamTags(
+	flag: LDFlag,
+	memberTeamCache: Map<string, string[]>,
+	teamKeyMapping?: Map<string, string>,
+): string[] {
+	const teamKeys: string[] = [];
+
+	if (flag.maintainerTeamKey) {
+		teamKeys.push(flag.maintainerTeamKey);
+	}
+
+	if (flag.maintainerId) {
+		const cached = memberTeamCache.get(flag.maintainerId);
+		if (cached) {
+			teamKeys.push(...cached);
+		}
+	}
+
+	const unique = [...new Set(teamKeys)];
+	return unique.map((key) => {
+		const mapped = teamKeyMapping?.get(key) ?? key;
+		return `team:${mapped}`;
+	});
+}
+
+/**
+ * Build the full tags array for a Datadog flag.
+ * Combines team tags (derived from maintainer) with the flag's LD source tags.
+ * Applies teamKeyMapping to translate LD team keys → DD team handles when provided.
+ * Flags with no maintainer simply get no team tags — they can be tagged manually in DD.
+ */
+export function buildFlagTags(
+	flag: LDFlag,
+	memberTeamCache: Map<string, string[]>,
+	teamKeyMapping?: Map<string, string>,
+): string[] {
+	const teamTags = buildTeamTags(flag, memberTeamCache, teamKeyMapping);
+	return [...teamTags, ...flag.tags];
+}
