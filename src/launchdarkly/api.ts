@@ -11,6 +11,7 @@ function ldHeaders(apiKey: string) {
 
 const ROUTE_REMAINING_THRESHOLD = 5;
 const TOKEN_REMAINING_THRESHOLD = 50;
+const GLOBAL_REMAINING_THRESHOLD = 50;
 const MAX_RETRIES = 3;
 const RETRY_BASE_DELAY_MS = 1000;
 
@@ -20,15 +21,17 @@ function sleep(ms: number): Promise<void> {
 
 /**
  * Read rate-limit headers from a LaunchDarkly API response and sleep if
- * we're approaching either the per-route or per-token limit.
+ * we're approaching the per-route, per-token, or global limit.
  */
 async function respectRateLimit(response: AxiosResponse): Promise<void> {
 	const headers = response.headers;
 
 	const routeRemaining = Number(headers['x-ratelimit-route-remaining']);
 	const tokenRemaining = Number(headers['x-ratelimit-auth-token-remaining']);
+	const globalRemaining = Number(headers['x-ratelimit-global-remaining']);
 	const routeReset = Number(headers['x-ratelimit-reset']);
 	const tokenReset = Number(headers['x-ratelimit-auth-token-reset']);
+	const globalReset = Number(headers['x-ratelimit-global-reset']);
 
 	let waitUntil: number | null = null;
 
@@ -46,6 +49,17 @@ async function respectRateLimit(response: AxiosResponse): Promise<void> {
 		!Number.isNaN(tokenReset)
 	) {
 		const candidate = tokenReset;
+		if (waitUntil === null || candidate > waitUntil) {
+			waitUntil = candidate;
+		}
+	}
+
+	if (
+		!Number.isNaN(globalRemaining) &&
+		globalRemaining <= GLOBAL_REMAINING_THRESHOLD &&
+		!Number.isNaN(globalReset)
+	) {
+		const candidate = globalReset;
 		if (waitUntil === null || candidate > waitUntil) {
 			waitUntil = candidate;
 		}

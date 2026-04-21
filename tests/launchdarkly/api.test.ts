@@ -323,6 +323,34 @@ describe('rate limiting', () => {
 		expect(response.status).toBe(200);
 	});
 
+	it('pauses when global rate limit is nearly exhausted', async () => {
+		const resetTime = Date.now() + 100; // 100ms from now
+		mock
+			.onGet('https://app.launchdarkly.com/api/v2/projects')
+			.replyOnce(
+				200,
+				{ items: [], totalCount: 0 },
+				{
+					'x-ratelimit-global-remaining': '10',
+					'x-ratelimit-global-reset': String(resetTime),
+				},
+			)
+			.onGet('https://app.launchdarkly.com/api/v2/projects')
+			.replyOnce(200, { items: [], totalCount: 0 });
+
+		const start = Date.now();
+		await client.get('https://app.launchdarkly.com/api/v2/projects');
+		// Should have paused before returning; allow some slack for timing
+		const elapsed = Date.now() - start;
+		expect(elapsed).toBeGreaterThanOrEqual(50);
+
+		// Second request should succeed normally (no throttle headers)
+		const response = await client.get(
+			'https://app.launchdarkly.com/api/v2/projects',
+		);
+		expect(response.status).toBe(200);
+	});
+
 	it('throws after exhausting retries on 429', async () => {
 		// 4 replies: initial + 3 retries = all 429s, then should throw
 		mock
