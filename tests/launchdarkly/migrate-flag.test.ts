@@ -6,6 +6,10 @@
  */
 import { describe, expect, it } from '@jest/globals';
 import {
+	type ConflictResolution,
+	classifyConflict,
+} from '../../src/launchdarkly/index.js';
+import {
 	buildAllocations,
 	buildVariants,
 	getEnvsToEnable,
@@ -19,6 +23,8 @@ import type {
 import type {
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,
+	DatadogFlagEntry,
+	MigrationMetadata,
 } from '../../src/types.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1057,5 +1063,323 @@ describe('migrate a flag with a rule rollout in a rule (not fallthrough)', () =>
 			attribute: 'country',
 			value: ['US'],
 		});
+	});
+});
+
+// ─── Conflict-aware Migration Helper ──────────────────────────────────────────
+
+/**
+ * Simulate the full migration pipeline for a single flag, including conflict
+ * classification against existing Datadog flags.  This mirrors the logic in
+ * executeMigration so behavioural tests can assert on the outcome without
+ * touching any interactive prompts.
+ */
+function migrateFlagWithConflicts(
+	flag: LDFlag,
+	envMapping: Map<string, DatadogEnvironment>,
+	selectedEnvs: string[],
+	datadogFlags: DatadogFlagEntry[],
+	projectKey: string,
+	conflictResolution?: ConflictResolution,
+): {
+	action: 'create' | 'sync' | 'skip';
+	skipReason?: string;
+	request?: DatadogCreateFlagRequest;
+	existingFlagId?: string;
+	envsToEnable: DatadogEnvironment[];
+} {
+	const skipResult = shouldSkipFlag(flag, selectedEnvs);
+	if (skipResult.skip) {
+		return {
+			action: 'skip',
+			skipReason: skipResult.reason,
+			envsToEnable: [],
+		};
+	}
+
+	const variants = buildVariants(flag);
+	const allocations = buildAllocations(flag, envMapping);
+	const envsToEnable = getEnvsToEnable(flag, envMapping);
+	const conflict = classifyConflict(datadogFlags, projectKey, flag.key);
+
+	// Cross-project conflict: skip or prefix
+	if (conflict.type === 'cross_project') {
+		if (!conflictResolution || conflictResolution.action === 'skip') {
+			return {
+				action: 'skip',
+				skipReason:
+					'Key conflict: flag key already exists in Datadog from a different LaunchDarkly project',
+				envsToEnable: [],
+			};
+		}
+		// prefix: fall through to creation below
+	}
+
+	// Same-project or manual: sync onto existing flag
+	const existingFlagId =
+		conflict.type === 'same_project' || conflict.type === 'manual'
+			? conflict.existingFlag?.id
+			: undefined;
+
+	if (existingFlagId) {
+		return {
+			action: 'sync',
+			existingFlagId,
+			envsToEnable,
+		};
+	}
+
+	// Create new flag (possibly with prefix)
+	const usePrefix =
+		conflict.type === 'cross_project' &&
+		conflictResolution?.action === 'prefix';
+	const ddKey = usePrefix
+		? `${conflictResolution.prefix}-${flag.key}`
+		: flag.key;
+
+	const metadata: MigrationMetadata = {
+		project_key: projectKey,
+		flag_key: flag.key,
+		...(usePrefix ? { key_prefix: conflictResolution.prefix } : {}),
+	};
+
+	const request: DatadogCreateFlagRequest = {
+		key: ddKey,
+		name: flag.name,
+		value_type: mapFlagType(flag),
+		variants,
+		allocations: allocations.length > 0 ? allocations : undefined,
+		migration_metadata: metadata,
+	};
+
+	return {
+		action: 'create',
+		request,
+		envsToEnable,
+	};
+}
+
+// ─── Conflict Scenarios ───────────────────────────────────────────────────────
+
+const conflictFlag: LDFlag = {
+	name: 'Enable Dark Mode',
+	kind: 'boolean',
+	key: 'enable-dark-mode',
+	variations: [
+		{ _id: 'v0', value: true, name: 'Enabled' },
+		{ _id: 'v1', value: false, name: 'Disabled' },
+	],
+	defaults: { onVariation: 0, offVariation: 1 },
+	environments: {
+		production: makeEnv({
+			_environmentName: 'Production',
+			on: true,
+			fallthrough: { variation: 0 },
+		}),
+	},
+	tags: [],
+	archived: false,
+	deprecated: false,
+	temporary: false,
+};
+
+const conflictEnvMapping = new Map([['production', ddProd]]);
+
+describe('migrate a flag whose key already exists in Datadog without metadata (manually created)', () => {
+	// A DD flag with the same key exists but has no migration_metadata.
+	// The tool cannot tell who owns it, so it syncs targeting onto the
+	// existing flag rather than creating a duplicate or skipping.
+	const datadogFlags: DatadogFlagEntry[] = [
+		{
+			id: 'dd-uuid-manual',
+			key: 'enable-dark-mode',
+			// no migration_metadata — manually created
+		},
+	];
+
+	const result = migrateFlagWithConflicts(
+		conflictFlag,
+		conflictEnvMapping,
+		['production'],
+		datadogFlags,
+		'mobile',
+	);
+
+	it('classifies the conflict as manual', () => {
+		const c = classifyConflict(datadogFlags, 'mobile', 'enable-dark-mode');
+		expect(c.type).toBe('manual');
+		expect(c.existingFlag?.id).toBe('dd-uuid-manual');
+	});
+
+	it('syncs targeting onto the existing flag instead of skipping', () => {
+		expect(result.action).toBe('sync');
+	});
+
+	it('provides the existing flag ID for sync', () => {
+		expect(result.existingFlagId).toBe('dd-uuid-manual');
+	});
+
+	it('does not produce a create request', () => {
+		expect(result.request).toBeUndefined();
+	});
+
+	it('enables production because the flag is on', () => {
+		expect(result.envsToEnable).toHaveLength(1);
+		expect(result.envsToEnable[0].id).toBe('dd-prod');
+	});
+});
+
+describe('migrate a flag whose key conflicts with a flag from a different LD project', () => {
+	// A DD flag with the same key exists AND has migration_metadata from
+	// project "web". The LD flag being migrated belongs to project "mobile".
+	// This is a real cross-project conflict that requires user resolution.
+	const datadogFlags: DatadogFlagEntry[] = [
+		{
+			id: 'dd-uuid-web',
+			key: 'enable-dark-mode',
+			migration_metadata: {
+				project_key: 'web',
+				flag_key: 'enable-dark-mode',
+			},
+		},
+	];
+
+	it('classifies the conflict as cross_project', () => {
+		const c = classifyConflict(datadogFlags, 'mobile', 'enable-dark-mode');
+		expect(c.type).toBe('cross_project');
+		expect(c.existingFlag?.id).toBe('dd-uuid-web');
+	});
+
+	describe('when user chooses to skip', () => {
+		const result = migrateFlagWithConflicts(
+			conflictFlag,
+			conflictEnvMapping,
+			['production'],
+			datadogFlags,
+			'mobile',
+			{ action: 'skip' },
+		);
+
+		it('skips the flag', () => {
+			expect(result.action).toBe('skip');
+		});
+
+		it('gives a reason mentioning the key conflict', () => {
+			expect(result.skipReason).toContain('Key conflict');
+		});
+
+		it('does not produce a create request', () => {
+			expect(result.request).toBeUndefined();
+		});
+
+		it('does not enable any environments', () => {
+			expect(result.envsToEnable).toHaveLength(0);
+		});
+	});
+
+	describe('when user chooses to prefix with "mobile"', () => {
+		const result = migrateFlagWithConflicts(
+			conflictFlag,
+			conflictEnvMapping,
+			['production'],
+			datadogFlags,
+			'mobile',
+			{ action: 'prefix', prefix: 'mobile' },
+		);
+
+		it('creates a new flag', () => {
+			expect(result.action).toBe('create');
+		});
+
+		it('prefixes the Datadog flag key', () => {
+			expect(result.request?.key).toBe('mobile-enable-dark-mode');
+		});
+
+		it('preserves the original flag name', () => {
+			expect(result.request?.name).toBe('Enable Dark Mode');
+		});
+
+		it('stores the original LD key in migration_metadata.flag_key', () => {
+			expect(result.request?.migration_metadata?.flag_key).toBe(
+				'enable-dark-mode',
+			);
+		});
+
+		it('stores the prefix in migration_metadata.key_prefix', () => {
+			expect(result.request?.migration_metadata?.key_prefix).toBe('mobile');
+		});
+
+		it('stores the project key in migration_metadata.project_key', () => {
+			expect(result.request?.migration_metadata?.project_key).toBe('mobile');
+		});
+
+		it('enables production because the flag is on', () => {
+			expect(result.envsToEnable).toHaveLength(1);
+			expect(result.envsToEnable[0].id).toBe('dd-prod');
+		});
+
+		it('still produces correct variants and targeting', () => {
+			expect(result.request?.variants).toHaveLength(2);
+			expect(result.request?.allocations).toHaveLength(1);
+			expect(result.request?.allocations?.[0].environment_id).toBe('dd-prod');
+		});
+	});
+
+	describe('when no conflict resolution is provided (default behavior)', () => {
+		const result = migrateFlagWithConflicts(
+			conflictFlag,
+			conflictEnvMapping,
+			['production'],
+			datadogFlags,
+			'mobile',
+			// no conflictResolution — defaults to skip
+		);
+
+		it('defaults to skipping the flag', () => {
+			expect(result.action).toBe('skip');
+		});
+	});
+});
+
+describe('classifyConflict edge cases', () => {
+	it('returns none when no DD flag has the same key', () => {
+		const c = classifyConflict([], 'mobile', 'brand-new-flag');
+		expect(c.type).toBe('none');
+		expect(c.existingFlag).toBeUndefined();
+	});
+
+	it('returns same_project when metadata matches the current project', () => {
+		const datadogFlags: DatadogFlagEntry[] = [
+			{
+				id: 'dd-uuid-same',
+				key: 'enable-dark-mode',
+				migration_metadata: {
+					project_key: 'mobile',
+					flag_key: 'enable-dark-mode',
+				},
+			},
+		];
+		const c = classifyConflict(datadogFlags, 'mobile', 'enable-dark-mode');
+		expect(c.type).toBe('same_project');
+		expect(c.existingFlag?.id).toBe('dd-uuid-same');
+	});
+
+	it('returns same_project even when a prefixed key was used', () => {
+		// Previously migrated with prefix — the DD key is different but
+		// migration_metadata still matches on (project_key, flag_key).
+		const datadogFlags: DatadogFlagEntry[] = [
+			{
+				id: 'dd-uuid-prefixed',
+				key: 'mobile-enable-dark-mode',
+				migration_metadata: {
+					project_key: 'mobile',
+					flag_key: 'enable-dark-mode',
+					key_prefix: 'mobile',
+				},
+			},
+		];
+		const c = classifyConflict(datadogFlags, 'mobile', 'enable-dark-mode');
+		expect(c.type).toBe('same_project');
+		expect(c.existingFlag?.id).toBe('dd-uuid-prefixed');
 	});
 });
