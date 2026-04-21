@@ -11,6 +11,7 @@ import {
 } from '../../src/launchdarkly/index.js';
 import {
 	buildAllocations,
+	buildFlagTags,
 	buildVariants,
 	getEnvsToEnable,
 	mapFlagType,
@@ -64,6 +65,11 @@ function migrateFlag(
 	flag: LDFlag,
 	envMapping: Map<string, DatadogEnvironment>,
 	selectedEnvs: string[],
+	tagOptions?: {
+		memberTeamCache?: Map<string, string[]>;
+		teamKeyMapping?: Map<string, string>;
+		defaultTeamTags?: string[];
+	},
 ): {
 	skipped: boolean;
 	skipReason?: string;
@@ -83,6 +89,12 @@ function migrateFlag(
 	const variants = buildVariants(flag);
 	const allocations = buildAllocations(flag, envMapping);
 	const envsToEnable = getEnvsToEnable(flag, envMapping);
+	const tags = buildFlagTags(
+		flag,
+		tagOptions?.memberTeamCache ?? new Map(),
+		tagOptions?.teamKeyMapping,
+		tagOptions?.defaultTeamTags,
+	);
 
 	const request: DatadogCreateFlagRequest = {
 		key: flag.key,
@@ -90,6 +102,7 @@ function migrateFlag(
 		value_type: mapFlagType(flag),
 		variants,
 		allocations: allocations.length > 0 ? allocations : undefined,
+		...(tags.length > 0 ? { tags } : {}),
 	};
 
 	return {
@@ -1381,5 +1394,270 @@ describe('classifyConflict edge cases', () => {
 		const c = classifyConflict(datadogFlags, 'mobile', 'enable-dark-mode');
 		expect(c.type).toBe('same_project');
 		expect(c.existingFlag?.id).toBe('dd-uuid-prefixed');
+	});
+});
+
+// ─── Team Tag Behavioral Scenarios ────────────────────────────────────────────
+
+describe('migrate a flag with no maintainer — user selects default team(s)', () => {
+	// This simulates a flag that has no maintainerTeamKey and no maintainerId.
+	// In the real flow, the orchestrator detects this and prompts the user to
+	// pick default Datadog team(s). The selected teams are passed as
+	// defaultTeamTags to buildFlagTags.
+	const flag: LDFlag = {
+		name: 'Orphan Feature',
+		kind: 'boolean',
+		key: 'orphan-feature',
+		variations: [
+			{ _id: 'v0', value: true, name: 'on' },
+			{ _id: 'v1', value: false, name: 'off' },
+		],
+		defaults: { onVariation: 0, offVariation: 1 },
+		environments: {
+			production: makeEnv({
+				_environmentName: 'Production',
+				on: true,
+				fallthrough: { variation: 0 },
+			}),
+		},
+		tags: ['experiment'],
+		archived: false,
+		deprecated: false,
+		temporary: false,
+		// No maintainerId, no maintainerTeamKey
+	};
+
+	const envMapping = new Map([['production', ddProd]]);
+
+	describe('when user selects default teams', () => {
+		// Simulate user selecting "platform" and "frontend" as default teams
+		const result = migrateFlag(flag, envMapping, ['production'], {
+			defaultTeamTags: ['team:platform', 'team:frontend'],
+		});
+
+		it('applies default team tags since flag has no maintainer', () => {
+			expect(result.request?.tags).toContain('team:platform');
+			expect(result.request?.tags).toContain('team:frontend');
+		});
+
+		it('preserves LD source tags alongside default team tags', () => {
+			expect(result.request?.tags).toContain('experiment');
+		});
+
+		it('produces the full tag list in order: team tags first, then LD tags', () => {
+			expect(result.request?.tags).toEqual([
+				'team:platform',
+				'team:frontend',
+				'experiment',
+			]);
+		});
+	});
+
+	describe('when user declines to select default teams', () => {
+		// No defaultTeamTags passed — user chose "no" at the prompt
+		const result = migrateFlag(flag, envMapping, ['production']);
+
+		it('still includes LD source tags', () => {
+			expect(result.request?.tags).toEqual(['experiment']);
+		});
+	});
+
+	describe('when flag has no maintainer and no LD tags and no defaults', () => {
+		const bareFlag: LDFlag = {
+			...flag,
+			tags: [],
+		};
+		const result = migrateFlag(bareFlag, envMapping, ['production']);
+
+		it('omits the tags field entirely from the request', () => {
+			expect(result.request?.tags).toBeUndefined();
+		});
+	});
+});
+
+describe('migrate flags on a non-Enterprise LD plan (Members API returns 403)', () => {
+	// When the Members API returns 403, buildMemberTeamCache returns an empty
+	// cache. Flags with maintainerTeamKey still get team tags (from the flag
+	// payload), but flags with only maintainerId get no team tags since we
+	// can't resolve their team memberships.
+
+	const teamMaintainedFlag: LDFlag = {
+		name: 'Team Flag',
+		kind: 'boolean',
+		key: 'team-flag',
+		variations: [
+			{ _id: 'v0', value: true, name: 'on' },
+			{ _id: 'v1', value: false, name: 'off' },
+		],
+		defaults: { onVariation: 0, offVariation: 1 },
+		environments: {
+			production: makeEnv({
+				_environmentName: 'Production',
+				on: true,
+				fallthrough: { variation: 0 },
+			}),
+		},
+		tags: ['core'],
+		archived: false,
+		deprecated: false,
+		temporary: false,
+		maintainerTeamKey: 'platform',
+		_maintainerTeam: { key: 'platform', name: 'Platform' },
+	};
+
+	const individualMaintainedFlag: LDFlag = {
+		name: 'Individual Flag',
+		kind: 'boolean',
+		key: 'individual-flag',
+		variations: [
+			{ _id: 'v0', value: true, name: 'on' },
+			{ _id: 'v1', value: false, name: 'off' },
+		],
+		defaults: { onVariation: 0, offVariation: 1 },
+		environments: {
+			production: makeEnv({
+				_environmentName: 'Production',
+				on: true,
+				fallthrough: { variation: 0 },
+			}),
+		},
+		tags: [],
+		archived: false,
+		deprecated: false,
+		temporary: false,
+		maintainerId: 'member-abc',
+		_maintainer: {
+			_id: 'member-abc',
+			email: 'alice@example.com',
+			role: 'writer',
+		},
+	};
+
+	const envMapping = new Map([['production', ddProd]]);
+
+	// Empty cache simulates the 403 result from buildMemberTeamCache
+	const emptyCache = new Map<string, string[]>();
+
+	describe('flag with team maintainer', () => {
+		const result = migrateFlag(teamMaintainedFlag, envMapping, ['production'], {
+			memberTeamCache: emptyCache,
+		});
+
+		it('still gets team tag from maintainerTeamKey (no API call needed)', () => {
+			expect(result.request?.tags).toContain('team:platform');
+		});
+
+		it('includes LD source tags', () => {
+			expect(result.request?.tags).toContain('core');
+		});
+	});
+
+	describe('flag with individual maintainer', () => {
+		const result = migrateFlag(
+			individualMaintainedFlag,
+			envMapping,
+			['production'],
+			{ memberTeamCache: emptyCache },
+		);
+
+		it('gets no team tags because cache is empty (403 degradation)', () => {
+			const teamTags = (result.request?.tags ?? []).filter((t: string) =>
+				t.startsWith('team:'),
+			);
+			expect(teamTags).toEqual([]);
+		});
+
+		it('omits tags field entirely when no tags exist', () => {
+			expect(result.request?.tags).toBeUndefined();
+		});
+	});
+});
+
+describe('migrate a flag with both maintainerTeamKey and maintainerId set', () => {
+	// LD allows both fields when a flag was transferred between maintainer types.
+	// The tag builder should use maintainerTeamKey AND check the cache for
+	// the individual maintainer's teams, deduplicating if they overlap.
+
+	const flag: LDFlag = {
+		name: 'Dual Maintainer Flag',
+		kind: 'boolean',
+		key: 'dual-maintainer',
+		variations: [
+			{ _id: 'v0', value: true, name: 'on' },
+			{ _id: 'v1', value: false, name: 'off' },
+		],
+		defaults: { onVariation: 0, offVariation: 1 },
+		environments: {
+			production: makeEnv({
+				_environmentName: 'Production',
+				on: true,
+				fallthrough: { variation: 0 },
+			}),
+		},
+		tags: ['infra'],
+		archived: false,
+		deprecated: false,
+		temporary: false,
+		maintainerTeamKey: 'platform',
+		_maintainerTeam: { key: 'platform', name: 'Platform' },
+		maintainerId: 'member-xyz',
+		_maintainer: {
+			_id: 'member-xyz',
+			email: 'bob@example.com',
+			role: 'owner',
+		},
+	};
+
+	const envMapping = new Map([['production', ddProd]]);
+
+	describe('when individual maintainer belongs to additional teams', () => {
+		// Cache has the member's teams — note "platform" overlaps with maintainerTeamKey
+		const cache = new Map([['member-xyz', ['platform', 'sre']]]);
+		const result = migrateFlag(flag, envMapping, ['production'], {
+			memberTeamCache: cache,
+		});
+
+		it('includes team tag from maintainerTeamKey', () => {
+			expect(result.request?.tags).toContain('team:platform');
+		});
+
+		it('includes additional teams from the individual member lookup', () => {
+			expect(result.request?.tags).toContain('team:sre');
+		});
+
+		it('deduplicates "platform" which appears in both sources', () => {
+			const platformTags = (result.request?.tags ?? []).filter(
+				(t: string) => t === 'team:platform',
+			);
+			expect(platformTags).toHaveLength(1);
+		});
+
+		it('preserves LD source tags after team tags', () => {
+			expect(result.request?.tags).toEqual([
+				'team:platform',
+				'team:sre',
+				'infra',
+			]);
+		});
+	});
+
+	describe('when cache is empty (non-Enterprise plan)', () => {
+		// buildMemberTeamCache skips members for flags with maintainerTeamKey,
+		// so even on Enterprise plans, this member ID would not be in the cache.
+		// The flag still gets team:platform from maintainerTeamKey.
+		const result = migrateFlag(flag, envMapping, ['production'], {
+			memberTeamCache: new Map(),
+		});
+
+		it('still gets team tag from maintainerTeamKey', () => {
+			expect(result.request?.tags).toContain('team:platform');
+		});
+
+		it('does not get extra team tags from the missing cache entry', () => {
+			const teamTags = (result.request?.tags ?? []).filter((t: string) =>
+				t.startsWith('team:'),
+			);
+			expect(teamTags).toEqual(['team:platform']);
+		});
 	});
 });

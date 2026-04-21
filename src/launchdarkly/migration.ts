@@ -438,12 +438,17 @@ export function buildTeamTags(
  * Build the full tags array for a Datadog flag.
  * Combines team tags (derived from maintainer) with the flag's LD source tags.
  * Applies teamKeyMapping to translate LD team keys → DD team handles when provided.
+ * Falls back to defaultTeamTags when no team tags are derived from the flag's maintainer.
  */
 export function buildFlagTags(
 	flag: LDFlag,
 	memberTeamCache: Map<string, string[]>,
 	teamKeyMapping?: Map<string, string>,
+	defaultTeamTags?: string[],
 ): string[] {
-	const teamTags = buildTeamTags(flag, memberTeamCache, teamKeyMapping);
+	let teamTags = buildTeamTags(flag, memberTeamCache, teamKeyMapping);
+	if (teamTags.length === 0 && defaultTeamTags && defaultTeamTags.length > 0) {
+		teamTags = defaultTeamTags;
+	}
 	return [...teamTags, ...flag.tags];
 }
