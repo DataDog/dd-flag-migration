@@ -2006,3 +2006,53 @@ describe('migrate a realistic flag with targets, rules, LD tags, and a team main
 		expect(result.envsToEnable).toHaveLength(2);
 	});
 });
+
+describe('migrate flags when Datadog Teams API is unavailable (403 — missing teams_read scope)', () => {
+	// When the DD Teams API returns 403 (missing teams_read scope), the
+	// orchestration layer catches the error and continues without a
+	// teamKeyMapping. Flags still get team tags from their LD maintainer
+	// data, but mismatched LD team keys pass through as-is since we can't
+	// detect mismatches without fetching DD teams.
+
+	const teamFlag: LDFlag = {
+		name: 'Team Flag',
+		kind: 'boolean',
+		key: 'team-flag',
+		variations: [
+			{ _id: 'v0', value: true, name: 'on' },
+			{ _id: 'v1', value: false, name: 'off' },
+		],
+		defaults: { onVariation: 0, offVariation: 1 },
+		environments: {
+			production: makeEnv({
+				_environmentName: 'Production',
+				on: true,
+				fallthrough: { variation: 0 },
+			}),
+		},
+		tags: ['infra'],
+		archived: false,
+		deprecated: false,
+		temporary: false,
+		maintainerTeamKey: 'ld-platform',
+		_maintainerTeam: { key: 'ld-platform', name: 'LD Platform' },
+	};
+
+	const envMapping = new Map([['production', ddProd]]);
+
+	// No teamKeyMapping — simulates the state when fetchDatadogTeams fails
+	const result = migrateFlag(teamFlag, envMapping, ['production']);
+
+	it('still produces a team tag using the raw LD team key', () => {
+		expect(result.request?.tags).toContain('team:ld-platform');
+	});
+
+	it('preserves LD source tags alongside the unmapped team tag', () => {
+		expect(result.request?.tags).toEqual(['team:ld-platform', 'infra']);
+	});
+
+	it('does not skip the flag — migration proceeds without team mapping', () => {
+		expect(result.skipped).toBe(false);
+		expect(result.request).toBeDefined();
+	});
+});
