@@ -68,7 +68,6 @@ function migrateFlag(
 	tagOptions?: {
 		memberTeamCache?: Map<string, string[]>;
 		teamKeyMapping?: Map<string, string>;
-		defaultTeamTags?: string[];
 	},
 ): {
 	skipped: boolean;
@@ -93,7 +92,6 @@ function migrateFlag(
 		flag,
 		tagOptions?.memberTeamCache ?? new Map(),
 		tagOptions?.teamKeyMapping,
-		tagOptions?.defaultTeamTags,
 	);
 
 	const request: DatadogCreateFlagRequest = {
@@ -1399,11 +1397,9 @@ describe('classifyConflict edge cases', () => {
 
 // ─── Team Tag Behavioral Scenarios ────────────────────────────────────────────
 
-describe('migrate a flag with no maintainer — user selects default team(s)', () => {
-	// This simulates a flag that has no maintainerTeamKey and no maintainerId.
-	// In the real flow, the orchestrator detects this and prompts the user to
-	// pick default Datadog team(s). The selected teams are passed as
-	// defaultTeamTags to buildFlagTags.
+describe('migrate a flag with no maintainer — skips team tagging', () => {
+	// Flags with no maintainerTeamKey and no maintainerId simply get no team
+	// tags. They can be tagged manually in the Datadog UI after migration.
 	const flag: LDFlag = {
 		name: 'Orphan Feature',
 		kind: 'boolean',
@@ -1428,50 +1424,23 @@ describe('migrate a flag with no maintainer — user selects default team(s)', (
 	};
 
 	const envMapping = new Map([['production', ddProd]]);
+	const result = migrateFlag(flag, envMapping, ['production']);
 
-	describe('when user selects default teams', () => {
-		// Simulate user selecting "platform" and "frontend" as default teams
-		const result = migrateFlag(flag, envMapping, ['production'], {
-			defaultTeamTags: ['team:platform', 'team:frontend'],
-		});
-
-		it('applies default team tags since flag has no maintainer', () => {
-			expect(result.request?.tags).toContain('team:platform');
-			expect(result.request?.tags).toContain('team:frontend');
-		});
-
-		it('preserves LD source tags alongside default team tags', () => {
-			expect(result.request?.tags).toContain('experiment');
-		});
-
-		it('produces the full tag list in order: team tags first, then LD tags', () => {
-			expect(result.request?.tags).toEqual([
-				'team:platform',
-				'team:frontend',
-				'experiment',
-			]);
-		});
+	it('produces no team tags', () => {
+		const teamTags = (result.request?.tags ?? []).filter((t: string) =>
+			t.startsWith('team:'),
+		);
+		expect(teamTags).toEqual([]);
 	});
 
-	describe('when user declines to select default teams', () => {
-		// No defaultTeamTags passed — user chose "no" at the prompt
-		const result = migrateFlag(flag, envMapping, ['production']);
-
-		it('still includes LD source tags', () => {
-			expect(result.request?.tags).toEqual(['experiment']);
-		});
+	it('still includes LD source tags', () => {
+		expect(result.request?.tags).toEqual(['experiment']);
 	});
 
-	describe('when flag has no maintainer and no LD tags and no defaults', () => {
-		const bareFlag: LDFlag = {
-			...flag,
-			tags: [],
-		};
-		const result = migrateFlag(bareFlag, envMapping, ['production']);
-
-		it('omits the tags field entirely from the request', () => {
-			expect(result.request?.tags).toBeUndefined();
-		});
+	it('omits tags field entirely when flag has no tags at all', () => {
+		const bareFlag: LDFlag = { ...flag, tags: [] };
+		const bareResult = migrateFlag(bareFlag, envMapping, ['production']);
+		expect(bareResult.request?.tags).toBeUndefined();
 	});
 });
 

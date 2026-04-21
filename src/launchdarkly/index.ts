@@ -566,99 +566,48 @@ async function executeMigration(
 		);
 	}
 
-	// Fetch DD teams for mismatch mapping and default team assignment
+	// Detect LD→DD team key mismatches and prompt for interactive mapping
 	let teamKeyMapping: Map<string, string> | undefined;
-	let defaultTeamTags: string[] | undefined;
 	const ldTeamKeys = collectLDTeamKeys(detailedFlags, memberTeamCache);
 
-	// Count flags that will have no team tags
-	const unassignedCount = detailedFlags.filter((f) => {
-		if (f.maintainerTeamKey) return false;
-		if (f.maintainerId && memberTeamCache.has(f.maintainerId)) return false;
-		return true;
-	}).length;
-
-	const needsTeamFetch = ldTeamKeys.size > 0 || unassignedCount > 0;
-
-	if (needsTeamFetch) {
+	if (ldTeamKeys.size > 0) {
 		const teamSpinner = ora('Fetching Datadog teams…').start();
 		try {
 			const ddTeams = await fetchDatadogTeams(ddApiKey, ddAppKey, ddSite);
 			teamSpinner.succeed(`Found ${ddTeams.length} Datadog team(s)`);
 
-			// Detect LD→DD team key mismatches
-			if (ldTeamKeys.size > 0) {
-				const ddHandles = new Set(ddTeams.map((t) => t.handle));
-				const mismatched = [...ldTeamKeys].filter((k) => !ddHandles.has(k));
+			const ddHandles = new Set(ddTeams.map((t) => t.handle));
+			const mismatched = [...ldTeamKeys].filter((k) => !ddHandles.has(k));
 
-				if (mismatched.length > 0) {
-					console.log();
-					console.log(
-						chalk.yellow(
-							`  ${mismatched.length} LD team key(s) do not match any Datadog team handle:`,
-						),
-					);
-					for (const key of mismatched) {
-						console.log(chalk.yellow(`    • ${key}`));
-					}
-					console.log();
-
-					const shouldMap = await confirm({
-						message: 'Would you like to map these to Datadog team handles now?',
-						default: true,
-					});
-
-					if (shouldMap) {
-						teamKeyMapping = new Map<string, string>();
-						for (const ldKey of mismatched) {
-							const ddHandle = await promptForTeamMapping(ldKey, ddTeams);
-							if (ddHandle) {
-								teamKeyMapping.set(ldKey, ddHandle);
-							}
-						}
-						if (teamKeyMapping.size > 0) {
-							console.log();
-							console.log(
-								chalk.green(`  Mapped ${teamKeyMapping.size} team key(s)`),
-							);
-						}
-					}
-				}
-			}
-
-			// Prompt for default team(s) for flags without any maintainer
-			if (unassignedCount > 0 && ddTeams.length > 0) {
+			if (mismatched.length > 0) {
 				console.log();
 				console.log(
 					chalk.yellow(
-						`  ${unassignedCount} flag(s) have no team maintainer assigned`,
+						`  ${mismatched.length} LD team key(s) do not match any Datadog team handle:`,
 					),
 				);
+				for (const key of mismatched) {
+					console.log(chalk.yellow(`    • ${key}`));
+				}
+				console.log();
 
-				const shouldAssign = await confirm({
-					message: 'Would you like to select default team(s) for these flags?',
+				const shouldMap = await confirm({
+					message: 'Would you like to map these to Datadog team handles now?',
 					default: true,
 				});
 
-				if (shouldAssign) {
-					const pageSize = Math.max(
-						5,
-						Math.min(ddTeams.length, (process.stdout.rows ?? 24) - 9),
-					);
-					const selectedTeams = await filterableCheckbox<DatadogTeam>({
-						message: 'Select default Datadog team(s) for unassigned flags:',
-						choices: ddTeams.map((t) => ({
-							name: `${t.name}  ${chalk.gray(`(${t.handle})`)}`,
-							value: t,
-						})),
-						pageSize,
-					});
-					if (selectedTeams && selectedTeams.length > 0) {
-						defaultTeamTags = selectedTeams.map((t) => `team:${t.handle}`);
+				if (shouldMap) {
+					teamKeyMapping = new Map<string, string>();
+					for (const ldKey of mismatched) {
+						const ddHandle = await promptForTeamMapping(ldKey, ddTeams);
+						if (ddHandle) {
+							teamKeyMapping.set(ldKey, ddHandle);
+						}
+					}
+					if (teamKeyMapping.size > 0) {
+						console.log();
 						console.log(
-							chalk.green(
-								`  Default team(s): ${selectedTeams.map((t) => t.name).join(', ')}`,
-							),
+							chalk.green(`  Mapped ${teamKeyMapping.size} team key(s)`),
 						);
 					}
 				}
@@ -802,12 +751,7 @@ async function executeMigration(
 			);
 			spinner = ora(`Migrating ${chalk.cyan(flag.key)}…`).start();
 
-			const syncTags = buildFlagTags(
-				flag,
-				memberTeamCache,
-				teamKeyMapping,
-				defaultTeamTags,
-			);
+			const syncTags = buildFlagTags(flag, memberTeamCache, teamKeyMapping);
 
 			if (dryRun) {
 				let syncFilterCount = 0;
@@ -941,12 +885,7 @@ async function executeMigration(
 				? `${conflictResolution.prefix}-${flag.key}`
 				: flag.key;
 
-			const tags = buildFlagTags(
-				flag,
-				memberTeamCache,
-				teamKeyMapping,
-				defaultTeamTags,
-			);
+			const tags = buildFlagTags(flag, memberTeamCache, teamKeyMapping);
 
 			const request: DatadogCreateFlagRequest = {
 				key: ddKey,
