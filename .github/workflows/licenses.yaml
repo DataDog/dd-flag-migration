@@ -1,0 +1,24 @@
+name: Validate Licenses
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v*'
+  pull_request:
+  release:
+    types: [created]
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  validate-licenses:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Validate licenses
+        run: ./scripts/licenses-validate.sh

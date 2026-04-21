@@ -17,7 +17,8 @@
 		"lint": "biome check",
 		"lint:fix": "biome check --write",
 		"typecheck": "tsc",
-		"test": "node --experimental-vm-modules node_modules/.bin/jest"
+		"test": "node --experimental-vm-modules node_modules/.bin/jest",
+		"licenses:validate": "scripts/licenses-validate.sh"
 	},
 	"dependencies": {
 		"@eppo/node-server-sdk": "^4.0.0",
