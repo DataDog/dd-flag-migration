@@ -43,6 +43,7 @@ export interface Config {
 	datadogAppKey?: string;
 	datadogClientToken?: string;
 	datadogSite?: string;
+	launchdarklySDKKeys?: Record<string, string>;
 }
 
 export interface MigrationEnvironmentMapping {
@@ -92,6 +93,30 @@ export interface DatadogCreatedFlag {
 	key: string;
 }
 
+// ─── Evaluation Types ────────────────────────────────────────────────────────
+
+export type SubjectAttributes = Record<
+	string,
+	string | number | boolean | null
+>;
+
+export interface TestCase {
+	label: string;
+	attributes: SubjectAttributes;
+	subjectIdOverride?: string;
+}
+
+export type DDFlagValue = { variationValue: unknown; variationType: string };
+
+export type DDStatus = 'assigned' | 'not-assigned' | 'not-in-dd';
+
+export interface EvaluationResult {
+	providerResult: string;
+	ddResult: string;
+	ddStatus: DDStatus;
+	error?: string;
+}
+
 // ─── Evaluation Export Types ─────────────────────────────────────────────────
 
 export interface EvaluationExportRow {
@@ -99,7 +124,7 @@ export interface EvaluationExportRow {
 	flagName: string;
 	team: string;
 	testCaseLabel: string;
-	eppoResult: string;
+	providerResult: string;
 	ddResult: string;
 	match: boolean;
 	ddStatus: 'assigned' | 'not-assigned' | 'not-in-dd';

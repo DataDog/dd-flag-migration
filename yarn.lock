@@ -977,6 +977,28 @@
     "@jridgewell/resolve-uri" "^3.1.0"
     "@jridgewell/sourcemap-codec" "^1.4.14"
 
+"@launchdarkly/js-sdk-common@2.24.2":
+  version "2.24.2"
+  resolved "https://registry.yarnpkg.com/@launchdarkly/js-sdk-common/-/js-sdk-common-2.24.2.tgz#449842dd4d9e5725b225a7321ab5e82520855e48"
+  integrity sha512-SuWfR90NZ1ttGxz/2AeavfFXy/sFnFE7PhEBfg4mv0beTF9LeZwVa4XJsVeBe0Zb1PcuUQt7kn4VmFCctQIAzA==
+
+"@launchdarkly/js-server-sdk-common@2.18.5":
+  version "2.18.5"
+  resolved "https://registry.yarnpkg.com/@launchdarkly/js-server-sdk-common/-/js-server-sdk-common-2.18.5.tgz#efabdb36f9a5f9012febc4039094e1193334c8d1"
+  integrity sha512-P+KvThDSxzBM1jHmCZuHWaz+B0Wu44GRcpDar7RoT5yFW7HN3l2vQEArYrRHGGDvTE3YWqQxOfVUTRK0pktz1g==
+  dependencies:
+    "@launchdarkly/js-sdk-common" "2.24.2"
+    semver "7.5.4"
+
+"@launchdarkly/node-server-sdk@^9.0.0":
+  version "9.10.12"
+  resolved "https://registry.yarnpkg.com/@launchdarkly/node-server-sdk/-/node-server-sdk-9.10.12.tgz#752548a324bcb4ffd5c9a697833dca15f8374bd2"
+  integrity sha512-jGScTl6n8lKgnuPvRPMOxf2xdE//+asa5mj97bRPa7AOZYmKtjweJMWNlGEGyaFqeOEqkw+VebqMK+qUJuDOug==
+  dependencies:
+    "@launchdarkly/js-server-sdk-common" "2.18.5"
+    https-proxy-agent "^7.0.6"
+    launchdarkly-eventsource "2.2.0"
+
 "@lavamoat/aa@^4.3.6":
   version "4.3.6"
   resolved "https://registry.yarnpkg.com/@lavamoat/aa/-/aa-4.3.6.tgz#e0b4e0ac4cffafcc716b9da62faf331357221e6f"
@@ -2370,7 +2392,7 @@ http-proxy-agent@^7.0.0:
     agent-base "^7.1.0"
     debug "^4.3.4"
 
-https-proxy-agent@^7.0.1:
+https-proxy-agent@^7.0.1, https-proxy-agent@^7.0.6:
   version "7.0.6"
   resolved "https://registry.yarnpkg.com/https-proxy-agent/-/https-proxy-agent-7.0.6.tgz#da8dfeac7da130b05c2ba4b59c9b6cd66611a6b9"
   integrity sha512-vK9P5/iUfdl95AI+JVyUuIcVtd4ofvtrOr3HNtM2yxC9bnMbEdp3x01OhQNnjb8IJYi38VlTE3mBXwcfvywuSw==
@@ -3008,6 +3030,11 @@ jszip@^3.10.1:
     readable-stream "~2.3.6"
     setimmediate "^1.0.5"
 
+launchdarkly-eventsource@2.2.0:
+  version "2.2.0"
+  resolved "https://registry.yarnpkg.com/launchdarkly-eventsource/-/launchdarkly-eventsource-2.2.0.tgz#dcabc7264d9dee05a60dcf5fca9fd0cefcc82d22"
+  integrity sha512-u38fYlLSq/m6oFz0MS1/76Sj2xzlYhTKZ+sf/vju6PA86PMc6fPlY5k8CdU79edLXjNwsvIQTDvDNy3llDqB8A==
+
 lazystream@^1.0.0:
   version "1.0.1"
   resolved "https://registry.yarnpkg.com/lazystream/-/lazystream-1.0.1.tgz#494c831062f1f9408251ec44db1cba29242a2638"
@@ -3138,6 +3165,13 @@ lru-cache@^5.1.1:
   integrity sha512-KpNARQA3Iwv+jTA0utUVVbrh+Jlrr1Fv0e56GGzAFOXN7dk/FviaDW8LHmK52DlcH4WP2n6gI8vN1aesBFgo9w==
   dependencies:
     yallist "^3.0.2"
+
+lru-cache@^6.0.0:
+  version "6.0.0"
+  resolved "https://registry.yarnpkg.com/lru-cache/-/lru-cache-6.0.0.tgz#6d6fe6570ebd96aaf90fcad1dafa3b2566db3a94"
+  integrity sha512-Jo6dJ04CmSjuznwJSS3pUeWmd/H0ffTlkXXgwZi+eq1UCmqQwCh+eLsYOYCwY991i2Fah4h1BEMCx4qThGbsiA==
+  dependencies:
+    yallist "^4.0.0"
 
 make-dir@^4.0.0:
   version "4.0.0"
@@ -3778,6 +3812,13 @@ saxes@^5.0.1:
   integrity sha512-5LBh1Tls8c9xgGjw3QrMwETmTMVk0oFgvrFSvWx62llR2hcEInrKNZ2GZCCuuy2lvWrdl5jhbpeqc5hRYKFOcw==
   dependencies:
     xmlchars "^2.2.0"
+
+semver@7.5.4:
+  version "7.5.4"
+  resolved "https://registry.yarnpkg.com/semver/-/semver-7.5.4.tgz#483986ec4ed38e1c6c48c34894a9182dbff68a6e"
+  integrity sha512-1bCSESV6Pv+i21Hvpxp3Dx+pSD8lIPt8uVjRrxAUt/nbswYc+tK6Y2btiULjd4+fnq15PX+nqQDC7Oft7WkwcA==
+  dependencies:
+    lru-cache "^6.0.0"
 
 semver@^6.3.1:
   version "6.3.1"
