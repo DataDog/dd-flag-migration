@@ -141,7 +141,6 @@ export interface LDMigrationFile {
 	skippedFlags?: Array<{ key: string; reason: string }>;
 	syncedFlagKeys?: string[];
 	flags: LDFlag[];
-	unmigrated?: LDFlag[];
 	environmentMapping: Array<{
 		sourceEnvId: string;
 		sourceEnvName: string;

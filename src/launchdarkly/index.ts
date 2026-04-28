@@ -468,7 +468,6 @@ interface MigrationOptions {
 
 async function executeMigration(
 	flags: LDFlag[],
-	allFlags: LDFlag[],
 	envMapping: Map<string, DatadogEnvironment>,
 	datadogFlags: DatadogFlagEntry[],
 	selectedEnvs: string[],
@@ -1040,11 +1039,6 @@ async function executeMigration(
 	}
 
 	if (!dryRun && (created > 0 || synced > 0 || errored > 0)) {
-		const selectedFlagKeys = new Set(detailedFlags.map((f) => f.key));
-		const unmigratedFlags = allFlags.filter(
-			(f) => !selectedFlagKeys.has(f.key),
-		);
-
 		const migrationData: LDMigrationFile = {
 			provider: 'launchdarkly',
 			migratedAt: timestamp,
@@ -1055,7 +1049,6 @@ async function executeMigration(
 			skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
 			syncedFlagKeys: syncedFlagKeys.length > 0 ? syncedFlagKeys : undefined,
 			flags: detailedFlags,
-			unmigrated: unmigratedFlags.length > 0 ? unmigratedFlags : undefined,
 			environmentMapping: environmentMappingArr,
 		};
 		const filename = `migration-${timestamp}.json`;
@@ -1272,7 +1265,6 @@ export async function runLaunchDarklyMigration(
 				printHeader();
 				const action = await executeMigration(
 					prevSelectedFlags,
-					allFlags,
 					prevEnvMapping,
 					datadogFlags,
 					prevSelectedEnvKeys,
