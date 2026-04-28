@@ -230,6 +230,20 @@ export async function initializeEppo(eppoSdkKey: string): Promise<EppoClient> {
 	}
 }
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function sortKeys(value: unknown): unknown {
+	if (Array.isArray(value)) return value.map(sortKeys);
+	if (value !== null && typeof value === 'object') {
+		return Object.fromEntries(
+			Object.entries(value as Record<string, unknown>)
+				.sort(([a], [b]) => a.localeCompare(b))
+				.map(([k, v]) => [k, sortKeys(v)]),
+		);
+	}
+	return value;
+}
+
 // ─── Flag Evaluation ──────────────────────────────────────────────────────────
 
 export async function evaluateEppoFlag(
@@ -299,9 +313,11 @@ export async function evaluateEppoFlag(
 					eppoAttrs,
 					{},
 				) as object;
-				providerResult = JSON.stringify(eppo);
+				providerResult = JSON.stringify(sortKeys(eppo));
 				ddResult =
-					ddFlag !== undefined ? JSON.stringify(ddFlag.variationValue) : '';
+					ddFlag !== undefined
+						? JSON.stringify(sortKeys(ddFlag.variationValue))
+						: '';
 				break;
 			}
 			default: {

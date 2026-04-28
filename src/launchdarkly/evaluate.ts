@@ -9,6 +9,7 @@ import type {
 	SubjectAttributes,
 	TestCase,
 } from '../types.js';
+import { mapFlagType } from './migration.js';
 import type { LDClause, LDFlag } from './types.js';
 
 type LDClient = LDSdk.LDClient;
@@ -149,6 +150,8 @@ export function generateLDTestCases(flag: LDFlag, envKey: string): TestCase[] {
 			const nonMatchAttrs: SubjectAttributes = {};
 			let canMatch = true;
 			let canNonMatch = true;
+			let matchSubjectIdOverride: string | undefined;
+			let nonMatchSubjectIdOverride: string | undefined;
 
 			for (const clause of clausesWithValues) {
 				if (clause.op === 'segmentMatch') continue;
@@ -157,30 +160,57 @@ export function generateLDTestCases(flag: LDFlag, envKey: string): TestCase[] {
 
 				if (mv === undefined) {
 					canMatch = false;
+				} else if (clause.attribute === 'key') {
+					// LD treats 'key' as the identity, not a custom attribute
+					matchSubjectIdOverride = String(mv);
 				} else {
 					matchAttrs[clause.attribute] = mv;
 				}
 				if (nv === undefined) {
 					canNonMatch = false;
+				} else if (clause.attribute === 'key') {
+					nonMatchSubjectIdOverride = String(nv);
 				} else {
 					nonMatchAttrs[clause.attribute] = nv;
 				}
 			}
 
-			if (canMatch && Object.keys(matchAttrs).length > 0) {
+			if (
+				canMatch &&
+				(Object.keys(matchAttrs).length > 0 ||
+					matchSubjectIdOverride !== undefined)
+			) {
+				const labelParts = Object.entries(matchAttrs).map(
+					([k, v]) => `${k}=${v === null ? 'null' : v}`,
+				);
+				if (matchSubjectIdOverride !== undefined) {
+					labelParts.unshift(`key=${matchSubjectIdOverride}`);
+				}
 				extra.push({
-					label: Object.entries(matchAttrs)
-						.map(([k, v]) => `${k}=${v === null ? 'null' : v}`)
-						.join(', '),
+					label: labelParts.join(', '),
 					attributes: matchAttrs,
+					...(matchSubjectIdOverride !== undefined && {
+						subjectIdOverride: matchSubjectIdOverride,
+					}),
 				});
 			}
-			if (canNonMatch && Object.keys(nonMatchAttrs).length > 0) {
+			if (
+				canNonMatch &&
+				(Object.keys(nonMatchAttrs).length > 0 ||
+					nonMatchSubjectIdOverride !== undefined)
+			) {
+				const labelParts = Object.entries(nonMatchAttrs).map(
+					([k, v]) => `${k}=${v === null ? 'null' : v}`,
+				);
+				if (nonMatchSubjectIdOverride !== undefined) {
+					labelParts.unshift(`key=${nonMatchSubjectIdOverride}`);
+				}
 				extra.push({
-					label: Object.entries(nonMatchAttrs)
-						.map(([k, v]) => `${k}=${v === null ? 'null' : v}`)
-						.join(', '),
+					label: labelParts.join(', '),
 					attributes: nonMatchAttrs,
+					...(nonMatchSubjectIdOverride !== undefined && {
+						subjectIdOverride: nonMatchSubjectIdOverride,
+					}),
 				});
 			}
 			if (extra.length >= 4) break;
@@ -261,16 +291,21 @@ export async function initializeLaunchDarkly(
 	}
 }
 
-// ─── Flag Evaluation ──────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Infer Datadog-compatible value type from LD flag kind + variation values */
-function inferLDValueType(flag: LDFlag): string {
-	if (flag.kind === 'boolean') return 'BOOLEAN';
-	const values = flag.variations.map((v) => v.value);
-	if (values.every((v) => typeof v === 'number')) return 'NUMERIC';
-	if (values.some((v) => typeof v === 'object' && v !== null)) return 'JSON';
-	return 'STRING';
+function sortKeys(value: unknown): unknown {
+	if (Array.isArray(value)) return value.map(sortKeys);
+	if (value !== null && typeof value === 'object') {
+		return Object.fromEntries(
+			Object.entries(value as Record<string, unknown>)
+				.sort(([a], [b]) => a.localeCompare(b))
+				.map(([k, v]) => [k, sortKeys(v)]),
+		);
+	}
+	return value;
 }
+
+// ─── Flag Evaluation ──────────────────────────────────────────────────────────
 
 export async function evaluateLDFlag(
 	flag: LDFlag,
@@ -280,7 +315,7 @@ export async function evaluateLDFlag(
 	ddFlags: Record<string, DDFlagValue>,
 	ddFlagKeys: Set<string>,
 ): Promise<EvaluationResult> {
-	const vtype = inferLDValueType(flag);
+	const vtype = mapFlagType(flag);
 	const ddFlag = ddFlags[flag.key];
 	const ddStatus: DDStatus =
 		ddFlag !== undefined
@@ -314,9 +349,11 @@ export async function evaluateLDFlag(
 		const ldValue = await ldClient.variation(flag.key, context, defaultValue);
 
 		if (vtype === 'JSON') {
-			providerResult = JSON.stringify(ldValue);
+			providerResult = JSON.stringify(sortKeys(ldValue));
 			ddResult =
-				ddFlag !== undefined ? JSON.stringify(ddFlag.variationValue) : '';
+				ddFlag !== undefined
+					? JSON.stringify(sortKeys(ddFlag.variationValue))
+					: '';
 		} else {
 			providerResult = String(ldValue);
 			ddResult = ddFlag !== undefined ? String(ddFlag.variationValue) : '';
