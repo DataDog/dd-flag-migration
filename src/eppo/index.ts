@@ -280,7 +280,6 @@ type ConfirmAction = 'migrate' | 'select-more' | 'cancel';
 
 async function confirmMigration(
 	flags: EppoFlag[],
-	allEppoFlags: EppoFlag[],
 	ddApiKey: string,
 	ddAppKey: string,
 	envMapping: Map<number, DatadogEnvironment>,
@@ -671,10 +670,6 @@ async function confirmMigration(
 	}
 
 	if (!dryRun && (created > 0 || synced > 0 || errored > 0)) {
-		const selectedFlagKeys = new Set(flags.map((f) => f.key));
-		const unmigratedFlags = allEppoFlags.filter(
-			(f) => !selectedFlagKeys.has(f.key),
-		);
 		const migrationData: MigrationFile = {
 			provider,
 			migratedAt: timestamp,
@@ -684,7 +679,6 @@ async function confirmMigration(
 			enableFailures,
 			skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
 			flags,
-			unmigrated: unmigratedFlags.length > 0 ? unmigratedFlags : undefined,
 			environmentMapping,
 		};
 		const filename = `migration-${timestamp}.json`;
@@ -814,7 +808,6 @@ export async function runEppoMigration(
 				printHeader();
 				const action = await confirmMigration(
 					prevSelectedFlags,
-					flags,
 					ddApiKey,
 					ddAppKey,
 					prevEnvMapping,

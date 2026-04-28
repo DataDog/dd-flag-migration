@@ -88,7 +88,6 @@ export interface MigrationFile {
 	}>;
 	skippedFlags?: Array<{ key: string; reason: string }>;
 	flags: EppoFlag[];
-	unmigrated?: EppoFlag[];
 	environmentMapping: import('../types.js').MigrationEnvironmentMapping[];
 }
 
