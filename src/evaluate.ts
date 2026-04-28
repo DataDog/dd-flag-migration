@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
-import type * as EppoSdk from '@eppo/node-server-sdk';
 import { confirm, input, password, select } from '@inquirer/prompts';
 import axios from 'axios';
 import chalk from 'chalk';
@@ -11,169 +10,32 @@ import {
 	getDatadogClientToken,
 	getDatadogKeys,
 	getDatadogSite,
-	getEppoSdkKeyForEnv,
 	saveDatadogClientToken,
 	saveDatadogKeys,
-	saveEppoSdkKeyForEnv,
 } from './config.js';
+import {
+	evaluateEppoFlag,
+	generateEppoTestCases,
+	initializeEppo,
+	promptForEppoSdkKey,
+} from './eppo/evaluate.js';
+import {
+	evaluateLDFlag,
+	generateLDTestCases,
+	initializeLaunchDarkly,
+	type LDClient,
+	promptForLDSdkKey,
+} from './launchdarkly/evaluate.js';
+import type { LDFlag } from './launchdarkly/types.js';
 import type {
-	EppoCondition,
-	EppoFlag,
+	DDFlagValue,
+	DDStatus,
 	EvaluationExportRow,
 	MigrationEnvironmentMapping,
 	MigrationFile,
+	SubjectAttributes,
+	TestCase,
 } from './types.js';
-
-type EppoClient = ReturnType<typeof EppoSdk.getInstance>;
-
-type SubjectAttributes = Record<string, string | number | boolean | null>;
-
-interface TestCase {
-	label: string;
-	attributes: SubjectAttributes;
-}
-
-// ─── Test Case Generation ─────────────────────────────────────────────────────
-
-function generateMatchingValue(
-	cond: EppoCondition,
-): string | number | null | undefined {
-	const op = cond.operator.toUpperCase();
-	const first = cond.values[0];
-	switch (op) {
-		case 'ONE_OF':
-			return first ?? null;
-		case 'NOT_ONE_OF': {
-			const set = new Set(cond.values);
-			for (const c of ['__other__', 'other', 'none', 'unknown', 'default']) {
-				if (!set.has(c)) return c;
-			}
-			return `__not_${cond.attribute}__`;
-		}
-		case 'GT': {
-			const n = parseFloat(first ?? '');
-			return Number.isFinite(n) ? n + 1 : undefined;
-		}
-		case 'GTE': {
-			const n = parseFloat(first ?? '');
-			return Number.isFinite(n) ? n : undefined;
-		}
-		case 'LT': {
-			const n = parseFloat(first ?? '');
-			return Number.isFinite(n) ? n - 1 : undefined;
-		}
-		case 'LTE': {
-			const n = parseFloat(first ?? '');
-			return Number.isFinite(n) ? n : undefined;
-		}
-		case 'MATCHES':
-			return first ?? undefined;
-		case 'IS_NULL':
-			return null;
-		default:
-			return first ?? undefined;
-	}
-}
-
-function generateNonMatchingValue(
-	cond: EppoCondition,
-): string | number | null | undefined {
-	const op = cond.operator.toUpperCase();
-	const first = cond.values[0];
-	switch (op) {
-		case 'ONE_OF': {
-			const slug = cond.values
-				.map((v) => v.replace(/\W/g, '').slice(0, 6))
-				.join('_')
-				.slice(0, 20);
-			return `__not_${slug}__`;
-		}
-		case 'NOT_ONE_OF':
-			return first ?? `__in_${cond.attribute}__`;
-		case 'GT':
-		case 'GTE': {
-			const n = parseFloat(first ?? '');
-			return Number.isFinite(n) ? n - 1 : undefined;
-		}
-		case 'LT':
-		case 'LTE': {
-			const n = parseFloat(first ?? '');
-			return Number.isFinite(n) ? n + 1 : undefined;
-		}
-		case 'MATCHES':
-			return '__no_match__';
-		case 'IS_NULL':
-			return `${cond.attribute}_value`;
-		default:
-			return `__not_${cond.attribute}__`;
-	}
-}
-
-/**
- * Generates test cases for a flag based on its targeting rules.
- * Always includes a baseline "no attributes" case plus matching/non-matching
- * attribute sets derived from each targeting rule (property-based testing style).
- */
-function generateTestCases(flag: EppoFlag): TestCase[] {
-	const base: TestCase[] = [{ label: 'no attributes', attributes: {} }];
-	const rulesWithConditions = (flag.allocations ?? [])
-		.flatMap((a) => a.targeting_rules ?? [])
-		.filter((r) => (r.conditions ?? []).length > 0);
-
-	if (rulesWithConditions.length === 0) return base;
-
-	const extra: TestCase[] = [];
-
-	for (const rule of rulesWithConditions) {
-		const matchAttrs: SubjectAttributes = {};
-		const nonMatchAttrs: SubjectAttributes = {};
-		let canMatch = true;
-		let canNonMatch = true;
-
-		for (const cond of rule.conditions) {
-			const mv = generateMatchingValue(cond);
-			const nv = generateNonMatchingValue(cond);
-
-			if (mv === undefined) {
-				canMatch = false;
-			} else {
-				matchAttrs[cond.attribute] = mv;
-			}
-			if (nv === undefined) {
-				canNonMatch = false;
-			} else {
-				nonMatchAttrs[cond.attribute] = nv;
-			}
-		}
-
-		if (canMatch && Object.keys(matchAttrs).length > 0) {
-			extra.push({
-				label: Object.entries(matchAttrs)
-					.map(([k, v]) => `${k}=${v === null ? 'null' : v}`)
-					.join(', '),
-				attributes: matchAttrs,
-			});
-		}
-		if (canNonMatch && Object.keys(nonMatchAttrs).length > 0) {
-			extra.push({
-				label: Object.entries(nonMatchAttrs)
-					.map(([k, v]) => `${k}=${v === null ? 'null' : v}`)
-					.join(', '),
-				attributes: nonMatchAttrs,
-			});
-		}
-		if (extra.length >= 4) break;
-	}
-
-	// Deduplicate by attribute set JSON
-	const seen = new Set<string>();
-	return [...base, ...extra].filter((tc) => {
-		const k = JSON.stringify(tc.attributes);
-		if (seen.has(k)) return false;
-		seen.add(k);
-		return true;
-	});
-}
 
 // ─── UI Helpers ───────────────────────────────────────────────────────────────
 
@@ -268,40 +130,7 @@ async function selectMigrationFile(useLatest = false): Promise<MigrationFile> {
 	return JSON.parse(raw) as MigrationFile;
 }
 
-// ─── Credential Prompts ───────────────────────────────────────────────────────
-
-async function promptForEppoSdkKey(
-	eppoEnvName: string,
-	useSavedKeys = false,
-): Promise<string> {
-	const stored = getEppoSdkKeyForEnv(eppoEnvName);
-
-	if (stored && useSavedKeys) {
-		console.log(
-			chalk.gray(
-				`  Using saved Eppo SDK key for ${chalk.cyan(eppoEnvName)}.\n`,
-			),
-		);
-		return stored;
-	}
-
-	if (stored) {
-		const useStored = await confirm({
-			message: `Use your saved Eppo SDK key for ${chalk.cyan(eppoEnvName)}?`,
-			default: true,
-		});
-		if (useStored) return stored;
-	}
-
-	const key = await password({
-		message: `Enter your Eppo SDK key for ${chalk.cyan(eppoEnvName)} (server SDK key, not the Admin API key):`,
-		validate: (v) => (v.trim().length > 0 ? true : 'SDK key cannot be empty'),
-	});
-
-	saveEppoSdkKeyForEnv(eppoEnvName, key.trim());
-	console.log(chalk.gray('  Key saved for future sessions.\n'));
-	return key.trim();
-}
+// ─── Datadog Credential Prompts ──────────────────────────────────────────────
 
 async function promptForDatadogClientToken(
 	useSavedKeys = false,
@@ -369,6 +198,8 @@ async function promptForDatadogKeys(
 	return { apiKey: apiKey.trim(), appKey: appKey.trim() };
 }
 
+// ─── Datadog Environment Selection ───────────────────────────────────────────
+
 type ApiEnvironment = { id: string; queries: string[] };
 
 async function fetchEnvironmentsFromApi(
@@ -377,15 +208,33 @@ async function fetchEnvironmentsFromApi(
 	site: string,
 ): Promise<ApiEnvironment[]> {
 	const baseUrl = `https://api.${site}`;
-	const resp = await axios.get<{
-		data: Array<{ id: string; attributes: { queries: string[] } }>;
-	}>(`${baseUrl}/api/v2/feature-flags/environments`, {
-		headers: { 'DD-API-KEY': apiKey, 'DD-APPLICATION-KEY': appKey },
-	});
-	return resp.data.data.map((item) => ({
-		id: item.id,
-		queries: item.attributes.queries ?? [],
-	}));
+	try {
+		const resp = await axios.get<{
+			data: Array<{ id: string; attributes: { queries: string[] } }>;
+		}>(`${baseUrl}/api/v2/feature-flags/environments`, {
+			headers: { 'DD-API-KEY': apiKey, 'DD-APPLICATION-KEY': appKey },
+		});
+		return resp.data.data.map((item) => ({
+			id: item.id,
+			queries: item.attributes.queries ?? [],
+		}));
+	} catch (err) {
+		if (axios.isAxiosError(err) && err.response?.status === 403) {
+			throw new Error(
+				'Datadog API returned 403 Forbidden when fetching feature flag environments.\n' +
+					'  Please check that:\n' +
+					'  • Your Datadog API key and Application key are valid\n' +
+					'  • Your Application key has permission to read feature flags',
+			);
+		}
+		if (axios.isAxiosError(err) && err.response?.status === 401) {
+			throw new Error(
+				'Datadog API returned 401 Unauthorized.\n' +
+					'  Your API key or Application key is invalid.',
+			);
+		}
+		throw err;
+	}
 }
 
 async function selectDDEnvironment(
@@ -394,7 +243,7 @@ async function selectDDEnvironment(
 	appKey: string,
 	site: string,
 	flagEnvironment?: string,
-): Promise<{ ddEnvName: string; envId: string; eppoEnvName: string }> {
+): Promise<{ ddEnvName: string; envId: string; sourceEnvName: string }> {
 	if (environmentMapping.length === 0) {
 		throw new Error(
 			'No environment mapping found in migration file. Re-run the migration first.',
@@ -451,27 +300,23 @@ async function selectDDEnvironment(
 	}
 
 	const envId = chosen.datadogEnvId;
-	const eppoEnvName = chosen.sourceEnvName;
+	const sourceEnvName = chosen.sourceEnvName;
 
 	if (matched.queries.length === 1 || flagEnvironment !== undefined)
-		return { ddEnvName: matched.queries[0], envId, eppoEnvName };
+		return { ddEnvName: matched.queries[0], envId, sourceEnvName };
 
 	const ddEnvName = await select<string>({
 		message: `Select a DD_ENV for "${chosen.datadogEnvName}":`,
 		choices: matched.queries.map((q) => ({ name: q, value: q })),
 	});
-	return { ddEnvName, envId, eppoEnvName };
+	return { ddEnvName, envId, sourceEnvName };
 }
 
-// ─── Endpoint Host Mapping ────────────────────────────────────────────────────
+// ─── Datadog Flag Fetching ───────────────────────────────────────────────────
 
 function buildEndpointHost(site: string): string {
 	return `preview.ff-cdn.${site}`;
 }
-
-// ─── DD Flag Fetching ─────────────────────────────────────────────────────────
-
-type DDFlagValue = { variationValue: unknown; variationType: string };
 
 type DDFlagListItem = {
 	attributes: {
@@ -494,25 +339,43 @@ async function fetchDDFlagData(
 	const enabledByKey = new Map<string, boolean>();
 	let offset = 0;
 	const limit = 200;
-	while (true) {
-		const resp = await axios.get<{ data: DDFlagListItem[] }>(
-			`${baseUrl}/api/v2/feature-flags`,
-			{
-				headers: { 'DD-API-KEY': apiKey, 'DD-APPLICATION-KEY': appKey },
-				params: { limit, offset, is_archived: false },
-			},
-		);
-		const flags = resp.data.data ?? [];
-		for (const f of flags) {
-			keys.add(f.attributes.key);
-			const envEntry = (f.attributes.feature_flag_environments ?? []).find(
-				(e) => e.environment_id === envId,
+	try {
+		while (true) {
+			const resp = await axios.get<{ data: DDFlagListItem[] }>(
+				`${baseUrl}/api/v2/feature-flags`,
+				{
+					headers: { 'DD-API-KEY': apiKey, 'DD-APPLICATION-KEY': appKey },
+					params: { limit, offset, is_archived: false },
+				},
 			);
-			if (envEntry !== undefined)
-				enabledByKey.set(f.attributes.key, envEntry.status === 'ENABLED');
+			const flags = resp.data.data ?? [];
+			for (const f of flags) {
+				keys.add(f.attributes.key);
+				const envEntry = (f.attributes.feature_flag_environments ?? []).find(
+					(e) => e.environment_id === envId,
+				);
+				if (envEntry !== undefined)
+					enabledByKey.set(f.attributes.key, envEntry.status === 'ENABLED');
+			}
+			if (flags.length < limit) break;
+			offset += limit;
 		}
-		if (flags.length < limit) break;
-		offset += limit;
+	} catch (err) {
+		if (axios.isAxiosError(err) && err.response?.status === 403) {
+			throw new Error(
+				'Datadog API returned 403 Forbidden when fetching feature flags.\n' +
+					'  Please check that:\n' +
+					'  • Your Datadog API key and Application key are valid\n' +
+					'  • Your Application key has permission to read feature flags',
+			);
+		}
+		if (axios.isAxiosError(err) && err.response?.status === 401) {
+			throw new Error(
+				'Datadog API returned 401 Unauthorized.\n' +
+					'  Your API key or Application key is invalid.',
+			);
+		}
+		throw err;
 	}
 	return { keys, enabledByKey };
 }
@@ -534,7 +397,7 @@ async function fetchDDFlags(
 					type: 'precompute-assignments-request',
 					attributes: {
 						env: { dd_env: env },
-						sdk: { name: 'browser', version: 'dev' },
+						sdk: { name: 'migration', version: 'dev' },
 						subject: {
 							targeting_key: subjectId,
 							targeting_attributes: subjectAttributes,
@@ -562,139 +425,13 @@ async function fetchDDFlags(
 	}
 }
 
-// ─── SDK Initialization ───────────────────────────────────────────────────────
-
-async function initializeEppo(eppoSdkKey: string): Promise<EppoClient> {
-	// Suppress pino logs from the Eppo SDK (level:30 info, level:40 warn)
-	process.env.LOG_LEVEL = 'silent';
-	const sdk = await import('@eppo/node-server-sdk');
-	await sdk.init({
-		apiKey: eppoSdkKey,
-		assignmentLogger: {
-			logAssignment: () => {
-				/* intentionally empty */
-			},
-		},
-		throwOnFailedInitialization: true,
-		numInitialRequestRetries: 0,
-		pollAfterSuccessfulInitialization: false,
-		pollAfterFailedInitialization: false,
-	});
-	return sdk.getInstance();
-}
-
-// ─── Flag Evaluation ──────────────────────────────────────────────────────────
-
-type DDStatus = 'assigned' | 'not-assigned' | 'not-in-dd';
-
-async function evaluateFlag(
-	flag: EppoFlag,
-	subjectId: string,
-	attributes: SubjectAttributes,
-	eppoClient: EppoClient,
-	ddFlags: Record<string, DDFlagValue>,
-	ddFlagKeys: Set<string>,
-): Promise<{
-	eppoResult: string;
-	ddResult: string;
-	ddStatus: DDStatus;
-	error?: string;
-}> {
-	const vtype = (flag.variation_type ?? 'STRING').toUpperCase();
-	const ddFlag = ddFlags[flag.key];
-	const ddStatus: DDStatus =
-		ddFlag !== undefined
-			? 'assigned'
-			: ddFlagKeys.has(flag.key)
-				? 'not-assigned'
-				: 'not-in-dd';
-
-	try {
-		// Eppo SDK's Attributes type does not include null; null means "absent"
-		const eppoAttrs = Object.fromEntries(
-			Object.entries(attributes).filter(([, v]) => v !== null),
-		) as Record<string, string | number | boolean>;
-
-		let eppoResult: string;
-		let ddResult: string;
-
-		switch (vtype) {
-			case 'BOOLEAN': {
-				const eppo = eppoClient.getBoolAssignment(
-					flag.key,
-					subjectId,
-					eppoAttrs,
-					false,
-				) as boolean;
-				eppoResult = String(eppo);
-				ddResult = ddFlag !== undefined ? String(ddFlag.variationValue) : '';
-				break;
-			}
-			case 'INTEGER': {
-				const eppo = eppoClient.getIntegerAssignment(
-					flag.key,
-					subjectId,
-					eppoAttrs,
-					0,
-				) as number;
-				eppoResult = String(eppo);
-				ddResult = ddFlag !== undefined ? String(ddFlag.variationValue) : '';
-				break;
-			}
-			case 'NUMERIC': {
-				const eppo = eppoClient.getNumericAssignment(
-					flag.key,
-					subjectId,
-					eppoAttrs,
-					0,
-				) as number;
-				eppoResult = String(eppo);
-				ddResult = ddFlag !== undefined ? String(ddFlag.variationValue) : '';
-				break;
-			}
-			case 'JSON': {
-				const eppo = eppoClient.getJSONAssignment(
-					flag.key,
-					subjectId,
-					eppoAttrs,
-					{},
-				) as object;
-				eppoResult = JSON.stringify(eppo);
-				ddResult =
-					ddFlag !== undefined ? JSON.stringify(ddFlag.variationValue) : '';
-				break;
-			}
-			default: {
-				const eppo = eppoClient.getStringAssignment(
-					flag.key,
-					subjectId,
-					eppoAttrs,
-					'control',
-				) as string;
-				eppoResult = String(eppo);
-				ddResult = ddFlag !== undefined ? String(ddFlag.variationValue) : '';
-				break;
-			}
-		}
-
-		return { eppoResult, ddResult, ddStatus };
-	} catch (err) {
-		return {
-			eppoResult: 'ERROR',
-			ddResult: 'ERROR',
-			ddStatus: 'not-assigned',
-			error: err instanceof Error ? err.message : String(err),
-		};
-	}
-}
-
 // ─── Table Rendering ──────────────────────────────────────────────────────────
 
 type MigrationStatus = 'created' | 'partial' | 'failed' | 'skipped' | 'unknown';
 
 interface FlagTestResult {
 	testCase: TestCase;
-	eppoResult: string;
+	providerResult: string;
 	ddResult: string;
 	ddStatus: DDStatus;
 	match: boolean;
@@ -785,11 +522,11 @@ function renderTable(rows: TableRow[], providerLabel: string): void {
 
 			const testLabelStr = pad(tr.testCase.label, COL_TEST);
 
-			let eppoDisplay: string;
+			let providerDisplay: string;
 			let ddDisplay: string;
 
 			if (tr.error) {
-				eppoDisplay = chalk.red(pad('ERROR', COL_EVAL));
+				providerDisplay = chalk.red(pad('ERROR', COL_EVAL));
 				ddDisplay =
 					tr.ddStatus === 'assigned'
 						? chalk.dim(pad(tr.ddResult, COL_EVAL))
@@ -798,13 +535,13 @@ function renderTable(rows: TableRow[], providerLabel: string): void {
 				tr.ddStatus === 'not-in-dd' ||
 				tr.ddStatus === 'not-assigned'
 			) {
-				eppoDisplay = chalk.dim(pad(tr.eppoResult, COL_EVAL));
+				providerDisplay = chalk.dim(pad(tr.providerResult, COL_EVAL));
 				ddDisplay = chalk.dim(pad('—', COL_EVAL));
 			} else if (tr.match) {
-				eppoDisplay = chalk.green(pad(tr.eppoResult, COL_EVAL));
+				providerDisplay = chalk.green(pad(tr.providerResult, COL_EVAL));
 				ddDisplay = chalk.green(pad(tr.ddResult, COL_EVAL));
 			} else {
-				eppoDisplay = chalk.yellow(pad(tr.eppoResult, COL_EVAL));
+				providerDisplay = chalk.yellow(pad(tr.providerResult, COL_EVAL));
 				ddDisplay = chalk.yellow(pad(tr.ddResult, COL_EVAL));
 			}
 
@@ -820,7 +557,7 @@ function renderTable(rows: TableRow[], providerLabel: string): void {
 					sep +
 					testLabelStr +
 					sep +
-					eppoDisplay +
+					providerDisplay +
 					sep +
 					ddDisplay +
 					sep +
@@ -940,10 +677,11 @@ async function main(): Promise<void> {
 	const ddSite = getDatadogSiteFromConfig();
 
 	// 3. Select Datadog environment (resolved via API)
+	const isLD = migration.provider === 'launchdarkly';
 	const {
 		ddEnvName: ddEnv,
 		envId: ddEnvId,
-		eppoEnvName,
+		sourceEnvName,
 	} = await selectDDEnvironment(
 		migration.environmentMapping ?? [],
 		ddApiKey,
@@ -953,8 +691,13 @@ async function main(): Promise<void> {
 	);
 	console.log();
 
-	// 4a. Collect Eppo SDK key for this specific environment
-	const eppoSdkKey = await promptForEppoSdkKey(eppoEnvName, useSavedKeys);
+	// 4a. Collect provider SDK key for this specific environment
+	let providerSdkKey: string;
+	if (isLD) {
+		providerSdkKey = await promptForLDSdkKey(sourceEnvName, useSavedKeys);
+	} else {
+		providerSdkKey = await promptForEppoSdkKey(sourceEnvName, useSavedKeys);
+	}
 	console.log();
 
 	// 4b. Prompt for test subject ID
@@ -974,38 +717,65 @@ async function main(): Promise<void> {
 	}
 
 	// 5a. Generate test cases for each flag from its targeting rules
-	const flagTestCases = migration.flags.map((flag) => ({
-		flag,
-		testCases: generateTestCases(flag),
-	}));
+	type FlagWithTestCases = {
+		flagKey: string;
+		flagName: string;
+		team: string;
+		testCases: TestCase[];
+	};
+	let flagTestCases: FlagWithTestCases[];
 
-	// Collect all unique attribute sets needed across all flags
-	const uniqueAttrSets = new Map<string, SubjectAttributes>();
+	if (isLD) {
+		const ldFlags = migration.flags as unknown as LDFlag[];
+		flagTestCases = ldFlags.map((flag) => ({
+			flagKey: flag.key,
+			flagName: flag.name,
+			team: flag._maintainerTeam?.name ?? flag._maintainer?.email ?? '',
+			testCases: generateLDTestCases(flag, sourceEnvName),
+		}));
+	} else {
+		flagTestCases = migration.flags.map((flag) => ({
+			flagKey: flag.key,
+			flagName: flag.name,
+			team: flag.owner?.name ?? '',
+			testCases: generateEppoTestCases(flag),
+		}));
+	}
+
+	// Collect all unique (subjectId, attributes) contexts needed across all flags
+	type DDContext = { subjectId: string; attributes: SubjectAttributes };
+	const uniqueContexts = new Map<string, DDContext>();
 	for (const { testCases } of flagTestCases) {
 		for (const tc of testCases) {
-			const k = JSON.stringify(tc.attributes);
-			if (!uniqueAttrSets.has(k)) uniqueAttrSets.set(k, tc.attributes);
+			const sid = tc.subjectIdOverride ?? subjectId;
+			const k = JSON.stringify({ s: sid, a: tc.attributes });
+			if (!uniqueContexts.has(k))
+				uniqueContexts.set(k, { subjectId: sid, attributes: tc.attributes });
 		}
 	}
 
-	// 5b. Initialize Eppo SDK (non-fatal — errors surface in the table)
-	const initSpinner = ora('Initializing Eppo SDK…').start();
-	let eppoClient: unknown = null;
-	let eppoInitError: string | undefined;
+	// 5b. Initialize provider SDK (non-fatal — errors surface in the table)
+	const initSpinner = ora(`Initializing ${providerLabel} SDK…`).start();
+	let providerClient: unknown = null;
+	let providerInitError: string | undefined;
 
 	try {
-		eppoClient = await initializeEppo(eppoSdkKey);
-		initSpinner.succeed('Eppo SDK initialized');
+		if (isLD) {
+			providerClient = await initializeLaunchDarkly(providerSdkKey);
+		} else {
+			providerClient = await initializeEppo(providerSdkKey);
+		}
+		initSpinner.succeed(`${providerLabel} SDK initialized`);
 	} catch (err) {
-		eppoInitError = err instanceof Error ? err.message : String(err);
+		providerInitError = err instanceof Error ? err.message : String(err);
 		initSpinner.fail(
-			`Eppo SDK initialization failed: ${chalk.red(eppoInitError)}`,
+			`${providerLabel} SDK initialization failed: ${chalk.red(providerInitError)}`,
 		);
 	}
 
-	// 6. Fetch Datadog data: flag list + assignments for every unique attribute set
+	// 6. Fetch Datadog data: flag list + assignments for every unique context
 	const ddSpinner = ora(
-		`Fetching Datadog data for ${uniqueAttrSets.size} test context(s)…`,
+		`Fetching Datadog data for ${uniqueContexts.size} test context(s)…`,
 	).start();
 	let ddFlagsPerContext: Map<string, Record<string, DDFlagValue>>;
 	let ddFlagKeys: Set<string>;
@@ -1015,14 +785,14 @@ async function main(): Promise<void> {
 		const [flagData, contextResults] = await Promise.all([
 			fetchDDFlagData(ddApiKey, ddAppKey, ddSite, ddEnvId),
 			Promise.all(
-				[...uniqueAttrSets.entries()].map(async ([key, attrs]) => ({
+				[...uniqueContexts.entries()].map(async ([key, ctx]) => ({
 					key,
 					result: await fetchDDFlags(
 						ddClientToken,
 						ddSite,
 						ddEnv,
-						subjectId.trim(),
-						attrs,
+						ctx.subjectId.trim(),
+						ctx.attributes,
 					),
 				})),
 			),
@@ -1038,7 +808,7 @@ async function main(): Promise<void> {
 		);
 		ddSpinner.succeed(
 			`Fetched ${totalAssignments} assignment(s) across ${ddFlagKeys.size} flag(s) ` +
-				`and ${uniqueAttrSets.size} test context(s)`,
+				`and ${uniqueContexts.size} test context(s)`,
 		);
 	} catch (err) {
 		ddSpinner.fail('Failed to fetch Datadog flag data');
@@ -1052,7 +822,7 @@ async function main(): Promise<void> {
 		0,
 	);
 	const evalSpinner = ora(
-		`Evaluating ${migration.flags.length} flag(s) across ${totalEvals} test case(s)…`,
+		`Evaluating ${flagTestCases.length} flag(s) across ${totalEvals} test case(s)…`,
 	).start();
 	const rows: TableRow[] = [];
 
@@ -1071,9 +841,17 @@ async function main(): Promise<void> {
 		);
 	}
 
-	for (const { flag, testCases } of flagTestCases) {
-		const skipReason = skippedFlagReason.get(flag.key);
-		const envFailCount = enableFailCountByFlag.get(flag.key) ?? 0;
+	// Build flag lookup for provider-specific evaluation
+	const ldFlagByKey = isLD
+		? new Map((migration.flags as unknown as LDFlag[]).map((f) => [f.key, f]))
+		: null;
+	const eppoFlagByKey = !isLD
+		? new Map(migration.flags.map((f) => [f.key, f]))
+		: null;
+
+	for (const { flagKey, testCases } of flagTestCases) {
+		const skipReason = skippedFlagReason.get(flagKey);
+		const envFailCount = enableFailCountByFlag.get(flagKey) ?? 0;
 		const partialDetails: string[] = [];
 		if (skipReason !== undefined) {
 			partialDetails.push(skipReason);
@@ -1086,57 +864,90 @@ async function main(): Promise<void> {
 				? 'skipped'
 				: !hasMigrationDetail
 					? 'unknown'
-					: failedKeys.has(flag.key)
+					: failedKeys.has(flagKey)
 						? 'failed'
 						: envFailCount > 0
 							? 'partial'
 							: 'created';
-		const ddEnabled = ddEnabledByKey.get(flag.key) ?? null;
+		const ddEnabled = ddEnabledByKey.get(flagKey) ?? null;
 
 		const testResults: FlagTestResult[] = [];
 
 		for (const tc of testCases) {
-			const attrKey = JSON.stringify(tc.attributes);
-			const ddFlagsForCase = ddFlagsPerContext.get(attrKey) ?? {};
+			const tcSubjectId = tc.subjectIdOverride ?? subjectId;
+			const contextKey = JSON.stringify({
+				s: tcSubjectId,
+				a: tc.attributes,
+			});
+			const ddFlagsForCase = ddFlagsPerContext.get(contextKey) ?? {};
 
-			if (eppoInitError) {
-				const ddFlag = ddFlagsForCase[flag.key];
+			if (providerInitError) {
+				const ddFlag = ddFlagsForCase[flagKey];
 				const ddStatus: DDStatus =
 					ddFlag !== undefined
 						? 'assigned'
-						: ddFlagKeys.has(flag.key)
+						: ddFlagKeys.has(flagKey)
 							? 'not-assigned'
 							: 'not-in-dd';
 				testResults.push({
 					testCase: tc,
-					eppoResult: 'ERROR',
+					providerResult: 'ERROR',
 					ddResult: ddFlag !== undefined ? String(ddFlag.variationValue) : '',
 					ddStatus,
 					match: false,
-					error: `Eppo SDK: ${eppoInitError}`,
+					error: `${providerLabel} SDK: ${providerInitError}`,
 				});
-			} else {
-				const { eppoResult, ddResult, ddStatus, error } = await evaluateFlag(
-					flag,
-					subjectId.trim(),
-					tc.attributes,
-					eppoClient as EppoClient,
-					ddFlagsForCase,
-					ddFlagKeys,
-				);
+			} else if (isLD) {
+				// biome-ignore lint/style/noNonNullAssertion: ldFlagByKey is always set when isLD
+				const ldFlag = ldFlagByKey!.get(flagKey);
+				if (!ldFlag) continue;
+				const { providerResult, ddResult, ddStatus, error } =
+					await evaluateLDFlag(
+						ldFlag,
+						tcSubjectId.trim(),
+						tc.attributes,
+						providerClient as LDClient,
+						ddFlagsForCase,
+						ddFlagKeys,
+					);
 				testResults.push({
 					testCase: tc,
-					eppoResult,
+					providerResult,
 					ddResult,
 					ddStatus,
-					match: !error && ddStatus === 'assigned' && eppoResult === ddResult,
+					match:
+						!error && ddStatus === 'assigned' && providerResult === ddResult,
+					error,
+				});
+			} else {
+				// biome-ignore lint/style/noNonNullAssertion: eppoFlagByKey is always set when !isLD
+				const eppoFlag = eppoFlagByKey!.get(flagKey);
+				if (!eppoFlag) continue;
+				const { providerResult, ddResult, ddStatus, error } =
+					await evaluateEppoFlag(
+						eppoFlag,
+						tcSubjectId.trim(),
+						tc.attributes,
+						providerClient as ReturnType<
+							typeof import('@eppo/node-server-sdk').getInstance
+						>,
+						ddFlagsForCase,
+						ddFlagKeys,
+					);
+				testResults.push({
+					testCase: tc,
+					providerResult,
+					ddResult,
+					ddStatus,
+					match:
+						!error && ddStatus === 'assigned' && providerResult === ddResult,
 					error,
 				});
 			}
 		}
 
 		rows.push({
-			key: flag.key,
+			key: flagKey,
 			testResults,
 			migrationStatus,
 			ddEnabled,
@@ -1145,26 +956,32 @@ async function main(): Promise<void> {
 	}
 	evalSpinner.succeed('Evaluation complete');
 
+	// Close LD client if used
+	if (isLD && providerClient) {
+		await (providerClient as LDClient).close();
+	}
+
 	// 8. Render results
 	renderTable(rows, providerLabel);
 	printSummary(rows);
 
 	// 9. Optional .xlsx export
-	const flagByKey = new Map(migration.flags.map((f) => [f.key, f]));
-
 	const exportToXlsx = await confirm({
 		message: 'Would you like to export evaluation results to an .xlsx file?',
 		default: false,
 	});
 	if (exportToXlsx) {
+		const flagMeta = new Map(
+			flagTestCases.map((f) => [f.flagKey, { name: f.flagName, team: f.team }]),
+		);
 		const exportRows: EvaluationExportRow[] = rows.flatMap((row) => {
-			const flag = flagByKey.get(row.key);
+			const meta = flagMeta.get(row.key);
 			return row.testResults.map((tr) => ({
 				flagKey: row.key,
-				flagName: flag?.name ?? row.key,
-				team: flag?.owner?.name ?? '',
+				flagName: meta?.name ?? row.key,
+				team: meta?.team ?? '',
 				testCaseLabel: tr.testCase.label,
-				eppoResult: tr.eppoResult,
+				providerResult: tr.providerResult,
 				ddResult: tr.ddResult,
 				match: tr.match,
 				ddStatus: tr.ddStatus,

@@ -67,6 +67,19 @@ export function saveEppoSdkKeyForEnv(envName: string, key: string): void {
 	saveConfig(config);
 }
 
+export function getLDSdkKeyForEnv(envName: string): string | undefined {
+	return loadConfig().launchdarklySDKKeys?.[envName];
+}
+
+export function saveLDSdkKeyForEnv(envName: string, key: string): void {
+	const config = loadConfig();
+	config.launchdarklySDKKeys = {
+		...config.launchdarklySDKKeys,
+		[envName]: key,
+	};
+	saveConfig(config);
+}
+
 export function getDatadogClientToken(): string | undefined {
 	return loadConfig().datadogClientToken;
 }

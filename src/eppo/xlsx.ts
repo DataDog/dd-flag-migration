@@ -241,7 +241,7 @@ export async function exportEvaluationToXlsx(
 			row.flagName,
 			row.team,
 			row.testCaseLabel,
-			row.eppoResult,
+			row.providerResult,
 			row.ddResult,
 			match,
 			migStatus,
