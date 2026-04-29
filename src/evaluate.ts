@@ -730,7 +730,7 @@ async function main(): Promise<void> {
 		flagTestCases = ldFlags.map((flag) => ({
 			flagKey: flag.key,
 			flagName: flag.name,
-			team: flag._maintainerTeam?.name ?? flag._maintainer?.email ?? '',
+			team: '',
 			testCases: generateLDTestCases(flag, sourceEnvName),
 		}));
 	} else {

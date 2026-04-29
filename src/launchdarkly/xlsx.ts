@@ -45,16 +45,7 @@ function buildLDMigrationRows(
 		}
 	}
 
-	return rows.sort(
-		(a, b) =>
-			(
-				a.flag._maintainerTeam?.name ??
-				a.flag._maintainer?.email ??
-				''
-			).localeCompare(
-				b.flag._maintainerTeam?.name ?? b.flag._maintainer?.email ?? '',
-			) || a.flag.name.localeCompare(b.flag.name),
-	);
+	return rows.sort((a, b) => a.flag.name.localeCompare(b.flag.name));
 }
 
 const LD_MIGRATION_STATUS_ARGB: Record<LDMigrationRowStatus, string> = {
@@ -64,14 +55,7 @@ const LD_MIGRATION_STATUS_ARGB: Record<LDMigrationRowStatus, string> = {
 	Skipped: ARGB.skipped,
 };
 
-function formatLDMaintainer(flag: LDFlag): string {
-	if (flag._maintainerTeam) return flag._maintainerTeam.name;
-	if (flag._maintainer) {
-		const { firstName, lastName, email } = flag._maintainer;
-		if (firstName || lastName)
-			return [firstName, lastName].filter(Boolean).join(' ');
-		return email;
-	}
+function formatLDMaintainer(_flag: LDFlag): string {
 	return '';
 }
 

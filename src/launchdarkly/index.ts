@@ -30,12 +30,13 @@ import type {
 	DatadogFlagEntry,
 } from '../types.js';
 import {
-	buildMemberTeamCache,
+	fetchCustomRoles,
 	fetchFlag,
 	fetchFlagRelease,
 	fetchFlags,
 	fetchProjectEnvironments,
 	fetchProjects,
+	fetchTeamsWithRoles,
 	isReleaseInProgress,
 	type LDProject,
 	validateLDApiKey,
@@ -44,6 +45,8 @@ import {
 	buildAllocations,
 	buildFlagTags,
 	buildVariants,
+	findProjectEditorRoleKeys,
+	findTeamsWithEditAccess,
 	getEnvsToEnable,
 	mapFlagType,
 	shouldSkipFlag,
@@ -540,43 +543,54 @@ async function executeMigration(
 		return 'cancel';
 	}
 
-	// Build member→teams cache for tag generation
-	const cacheSpinner = ora('Resolving team memberships…').start();
-	let memberTeamCache = new Map<string, string[]>();
+	// Discover teams with edit access via RBAC
+	let projectEditorTeamKeys = new Set<string>();
+
+	const roleSpinner = ora('Fetching custom roles…').start();
 	try {
-		const [cache, wasForbidden] = await buildMemberTeamCache(
-			ldApiKey,
-			detailedFlags,
-		);
-		memberTeamCache = cache;
-		if (wasForbidden) {
-			cacheSpinner.warn(
-				'Members API returned 403 — team tags will only be set for flags with a team maintainer (requires Enterprise plan for individual maintainers)',
+		const [customRoles, teamsWithRoles] = await Promise.all([
+			fetchCustomRoles(ldApiKey),
+			fetchTeamsWithRoles(ldApiKey),
+		]);
+
+		if (customRoles.length === 0 && teamsWithRoles.length === 0) {
+			roleSpinner.warn(
+				'Custom Roles API not available — team tags will be skipped (requires Enterprise plan)',
 			);
 		} else {
-			cacheSpinner.succeed(
-				`Resolved team memberships for ${memberTeamCache.size} member(s)`,
+			const editorRoleKeys = findProjectEditorRoleKeys(customRoles, projectKey);
+			projectEditorTeamKeys = findTeamsWithEditAccess(
+				teamsWithRoles,
+				editorRoleKeys,
 			);
+
+			if (projectEditorTeamKeys.size > 0) {
+				roleSpinner.succeed(
+					`Found ${projectEditorTeamKeys.size} team(s) with edit access to project "${projectKey}"`,
+				);
+			} else {
+				roleSpinner.warn(
+					`No teams found with edit access to project "${projectKey}" — flags will not get team tags`,
+				);
+			}
 		}
 	} catch (err) {
-		cacheSpinner.warn(
-			`Could not resolve team memberships: ${formatAxiosError(err)}`,
-		);
+		roleSpinner.warn(`Could not resolve team access: ${formatAxiosError(err)}`);
 	}
 
 	// Detect LD→DD team key mismatches and prompt for interactive mapping
-	// TODO(Task 6): replace with RBAC-derived project editor team keys
 	let teamKeyMapping: Map<string, string> | undefined;
-	const ldTeamKeys = new Set<string>();
 
-	if (ldTeamKeys.size > 0) {
+	if (projectEditorTeamKeys.size > 0) {
 		const teamSpinner = ora('Fetching Datadog teams…').start();
 		try {
 			const ddTeams = await fetchDatadogTeams(ddApiKey, ddAppKey, ddSite);
 			teamSpinner.succeed(`Found ${ddTeams.length} Datadog team(s)`);
 
 			const ddHandles = new Set(ddTeams.map((t) => t.handle));
-			const mismatched = [...ldTeamKeys].filter((k) => !ddHandles.has(k));
+			const mismatched = [...projectEditorTeamKeys].filter(
+				(k) => !ddHandles.has(k),
+			);
 
 			if (mismatched.length > 0) {
 				console.log();
@@ -750,8 +764,11 @@ async function executeMigration(
 			);
 			spinner = ora(`Migrating ${chalk.cyan(flag.key)}…`).start();
 
-			// TODO(Task 6): pass real projectEditorTeamKeys here
-		const syncTags = buildFlagTags(flag, new Set<string>(), teamKeyMapping);
+			const syncTags = buildFlagTags(
+				flag,
+				projectEditorTeamKeys,
+				teamKeyMapping,
+			);
 
 			if (dryRun) {
 				let syncFilterCount = 0;
@@ -885,8 +902,7 @@ async function executeMigration(
 				? `${conflictResolution.prefix}-${flag.key}`
 				: flag.key;
 
-			// TODO(Task 6): pass real projectEditorTeamKeys here
-		const tags = buildFlagTags(flag, new Set<string>(), teamKeyMapping);
+			const tags = buildFlagTags(flag, projectEditorTeamKeys, teamKeyMapping);
 
 			const request: DatadogCreateFlagRequest = {
 				key: ddKey,
