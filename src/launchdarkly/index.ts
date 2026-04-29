@@ -44,7 +44,6 @@ import {
 	buildAllocations,
 	buildFlagTags,
 	buildVariants,
-	collectLDTeamKeys,
 	getEnvsToEnable,
 	mapFlagType,
 	shouldSkipFlag,
@@ -566,8 +565,9 @@ async function executeMigration(
 	}
 
 	// Detect LD→DD team key mismatches and prompt for interactive mapping
+	// TODO(Task 6): replace with RBAC-derived project editor team keys
 	let teamKeyMapping: Map<string, string> | undefined;
-	const ldTeamKeys = collectLDTeamKeys(detailedFlags, memberTeamCache);
+	const ldTeamKeys = new Set<string>();
 
 	if (ldTeamKeys.size > 0) {
 		const teamSpinner = ora('Fetching Datadog teams…').start();
@@ -750,7 +750,8 @@ async function executeMigration(
 			);
 			spinner = ora(`Migrating ${chalk.cyan(flag.key)}…`).start();
 
-			const syncTags = buildFlagTags(flag, memberTeamCache, teamKeyMapping);
+			// TODO(Task 6): pass real projectEditorTeamKeys here
+		const syncTags = buildFlagTags(flag, new Set<string>(), teamKeyMapping);
 
 			if (dryRun) {
 				let syncFilterCount = 0;
@@ -884,7 +885,8 @@ async function executeMigration(
 				? `${conflictResolution.prefix}-${flag.key}`
 				: flag.key;
 
-			const tags = buildFlagTags(flag, memberTeamCache, teamKeyMapping);
+			// TODO(Task 6): pass real projectEditorTeamKeys here
+		const tags = buildFlagTags(flag, new Set<string>(), teamKeyMapping);
 
 			const request: DatadogCreateFlagRequest = {
 				key: ddKey,

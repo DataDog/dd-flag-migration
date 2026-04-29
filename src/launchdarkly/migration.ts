@@ -4,7 +4,7 @@ import type {
 	DatadogEnvironment,
 	DatadogTargetingRule,
 } from '../types.js';
-import type { LDClause, LDFlag, LDRollout } from './types.js';
+import type { LDClause, LDCustomRole, LDFlag, LDRollout, LDTeamWithRoles } from './types.js';
 
 // ─── Flag Type Mapping ───────────────────────────────────────────────────────
 
@@ -377,74 +377,99 @@ export function getEnvsToEnable(
 	return envsToEnable;
 }
 
-// ─── Tag Building ────────────────────────────────────────────────────────────
+// ─── RBAC Team Discovery ─────────────────────────────────────────────────────
+
+const EDIT_ACTIONS = new Set([
+	'updateFlagVariations',
+	'createFlag',
+	'updateFlag',
+]);
+
+/** Check if a resource pattern matches the given project key. */
+function resourceMatchesProject(resource: string, projectKey: string): boolean {
+	const match = resource.match(/^proj\/([^:;]+)/);
+	if (!match) return false;
+	const projPattern = match[1];
+	return projPattern === '*' || projPattern === projectKey;
+}
 
 /**
- * Collect all unique LD team keys that would be used for tagging the given flags.
- * Used to detect mismatches with DD team handles before migration begins.
+ * Find custom role keys that grant edit access to flags in the given project.
+ * A role is an "editor" if it has at least one allow statement with an edit
+ * action targeting the project's resource path.
  */
-export function collectLDTeamKeys(
-	flags: LDFlag[],
-	memberTeamCache: Map<string, string[]>,
+export function findProjectEditorRoleKeys(
+	roles: LDCustomRole[],
+	projectKey: string,
 ): Set<string> {
-	const keys = new Set<string>();
-	for (const flag of flags) {
-		if (flag.maintainerTeamKey) {
-			keys.add(flag.maintainerTeamKey);
-		}
-		if (flag.maintainerId) {
-			const cached = memberTeamCache.get(flag.maintainerId);
-			if (cached) {
-				for (const k of cached) keys.add(k);
+	const editorKeys = new Set<string>();
+
+	for (const role of roles) {
+		for (const statement of role.policy) {
+			if (statement.effect !== 'allow') continue;
+
+			const actions = statement.actions ?? [];
+			const hasEditAction =
+				actions.includes('*') ||
+				actions.some((a) => EDIT_ACTIONS.has(a));
+			if (!hasEditAction) continue;
+
+			if (statement.resources) {
+				const matchesProject = statement.resources.some((r) =>
+					resourceMatchesProject(r, projectKey),
+				);
+				if (matchesProject) {
+					editorKeys.add(role.key);
+					break;
+				}
+			}
+
+			if (statement.notResources) {
+				const isExcluded = statement.notResources.some((r) =>
+					resourceMatchesProject(r, projectKey),
+				);
+				if (!isExcluded) {
+					editorKeys.add(role.key);
+					break;
+				}
 			}
 		}
 	}
-	return keys;
+
+	return editorKeys;
 }
 
 /**
- * Derive team tags from a flag's maintainer fields plus the member-team cache.
- * - maintainerTeamKey: present directly on the flag when a team is the maintainer
- * - maintainerId + cache: for individual maintainers on Enterprise plans
- * Applies teamKeyMapping to translate LD team keys → DD team handles when provided.
- * Returns tags in the form "team:<handle>".
+ * Find team keys that have at least one of the given editor role keys assigned.
  */
-export function buildTeamTags(
-	flag: LDFlag,
-	memberTeamCache: Map<string, string[]>,
-	teamKeyMapping?: Map<string, string>,
-): string[] {
-	const teamKeys: string[] = [];
-
-	if (flag.maintainerTeamKey) {
-		teamKeys.push(flag.maintainerTeamKey);
-	}
-
-	if (flag.maintainerId) {
-		const cached = memberTeamCache.get(flag.maintainerId);
-		if (cached) {
-			teamKeys.push(...cached);
+export function findTeamsWithEditAccess(
+	teams: LDTeamWithRoles[],
+	editorRoleKeys: Set<string>,
+): Set<string> {
+	const teamKeys = new Set<string>();
+	for (const team of teams) {
+		if (team.roles.some((r) => editorRoleKeys.has(r.key))) {
+			teamKeys.add(team.key);
 		}
 	}
-
-	const unique = [...new Set(teamKeys)];
-	return unique.map((key) => {
-		const mapped = teamKeyMapping?.get(key) ?? key;
-		return `team:${mapped}`;
-	});
+	return teamKeys;
 }
+
+// ─── Tag Building ────────────────────────────────────────────────────────────
 
 /**
  * Build the full tags array for a Datadog flag.
- * Combines team tags (derived from maintainer) with the flag's LD source tags.
+ * Combines team tags (derived from project-level RBAC) with the flag's LD source tags.
  * Applies teamKeyMapping to translate LD team keys → DD team handles when provided.
- * Flags with no maintainer simply get no team tags — they can be tagged manually in DD.
  */
 export function buildFlagTags(
 	flag: LDFlag,
-	memberTeamCache: Map<string, string[]>,
+	projectEditorTeamKeys: Set<string>,
 	teamKeyMapping?: Map<string, string>,
 ): string[] {
-	const teamTags = buildTeamTags(flag, memberTeamCache, teamKeyMapping);
+	const teamTags = [...projectEditorTeamKeys].map((key) => {
+		const mapped = teamKeyMapping?.get(key) ?? key;
+		return `team:${mapped}`;
+	});
 	return [...teamTags, ...flag.tags];
 }
