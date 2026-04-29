@@ -484,9 +484,7 @@ describe('fetchTeamsWithRoles', () => {
 		mock
 			.onGet('https://app.launchdarkly.com/api/v2/teams')
 			.replyOnce(200, {
-				items: [
-					{ key: 'platform', name: 'Platform', roles: { items: [] } },
-				],
+				items: [{ key: 'platform', name: 'Platform', roles: { items: [] } }],
 				totalCount: 1,
 			})
 			.onGet('https://app.launchdarkly.com/api/v2/teams')
@@ -518,22 +516,16 @@ describe('fetchTeamsWithRoles', () => {
 		mock
 			.onGet('https://app.launchdarkly.com/api/v2/teams')
 			.replyOnce(200, {
-				items: [
-					{ key: 'platform', name: 'Platform', roles: { items: [] } },
-				],
+				items: [{ key: 'platform', name: 'Platform', roles: { items: [] } }],
 				totalCount: 1,
 			})
 			.onGet('https://app.launchdarkly.com/api/v2/teams')
 			.replyOnce(200, {
-				items: [
-					{ key: 'platform', name: 'Platform', roles: { items: [] } },
-				],
+				items: [{ key: 'platform', name: 'Platform', roles: { items: [] } }],
 				totalCount: 1,
 			});
 
 		const teams = await fetchTeamsWithRoles(API_KEY);
-		expect(teams).toEqual([
-			{ key: 'platform', name: 'Platform', roles: [] },
-		]);
+		expect(teams).toEqual([{ key: 'platform', name: 'Platform', roles: [] }]);
 	});
 });

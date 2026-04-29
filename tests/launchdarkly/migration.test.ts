@@ -15,7 +15,12 @@ import {
 	mapOperator,
 	shouldSkipFlag,
 } from '../../src/launchdarkly/migration.js';
-import type { LDClause, LDCustomRole, LDFlag, LDTeamWithRoles } from '../../src/launchdarkly/types.js';
+import type {
+	LDClause,
+	LDCustomRole,
+	LDFlag,
+	LDTeamWithRoles,
+} from '../../src/launchdarkly/types.js';
 import type { DatadogEnvironment } from '../../src/types.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1203,10 +1208,7 @@ describe('buildFlagTags', () => {
 	it('returns team tags first then LD source tags', () => {
 		const flag = makeFlag({ key: 'f1', tags: ['ui'] });
 		const editorTeams = new Set(['platform']);
-		expect(buildFlagTags(flag, editorTeams)).toEqual([
-			'team:platform',
-			'ui',
-		]);
+		expect(buildFlagTags(flag, editorTeams)).toEqual(['team:platform', 'ui']);
 	});
 
 	it('returns empty array when neither editor teams nor LD tags exist', () => {

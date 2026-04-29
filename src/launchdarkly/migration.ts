@@ -4,7 +4,13 @@ import type {
 	DatadogEnvironment,
 	DatadogTargetingRule,
 } from '../types.js';
-import type { LDClause, LDCustomRole, LDFlag, LDRollout, LDTeamWithRoles } from './types.js';
+import type {
+	LDClause,
+	LDCustomRole,
+	LDFlag,
+	LDRollout,
+	LDTeamWithRoles,
+} from './types.js';
 
 // ─── Flag Type Mapping ───────────────────────────────────────────────────────
 
@@ -410,8 +416,7 @@ export function findProjectEditorRoleKeys(
 
 			const actions = statement.actions ?? [];
 			const hasEditAction =
-				actions.includes('*') ||
-				actions.some((a) => EDIT_ACTIONS.has(a));
+				actions.includes('*') || actions.some((a) => EDIT_ACTIONS.has(a));
 			if (!hasEditAction) continue;
 
 			if (statement.resources) {

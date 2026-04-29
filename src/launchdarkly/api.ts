@@ -1,5 +1,10 @@
 import axios, { type AxiosInstance, type AxiosResponse } from 'axios';
-import type { LDCustomRole, LDEnvironment, LDFlag, LDTeamWithRoles } from './types.js';
+import type {
+	LDCustomRole,
+	LDEnvironment,
+	LDFlag,
+	LDTeamWithRoles,
+} from './types.js';
 
 const LD_BASE_URL = 'https://app.launchdarkly.com';
 

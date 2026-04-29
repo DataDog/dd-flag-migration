@@ -1522,12 +1522,9 @@ describe('migrate flags when no projectEditorTeamKeys are provided', () => {
 	});
 
 	describe('flag with no tags and no team keys', () => {
-		const result = migrateFlag(
-			flagWithNoTags,
-			envMapping,
-			['production'],
-			{ projectEditorTeamKeys: new Set() },
-		);
+		const result = migrateFlag(flagWithNoTags, envMapping, ['production'], {
+			projectEditorTeamKeys: new Set(),
+		});
 
 		it('gets no team tags', () => {
 			const teamTags = (result.request?.tags ?? []).filter((t: string) =>
