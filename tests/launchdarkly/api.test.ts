@@ -411,6 +411,36 @@ describe('fetchCustomRoles', () => {
 		]);
 	});
 
+	it('paginates through multiple pages', async () => {
+		const firstPage = Array.from({ length: 100 }, (_, i) => ({
+			key: `role-${i}`,
+			name: `Role ${i}`,
+			policy: [],
+		}));
+		const secondPage = Array.from({ length: 25 }, (_, i) => ({
+			key: `role-${100 + i}`,
+			name: `Role ${100 + i}`,
+			policy: [],
+		}));
+
+		mock
+			.onGet('https://app.launchdarkly.com/api/v2/roles')
+			.replyOnce((config) => {
+				expect(config.params).toMatchObject({ limit: 100, offset: 0 });
+				return [200, { items: firstPage, totalCount: 125 }];
+			})
+			.onGet('https://app.launchdarkly.com/api/v2/roles')
+			.replyOnce((config) => {
+				expect(config.params).toMatchObject({ limit: 100, offset: 100 });
+				return [200, { items: secondPage, totalCount: 125 }];
+			});
+
+		const roles = await fetchCustomRoles(API_KEY);
+		expect(roles).toHaveLength(125);
+		expect(roles[0].key).toBe('role-0');
+		expect(roles[124].key).toBe('role-124');
+	});
+
 	it('returns empty array on 403', async () => {
 		mock.onGet('https://app.launchdarkly.com/api/v2/roles').reply(403);
 

@@ -8,6 +8,7 @@ import type {
 	LDClause,
 	LDCustomRole,
 	LDFlag,
+	LDPolicyStatement,
 	LDRollout,
 	LDTeamWithRoles,
 } from './types.js';
@@ -400,9 +401,48 @@ function resourceMatchesProject(resource: string, projectKey: string): boolean {
 }
 
 /**
+ * Whether a policy statement covers any flag-edit action.
+ * `actions` (allow-list) and `notActions` (block-list) are mutually exclusive in LD.
+ */
+function statementCoversEditAction(statement: LDPolicyStatement): boolean {
+	if (statement.actions !== undefined) {
+		return (
+			statement.actions.includes('*') ||
+			statement.actions.some((a) => EDIT_ACTIONS.has(a))
+		);
+	}
+	if (statement.notActions !== undefined) {
+		const excluded = new Set(statement.notActions);
+		// Statement covers all actions except notActions; covers an edit action
+		// if at least one EDIT_ACTION isn't in the exclusion list.
+		return [...EDIT_ACTIONS].some((a) => !excluded.has(a));
+	}
+	return false;
+}
+
+/** Whether a statement's resource scope includes the given project. */
+function statementMatchesProject(
+	statement: LDPolicyStatement,
+	projectKey: string,
+): boolean {
+	if (statement.resources !== undefined) {
+		return statement.resources.some((r) =>
+			resourceMatchesProject(r, projectKey),
+		);
+	}
+	if (statement.notResources !== undefined) {
+		return !statement.notResources.some((r) =>
+			resourceMatchesProject(r, projectKey),
+		);
+	}
+	return false;
+}
+
+/**
  * Find custom role keys that grant edit access to flags in the given project.
- * A role is an "editor" if it has at least one allow statement with an edit
- * action targeting the project's resource path.
+ * A role qualifies when it has an allow statement covering an edit action on
+ * the project AND no deny statement that revokes that access (LD's "deny wins"
+ * evaluation).
  */
 export function findProjectEditorRoleKeys(
 	roles: LDCustomRole[],
@@ -411,33 +451,19 @@ export function findProjectEditorRoleKeys(
 	const editorKeys = new Set<string>();
 
 	for (const role of roles) {
+		let hasAllow = false;
+		let hasDeny = false;
+
 		for (const statement of role.policy) {
-			if (statement.effect !== 'allow') continue;
+			if (!statementCoversEditAction(statement)) continue;
+			if (!statementMatchesProject(statement, projectKey)) continue;
 
-			const actions = statement.actions ?? [];
-			const hasEditAction =
-				actions.includes('*') || actions.some((a) => EDIT_ACTIONS.has(a));
-			if (!hasEditAction) continue;
+			if (statement.effect === 'allow') hasAllow = true;
+			else if (statement.effect === 'deny') hasDeny = true;
+		}
 
-			if (statement.resources) {
-				const matchesProject = statement.resources.some((r) =>
-					resourceMatchesProject(r, projectKey),
-				);
-				if (matchesProject) {
-					editorKeys.add(role.key);
-					break;
-				}
-			}
-
-			if (statement.notResources) {
-				const isExcluded = statement.notResources.some((r) =>
-					resourceMatchesProject(r, projectKey),
-				);
-				if (!isExcluded) {
-					editorKeys.add(role.key);
-					break;
-				}
-			}
+		if (hasAllow && !hasDeny) {
+			editorKeys.add(role.key);
 		}
 	}
 

@@ -1094,6 +1094,88 @@ describe('findProjectEditorRoleKeys', () => {
 		expect(keys.size).toBe(0);
 	});
 
+	it('skips role when deny statement revokes a broader allow', () => {
+		const roles: LDCustomRole[] = [
+			{
+				key: 'mixed',
+				name: 'Mixed',
+				policy: [
+					{
+						effect: 'allow',
+						actions: ['updateFlag'],
+						resources: ['proj/*:env/*:flag/*'],
+					},
+					{
+						effect: 'deny',
+						actions: ['updateFlag'],
+						resources: ['proj/my-project:env/*:flag/*'],
+					},
+				],
+			},
+		];
+		const keys = findProjectEditorRoleKeys(roles, 'my-project');
+		expect(keys.size).toBe(0);
+	});
+
+	it('still matches projects not covered by a project-specific deny', () => {
+		const roles: LDCustomRole[] = [
+			{
+				key: 'mixed',
+				name: 'Mixed',
+				policy: [
+					{
+						effect: 'allow',
+						actions: ['updateFlag'],
+						resources: ['proj/*:env/*:flag/*'],
+					},
+					{
+						effect: 'deny',
+						actions: ['updateFlag'],
+						resources: ['proj/secret:env/*:flag/*'],
+					},
+				],
+			},
+		];
+		const keys = findProjectEditorRoleKeys(roles, 'my-project');
+		expect(keys).toEqual(new Set(['mixed']));
+	});
+
+	it('matches role using notActions that does not exclude edit actions', () => {
+		const roles: LDCustomRole[] = [
+			{
+				key: 'broad-editor',
+				name: 'Broad Editor',
+				policy: [
+					{
+						effect: 'allow',
+						notActions: ['deleteProject'],
+						resources: ['proj/my-project:env/*:flag/*'],
+					},
+				],
+			},
+		];
+		const keys = findProjectEditorRoleKeys(roles, 'my-project');
+		expect(keys).toEqual(new Set(['broad-editor']));
+	});
+
+	it('does not match role when notActions excludes every edit action', () => {
+		const roles: LDCustomRole[] = [
+			{
+				key: 'restricted',
+				name: 'Restricted',
+				policy: [
+					{
+						effect: 'allow',
+						notActions: ['updateFlag', 'updateFlagVariations', 'createFlag'],
+						resources: ['proj/my-project:env/*:flag/*'],
+					},
+				],
+			},
+		];
+		const keys = findProjectEditorRoleKeys(roles, 'my-project');
+		expect(keys.size).toBe(0);
+	});
+
 	it('matches multiple roles', () => {
 		const roles: LDCustomRole[] = [
 			{

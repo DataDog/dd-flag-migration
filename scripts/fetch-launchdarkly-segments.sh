@@ -189,7 +189,11 @@ for project_key in $project_keys; do
         env_keys=$(python3 -c "
 import json, sys
 data = json.load(sys.stdin)
-for e in data.get('environments', []):
+envs = data.get('environments') or []
+# expand=environments returns {items: [...]}; older shapes may return a list.
+if isinstance(envs, dict):
+    envs = envs.get('items', [])
+for e in envs:
     print(e['key'])
 " < "$RESPONSE_BODY_FILE")
     else

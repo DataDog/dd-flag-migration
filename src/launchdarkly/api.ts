@@ -309,11 +309,30 @@ export async function fetchCustomRoles(
 	apiKey: string,
 ): Promise<LDCustomRole[]> {
 	try {
-		const response = await ldClient.get<{ items: LDCustomRole[] }>(
-			`${LD_BASE_URL}/api/v2/roles`,
-			{ headers: ldHeaders(apiKey) },
-		);
-		return response.data.items ?? [];
+		const roles: LDCustomRole[] = [];
+		let offset = 0;
+		const limit = 100;
+
+		while (true) {
+			const response = await ldClient.get<{
+				items: LDCustomRole[];
+				totalCount?: number;
+			}>(`${LD_BASE_URL}/api/v2/roles`, {
+				headers: ldHeaders(apiKey),
+				params: { limit, offset },
+			});
+
+			const items = response.data.items ?? [];
+			roles.push(...items);
+			offset += items.length;
+
+			const total = response.data.totalCount;
+			if (items.length < limit || (total !== undefined && offset >= total)) {
+				break;
+			}
+		}
+
+		return roles;
 	} catch (err) {
 		if (axios.isAxiosError(err) && err.response?.status === 403) {
 			return [];
