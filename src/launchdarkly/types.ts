@@ -80,30 +80,6 @@ export interface LDEnvironmentConfig {
 	_environmentName: string;
 }
 
-export interface LDMemberSummary {
-	_id: string;
-	firstName?: string;
-	lastName?: string;
-	role: string;
-	email: string;
-}
-
-export interface LDMaintainerTeam {
-	key: string;
-	name: string;
-}
-
-export interface LDTeamSummary {
-	key: string;
-	name: string;
-}
-
-export interface LDMember {
-	_id: string;
-	email: string;
-	teams?: { items: LDTeamSummary[] };
-}
-
 export interface LDFlag {
 	name: string;
 	kind: 'boolean' | 'multivariate';
@@ -117,10 +93,28 @@ export interface LDFlag {
 	deprecated: boolean;
 	temporary: boolean;
 	creationDate?: number;
-	maintainerId?: string;
-	_maintainer?: LDMemberSummary;
-	maintainerTeamKey?: string;
-	_maintainerTeam?: LDMaintainerTeam;
+}
+
+// ─── LaunchDarkly RBAC Types ────────────────────────────────────────────────
+
+export interface LDPolicyStatement {
+	effect: 'allow' | 'deny';
+	actions?: string[];
+	notActions?: string[];
+	resources?: string[];
+	notResources?: string[];
+}
+
+export interface LDCustomRole {
+	key: string;
+	name: string;
+	policy: LDPolicyStatement[];
+}
+
+export interface LDTeamWithRoles {
+	key: string;
+	name: string;
+	roles: Array<{ key: string }>;
 }
 
 // ─── LaunchDarkly Migration File ────────────────────────────────────────────
