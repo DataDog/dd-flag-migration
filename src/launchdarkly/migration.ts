@@ -386,11 +386,16 @@ export function getEnvsToEnable(
 
 // ─── RBAC Team Discovery ─────────────────────────────────────────────────────
 
-const EDIT_ACTIONS = new Set([
-	'updateFlagVariations',
-	'createFlag',
-	'updateFlag',
-]);
+// Any update* action, plus the non-update flag write actions, maps to DD write access.
+function isEditAction(action: string): boolean {
+	return (
+		action === '*' ||
+		action.startsWith('update') ||
+		action === 'createFlag' ||
+		action === 'deleteFlag' ||
+		action === 'copyFlagConfigTo'
+	);
+}
 
 /** Check if a resource pattern matches the given project key. */
 function resourceMatchesProject(resource: string, projectKey: string): boolean {
@@ -406,16 +411,28 @@ function resourceMatchesProject(resource: string, projectKey: string): boolean {
  */
 function statementCoversEditAction(statement: LDPolicyStatement): boolean {
 	if (statement.actions !== undefined) {
-		return (
-			statement.actions.includes('*') ||
-			statement.actions.some((a) => EDIT_ACTIONS.has(a))
-		);
+		return statement.actions.some(isEditAction);
 	}
 	if (statement.notActions !== undefined) {
+		// notActions '*' excludes everything — no edit action is covered.
+		if (statement.notActions.includes('*')) return false;
 		const excluded = new Set(statement.notActions);
-		// Statement covers all actions except notActions; covers an edit action
-		// if at least one EDIT_ACTION isn't in the exclusion list.
-		return [...EDIT_ACTIONS].some((a) => !excluded.has(a));
+		// Covers an edit action if at least one isn't in the exclusion list.
+		// Use representative actions since isEditAction matches patterns, not a finite set.
+		const REPRESENTATIVE_EDIT_ACTIONS = [
+			'createFlag',
+			'deleteFlag',
+			'copyFlagConfigTo',
+			'updateOn',
+			'updateRules',
+			'updateTargets',
+			'updateFallthrough',
+			'updateFlagVariations',
+			'updateMaintainer',
+			'updateTags',
+			'updateScheduledChanges',
+		];
+		return REPRESENTATIVE_EDIT_ACTIONS.some((a) => !excluded.has(a));
 	}
 	return false;
 }
@@ -442,7 +459,10 @@ function statementMatchesProject(
  * Find custom role keys that grant edit access to flags in the given project.
  * A role qualifies when it has an allow statement covering an edit action on
  * the project AND no deny statement that revokes that access (LD's "deny wins"
- * evaluation).
+ * evaluation). Note: deny matching is conservative — any deny on an edit action
+ * for the project excludes the role, even if the deny only covers a subset of
+ * the allowed actions. This avoids false-positive editor grants at the cost of
+ * occasionally missing roles with narrow denies combined with broader allows.
  */
 export function findProjectEditorRoleKeys(
 	roles: LDCustomRole[],

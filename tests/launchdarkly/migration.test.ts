@@ -1166,7 +1166,20 @@ describe('findProjectEditorRoleKeys', () => {
 				policy: [
 					{
 						effect: 'allow',
-						notActions: ['updateFlag', 'updateFlagVariations', 'createFlag'],
+						notActions: [
+							'createFlag',
+							'deleteFlag',
+							'copyFlagConfigFrom',
+							'copyFlagConfigTo',
+							'updateOn',
+							'updateRules',
+							'updateTargets',
+							'updateFallthrough',
+							'updateFlagVariations',
+							'updateMaintainer',
+							'updateTags',
+							'updateScheduledChanges',
+						],
 						resources: ['proj/my-project:env/*:flag/*'],
 					},
 				],
@@ -1214,6 +1227,24 @@ describe('findProjectEditorRoleKeys', () => {
 		];
 		const keys = findProjectEditorRoleKeys(roles, 'my-project');
 		expect(keys).toEqual(new Set(['editor-a', 'editor-b']));
+	});
+
+	it('does not grant edit access for copyFlagConfigFrom-only role', () => {
+		const roles: LDCustomRole[] = [
+			{
+				key: 'copy-source',
+				name: 'Copy Source',
+				policy: [
+					{
+						effect: 'allow',
+						actions: ['copyFlagConfigFrom'],
+						resources: ['proj/my-project:env/*:flag/*'],
+					},
+				],
+			},
+		];
+		const keys = findProjectEditorRoleKeys(roles, 'my-project');
+		expect(keys.size).toBe(0);
 	});
 });
 
