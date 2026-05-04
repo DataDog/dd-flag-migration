@@ -30,7 +30,7 @@
 		"ora": "^9.3.0"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^2.4.12",
+		"@biomejs/biome": "^2.4.14",
 		"@lavamoat/allow-scripts": "^3.4.3",
 		"@lavamoat/preinstall-always-fail": "^2.1.0",
 		"@types/jest": "^30.0.0",
