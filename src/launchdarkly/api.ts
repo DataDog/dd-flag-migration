@@ -327,7 +327,7 @@ export async function fetchCustomRoles(
 			offset += items.length;
 
 			const total = response.data.totalCount;
-			if (items.length < limit || (total !== undefined && offset >= total)) {
+			if (items.length < limit || total === undefined || offset >= total) {
 				break;
 			}
 		}
@@ -342,6 +342,9 @@ export async function fetchCustomRoles(
 }
 
 // ─── Teams with Roles ────────────────────────────────────────────────────────
+
+// expand=roles was removed in LD API version 20240415; this older version still supports it.
+const LD_LEGACY_TEAMS_API_VERSION = '20220603';
 
 interface LDTeamsResponse {
 	items: Array<{
@@ -407,7 +410,7 @@ export async function fetchTeamsWithRoles(
 			teams.length > 0 &&
 			teams.every((t) => t.roles.length === 0)
 		) {
-			return fetchTeamsWithRoles(apiKey, '20220603');
+			return fetchTeamsWithRoles(apiKey, LD_LEGACY_TEAMS_API_VERSION);
 		}
 
 		return teams;
