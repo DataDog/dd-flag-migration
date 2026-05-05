@@ -104,6 +104,15 @@ export interface LDMember {
 	teams?: { items: LDTeamSummary[] };
 }
 
+export interface LDCurrentMember {
+	_id: string;
+	email: string;
+	// Known built-in values: 'reader' | 'writer' | 'admin' | 'owner' | 'noAccess'.
+	// Custom-role users may return an arbitrary string; type as string so
+	// static analysis doesn't pretend the API can't return anything else.
+	role: string;
+}
+
 export interface LDFlag {
 	name: string;
 	kind: 'boolean' | 'multivariate';
@@ -121,6 +130,28 @@ export interface LDFlag {
 	_maintainer?: LDMemberSummary;
 	maintainerTeamKey?: string;
 	_maintainerTeam?: LDMaintainerTeam;
+}
+
+// ─── LaunchDarkly RBAC Types ────────────────────────────────────────────────
+
+export interface LDPolicyStatement {
+	effect: 'allow' | 'deny';
+	actions?: string[];
+	notActions?: string[];
+	resources?: string[];
+	notResources?: string[];
+}
+
+export interface LDCustomRole {
+	key: string;
+	name: string;
+	policy: LDPolicyStatement[];
+}
+
+export interface LDTeamWithRoles {
+	key: string;
+	name: string;
+	roles: Array<{ key: string }>;
 }
 
 // ─── LaunchDarkly Migration File ────────────────────────────────────────────

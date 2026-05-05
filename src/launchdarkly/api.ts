@@ -1,19 +1,16 @@
 import axios, { type AxiosInstance, type AxiosResponse } from 'axios';
-import type { LDEnvironment, LDFlag, LDMember } from './types.js';
+import type {
+	LDCurrentMember,
+	LDCustomRole,
+	LDEnvironment,
+	LDFlag,
+	LDTeamWithRoles,
+} from './types.js';
 
 const LD_BASE_URL = 'https://app.launchdarkly.com';
 
 function ldHeaders(apiKey: string) {
 	return { Authorization: apiKey };
-}
-
-// ─── Errors ──────────────────────────────────────────────────────────────────
-
-export class ForbiddenError extends Error {
-	constructor(message = 'Forbidden') {
-		super(message);
-		this.name = 'ForbiddenError';
-	}
 }
 
 // ─── Rate Limiting ──────────────────────────────────────────────────────────
@@ -306,64 +303,159 @@ export async function validateLDApiKey(apiKey: string): Promise<boolean> {
 // ─── Members ─────────────────────────────────────────────────────────────────
 
 /**
- * Fetch a single LaunchDarkly member by ID.
- * Returns null for 404 (member not found / deleted).
- * Throws ForbiddenError on 403 (Members API requires Enterprise plan).
+ * Fetch the currently authenticated LaunchDarkly member.
+ * Used to check access level before migration.
  */
-export async function fetchMember(
+export async function fetchCurrentMember(
 	apiKey: string,
-	memberId: string,
-): Promise<LDMember | null> {
+): Promise<LDCurrentMember> {
+	const response = await ldClient.get<LDCurrentMember>(
+		`${LD_BASE_URL}/api/v2/member/me`,
+		{ headers: ldHeaders(apiKey) },
+	);
+	return response.data;
+}
+
+// ─── Custom Roles ────────────────────────────────────────────────────────────
+
+/**
+ * Fetch all custom roles from the LaunchDarkly API.
+ * Returns empty array on 403 (Enterprise-only feature).
+ * Loop terminates when items.length < limit OR offset >= totalCount; the
+ * dual condition keeps termination safe when either signal is missing.
+ */
+export async function fetchCustomRoles(
+	apiKey: string,
+): Promise<LDCustomRole[]> {
 	try {
-		const response = await ldClient.get<LDMember>(
-			`${LD_BASE_URL}/api/v2/members/${memberId}`,
-			{ headers: ldHeaders(apiKey) },
-		);
-		return response.data;
-	} catch (err) {
-		if (axios.isAxiosError(err) && err.response?.status === 404) {
-			return null;
+		const roles: LDCustomRole[] = [];
+		let offset = 0;
+		const limit = 100;
+
+		while (true) {
+			const response = await ldClient.get<{
+				items: LDCustomRole[];
+				totalCount?: number;
+			}>(`${LD_BASE_URL}/api/v2/roles`, {
+				headers: ldHeaders(apiKey),
+				params: { limit, offset },
+			});
+
+			const items = response.data.items ?? [];
+			roles.push(...items);
+			offset += items.length;
+
+			const total = response.data.totalCount;
+			if (items.length < limit || total === undefined || offset >= total) {
+				break;
+			}
 		}
+
+		return roles;
+	} catch (err) {
 		if (axios.isAxiosError(err) && err.response?.status === 403) {
-			throw new ForbiddenError(
-				'Members API is not available on this LaunchDarkly plan (403)',
-			);
+			return [];
 		}
 		throw err;
 	}
 }
 
-/**
- * Build a cache mapping member IDs to their team keys for the selected flags.
- * Deduplicates member IDs before fetching. On 403 (non-Enterprise plan),
- * returns an empty cache — callers should fall back to maintainerTeamKey only.
- * @returns [cache, wasForbidden] — wasForbidden is true when the Members API returned 403
- */
-export async function buildMemberTeamCache(
+// ─── Teams with Roles ────────────────────────────────────────────────────────
+
+interface LDTeamsResponse {
+	items: Array<{
+		key: string;
+		name: string;
+		roles?: { items: Array<{ key: string }> };
+	}>;
+	totalCount?: number;
+}
+
+function parseTeams(data: LDTeamsResponse): LDTeamWithRoles[] {
+	return (data.items ?? []).map((t) => ({
+		key: t.key,
+		name: t.name,
+		roles: t.roles?.items ?? [],
+	}));
+}
+
+async function fetchTeamRoles(
 	apiKey: string,
-	flags: LDFlag[],
-): Promise<[Map<string, string[]>, boolean]> {
-	const memberIds = new Set<string>();
-	for (const flag of flags) {
-		if (flag.maintainerId && !flag.maintainerTeamKey) {
-			memberIds.add(flag.maintainerId);
+	teamKey: string,
+): Promise<Array<{ key: string }>> {
+	const roles: Array<{ key: string }> = [];
+	let offset = 0;
+	const limit = 100;
+
+	while (true) {
+		const response = await ldClient.get<{
+			items: Array<{ key: string }>;
+			totalCount?: number;
+		}>(`${LD_BASE_URL}/api/v2/teams/${teamKey}/roles`, {
+			headers: ldHeaders(apiKey),
+			params: { limit, offset },
+		});
+
+		const items = response.data.items ?? [];
+		roles.push(...items.map((r) => ({ key: r.key })));
+		offset += items.length;
+		const total = response.data.totalCount;
+		if (items.length < limit || total === undefined || offset >= total) {
+			break;
 		}
 	}
 
-	const cache = new Map<string, string[]>();
+	return roles;
+}
 
-	for (const memberId of memberIds) {
-		try {
-			const member = await fetchMember(apiKey, memberId);
-			const teamKeys = member?.teams?.items?.map((t) => t.key) ?? [];
-			cache.set(memberId, teamKeys);
-		} catch (err) {
-			if (err instanceof ForbiddenError) {
-				return [new Map(), true];
+/**
+ * Fetch all teams with their assigned custom roles from the LaunchDarkly API.
+ * Attempts expand=roles on the bulk teams call as a best-effort optimization.
+ * If expand=roles is silently ignored (current LD API), falls back to fetching
+ * roles per team via GET /api/v2/teams/{teamKey}/roles.
+ * Returns empty array on 403 (Enterprise-only feature).
+ */
+export async function fetchTeamsWithRoles(
+	apiKey: string,
+): Promise<LDTeamWithRoles[]> {
+	try {
+		const teams: LDTeamWithRoles[] = [];
+		let offset = 0;
+		const limit = 100;
+
+		while (true) {
+			const response = await ldClient.get<LDTeamsResponse>(
+				`${LD_BASE_URL}/api/v2/teams`,
+				{
+					headers: ldHeaders(apiKey),
+					params: { expand: 'roles', limit, offset },
+				},
+			);
+
+			teams.push(...parseTeams(response.data));
+			const itemCount = (response.data.items ?? []).length;
+			offset += itemCount;
+			const total = response.data.totalCount;
+			if (itemCount < limit || total === undefined || offset >= total) {
+				break;
 			}
-			throw err;
 		}
-	}
 
-	return [cache, false];
+		// expand=roles is silently ignored in current LD API versions; fall back
+		// to per-team role fetches when no roles came back on any team.
+		if (teams.length > 0 && teams.every((t) => t.roles.length === 0)) {
+			await Promise.all(
+				teams.map(async (team) => {
+					team.roles = await fetchTeamRoles(apiKey, team.key);
+				}),
+			);
+		}
+
+		return teams;
+	} catch (err) {
+		if (axios.isAxiosError(err) && err.response?.status === 403) {
+			return [];
+		}
+		throw err;
+	}
 }

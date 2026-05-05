@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import axios from 'axios';
 import AxiosMockAdapter from 'axios-mock-adapter';
 import {
+	applyRestrictionPolicy,
 	createFeatureFlag,
 	enableFeatureFlagEnvironment,
 	fetchDatadogEnvironments,
@@ -9,6 +10,7 @@ import {
 	fetchDatadogFlags,
 	fetchDatadogTeams,
 	fetchFlagTags,
+	fetchRestrictionPolicy,
 	syncAllocationsForEnvironment,
 	updateFlagTags,
 	validateDatadogKeys,
@@ -945,5 +947,297 @@ describe('fetchDatadogTeams', () => {
 
 		const teams = await fetchDatadogTeams(API_KEY, APP_KEY, SITE);
 		expect(teams).toEqual([]);
+	});
+});
+
+// ─── fetchRestrictionPolicy ───────────────────────────────────────────────────
+
+describe('fetchRestrictionPolicy', () => {
+	let mock: AxiosMockAdapter;
+
+	beforeEach(() => {
+		mock = new AxiosMockAdapter(axios as never);
+	});
+
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('returns existing bindings', async () => {
+		mock
+			.onGet(`${BASE}/api/v2/restriction_policy/feature-flag:flag-uuid-123`)
+			.reply(200, {
+				data: {
+					id: 'feature-flag:flag-uuid-123',
+					type: 'restriction_policy',
+					attributes: {
+						bindings: [
+							{ principals: ['team:creator-team'], relation: 'editor' },
+						],
+					},
+				},
+			});
+
+		const result = await fetchRestrictionPolicy(
+			API_KEY,
+			APP_KEY,
+			'flag-uuid-123',
+			SITE,
+		);
+		expect(result).toEqual([
+			{ principals: ['team:creator-team'], relation: 'editor' },
+		]);
+	});
+
+	it('returns empty array when no policy exists (404)', async () => {
+		mock
+			.onGet(`${BASE}/api/v2/restriction_policy/feature-flag:flag-uuid-123`)
+			.reply(404, { errors: ['not found'] });
+
+		const result = await fetchRestrictionPolicy(
+			API_KEY,
+			APP_KEY,
+			'flag-uuid-123',
+			SITE,
+		);
+		expect(result).toEqual([]);
+	});
+
+	it('throws on non-404 errors', async () => {
+		mock
+			.onGet(`${BASE}/api/v2/restriction_policy/feature-flag:flag-uuid-123`)
+			.reply(403, { errors: ['forbidden'] });
+
+		await expect(
+			fetchRestrictionPolicy(API_KEY, APP_KEY, 'flag-uuid-123', SITE),
+		).rejects.toThrow();
+	});
+});
+
+// ─── applyRestrictionPolicy ───────────────────────────────────────────────────
+
+describe('applyRestrictionPolicy', () => {
+	let mock: AxiosMockAdapter;
+
+	beforeEach(() => {
+		mock = new AxiosMockAdapter(axios as never);
+	});
+
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('merges new team handles into an existing editor binding and PUTs', async () => {
+		mock
+			.onGet(`${BASE}/api/v2/restriction_policy/feature-flag:flag-abc`)
+			.reply(200, {
+				data: {
+					id: 'feature-flag:flag-abc',
+					type: 'restriction_policy',
+					attributes: {
+						bindings: [
+							{ principals: ['team:creator-team'], relation: 'editor' },
+						],
+					},
+				},
+			});
+
+		let postBody: unknown;
+		mock
+			.onPost(`${BASE}/api/v2/restriction_policy/feature-flag:flag-abc`)
+			.reply((config) => {
+				postBody = JSON.parse(config.data as string);
+				return [200, {}];
+			});
+
+		await applyRestrictionPolicy(
+			API_KEY,
+			APP_KEY,
+			'flag-abc',
+			['platform', 'sre'],
+			SITE,
+		);
+
+		expect(postBody).toEqual({
+			data: {
+				id: 'feature-flag:flag-abc',
+				type: 'restriction_policy',
+				attributes: {
+					bindings: [
+						{
+							principals: expect.arrayContaining([
+								'team:creator-team',
+								'team:platform',
+								'team:sre',
+							]),
+							relation: 'editor',
+						},
+					],
+				},
+			},
+		});
+
+		// Also verify no extra principals were injected
+		const editorBinding = (
+			postBody as {
+				data: {
+					attributes: {
+						bindings: Array<{ principals: string[]; relation: string }>;
+					};
+				};
+			}
+		).data.attributes.bindings.find((b) => b.relation === 'editor');
+		expect(editorBinding?.principals).toHaveLength(3);
+	});
+
+	it('creates a new editor binding when no policy exists (404)', async () => {
+		mock
+			.onGet(`${BASE}/api/v2/restriction_policy/feature-flag:flag-new`)
+			.reply(404);
+
+		let postBody: unknown;
+		mock
+			.onPost(`${BASE}/api/v2/restriction_policy/feature-flag:flag-new`)
+			.reply((config) => {
+				postBody = JSON.parse(config.data as string);
+				return [200, {}];
+			});
+
+		await applyRestrictionPolicy(
+			API_KEY,
+			APP_KEY,
+			'flag-new',
+			['platform'],
+			SITE,
+		);
+
+		expect(postBody).toEqual({
+			data: {
+				id: 'feature-flag:flag-new',
+				type: 'restriction_policy',
+				attributes: {
+					bindings: [
+						{
+							principals: ['team:platform'],
+							relation: 'editor',
+						},
+					],
+				},
+			},
+		});
+	});
+
+	it('does nothing when editorTeamHandles is empty', async () => {
+		let getCalled = false;
+		let postCalled = false;
+		mock
+			.onGet(`${BASE}/api/v2/restriction_policy/feature-flag:flag-empty`)
+			.reply(() => {
+				getCalled = true;
+				return [200, { data: { attributes: { bindings: [] } } }];
+			});
+		mock
+			.onPost(`${BASE}/api/v2/restriction_policy/feature-flag:flag-empty`)
+			.reply(() => {
+				postCalled = true;
+				return [200, {}];
+			});
+
+		await applyRestrictionPolicy(API_KEY, APP_KEY, 'flag-empty', [], SITE);
+
+		expect(getCalled).toBe(false);
+		expect(postCalled).toBe(false);
+	});
+
+	it('deduplicates principals that already exist in the binding', async () => {
+		mock
+			.onGet(`${BASE}/api/v2/restriction_policy/feature-flag:flag-dup`)
+			.reply(200, {
+				data: {
+					id: 'feature-flag:flag-dup',
+					type: 'restriction_policy',
+					attributes: {
+						bindings: [{ principals: ['team:platform'], relation: 'editor' }],
+					},
+				},
+			});
+
+		let postBody: unknown;
+		mock
+			.onPost(`${BASE}/api/v2/restriction_policy/feature-flag:flag-dup`)
+			.reply((config) => {
+				postBody = JSON.parse(config.data as string);
+				return [200, {}];
+			});
+
+		await applyRestrictionPolicy(
+			API_KEY,
+			APP_KEY,
+			'flag-dup',
+			['platform'],
+			SITE,
+		);
+
+		const binding = (
+			postBody as {
+				data: { attributes: { bindings: Array<{ principals: string[] }> } };
+			}
+		).data.attributes.bindings[0];
+		const platformCount = binding.principals.filter(
+			(p: string) => p === 'team:platform',
+		).length;
+		expect(platformCount).toBe(1);
+	});
+
+	it('preserves non-editor bindings (e.g. viewer) alongside the updated editor binding', async () => {
+		mock
+			.onGet(`${BASE}/api/v2/restriction_policy/feature-flag:flag-multi`)
+			.reply(200, {
+				data: {
+					id: 'feature-flag:flag-multi',
+					type: 'restriction_policy',
+					attributes: {
+						bindings: [
+							{ principals: ['team:creator-team'], relation: 'editor' },
+							{ principals: ['orgs/my-org'], relation: 'viewer' },
+						],
+					},
+				},
+			});
+
+		let postBody: unknown;
+		mock
+			.onPost(`${BASE}/api/v2/restriction_policy/feature-flag:flag-multi`)
+			.reply((config) => {
+				postBody = JSON.parse(config.data as string);
+				return [200, {}];
+			});
+
+		await applyRestrictionPolicy(
+			API_KEY,
+			APP_KEY,
+			'flag-multi',
+			['platform'],
+			SITE,
+		);
+
+		const bindings = (
+			postBody as {
+				data: {
+					attributes: {
+						bindings: Array<{ principals: string[]; relation: string }>;
+					};
+				};
+			}
+		).data.attributes.bindings;
+		const viewerBinding = bindings.find((b) => b.relation === 'viewer');
+		const editorBinding = bindings.find((b) => b.relation === 'editor');
+		expect(viewerBinding).toEqual({
+			principals: ['orgs/my-org'],
+			relation: 'viewer',
+		});
+		expect(editorBinding?.principals).toEqual(
+			expect.arrayContaining(['team:creator-team', 'team:platform']),
+		);
 	});
 });
