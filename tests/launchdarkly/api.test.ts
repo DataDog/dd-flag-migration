@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import AxiosMockAdapter from 'axios-mock-adapter';
 import {
 	createLDClient,
-	fetchCurrentMember,
 	fetchCustomRoles,
 	fetchFlag,
 	fetchFlags,
@@ -364,79 +363,6 @@ describe('rate limiting', () => {
 			client.get('https://app.launchdarkly.com/api/v2/projects'),
 		).rejects.toThrow();
 	}, 30000);
-});
-
-// ─── fetchCurrentMember ───────────────────────────────────────────────────────
-
-describe('fetchCurrentMember', () => {
-	let mock: AxiosMockAdapter;
-
-	beforeEach(() => {
-		mock = new AxiosMockAdapter(ldClient as never);
-	});
-
-	afterEach(() => {
-		mock.restore();
-	});
-
-	it('returns the current member with role', async () => {
-		mock.onGet('https://app.launchdarkly.com/api/v2/member/me').reply(200, {
-			_id: 'member-123',
-			email: 'dev@example.com',
-			role: 'writer',
-		});
-
-		const result = await fetchCurrentMember(API_KEY);
-		expect(result._id).toBe('member-123');
-		expect(result.email).toBe('dev@example.com');
-		expect(result.role).toBe('writer');
-	});
-
-	it('returns member with a custom-role string (non-enum value)', async () => {
-		mock.onGet('https://app.launchdarkly.com/api/v2/member/me').reply(200, {
-			_id: 'member-custom',
-			email: 'custom@example.com',
-			role: 'my-custom-role-key',
-		});
-
-		const result = await fetchCurrentMember(API_KEY);
-		expect(result.role).toBe('my-custom-role-key');
-	});
-
-	it('returns member with reader role', async () => {
-		mock.onGet('https://app.launchdarkly.com/api/v2/member/me').reply(200, {
-			_id: 'member-456',
-			email: 'readonly@example.com',
-			role: 'reader',
-		});
-
-		const result = await fetchCurrentMember(API_KEY);
-		expect(result.role).toBe('reader');
-	});
-
-	it('sends the Authorization header', async () => {
-		let capturedHeaders: Record<string, string> | undefined;
-		mock
-			.onGet('https://app.launchdarkly.com/api/v2/member/me')
-			.reply((config) => {
-				capturedHeaders = config.headers as Record<string, string>;
-				return [
-					200,
-					{ _id: 'member-789', email: 'admin@example.com', role: 'admin' },
-				];
-			});
-
-		await fetchCurrentMember(API_KEY);
-		expect(capturedHeaders?.Authorization).toBe(API_KEY);
-	});
-
-	it('propagates non-auth errors', async () => {
-		mock.onGet('https://app.launchdarkly.com/api/v2/member/me').reply(500, {
-			message: 'Internal server error',
-		});
-
-		await expect(fetchCurrentMember(API_KEY)).rejects.toThrow();
-	});
 });
 
 // ─── fetchCustomRoles ─────────────────────────────────────────────────────────

@@ -1,6 +1,5 @@
 import axios, { type AxiosInstance, type AxiosResponse } from 'axios';
 import type {
-	LDCurrentMember,
 	LDCustomRole,
 	LDEnvironment,
 	LDFlag,
@@ -300,22 +299,6 @@ export async function validateLDApiKey(apiKey: string): Promise<boolean> {
 	}
 }
 
-// ─── Members ─────────────────────────────────────────────────────────────────
-
-/**
- * Fetch the currently authenticated LaunchDarkly member.
- * Used to check access level before migration.
- */
-export async function fetchCurrentMember(
-	apiKey: string,
-): Promise<LDCurrentMember> {
-	const response = await ldClient.get<LDCurrentMember>(
-		`${LD_BASE_URL}/api/v2/member/me`,
-		{ headers: ldHeaders(apiKey) },
-	);
-	return response.data;
-}
-
 // ─── Custom Roles ────────────────────────────────────────────────────────────
 
 /**
@@ -442,13 +425,27 @@ export async function fetchTeamsWithRoles(
 		}
 
 		// expand=roles is silently ignored in current LD API versions; fall back
-		// to per-team role fetches when no roles came back on any team.
+		// to per-team role fetches when no roles came back on any team. Use
+		// allSettled so a single failed team doesn't wipe out RBAC discovery
+		// for every other team.
 		if (teams.length > 0 && teams.every((t) => t.roles.length === 0)) {
-			await Promise.all(
-				teams.map(async (team) => {
-					team.roles = await fetchTeamRoles(apiKey, team.key);
-				}),
+			const results = await Promise.allSettled(
+				teams.map((team) => fetchTeamRoles(apiKey, team.key)),
 			);
+			results.forEach((result, idx) => {
+				const team = teams[idx];
+				if (result.status === 'fulfilled') {
+					team.roles = result.value;
+				} else {
+					console.warn(
+						`Failed to fetch roles for team "${team.key}"; continuing with empty role set: ${
+							result.reason instanceof Error
+								? result.reason.message
+								: String(result.reason)
+						}`,
+					);
+				}
+			});
 		}
 
 		return teams;

@@ -393,7 +393,8 @@ function isEditAction(action: string): boolean {
 		action.startsWith('update') ||
 		action === 'createFlag' ||
 		action === 'deleteFlag' ||
-		action === 'copyFlagConfigTo'
+		action === 'copyFlagConfigTo' ||
+		action === 'maintainFlag'
 	);
 }
 
@@ -422,6 +423,7 @@ function statementCoversEditAction(statement: LDPolicyStatement): boolean {
 			'createFlag',
 			'deleteFlag',
 			'copyFlagConfigTo',
+			'maintainFlag',
 			'updateOn',
 			'updateRules',
 			'updateTargets',

@@ -368,14 +368,15 @@ export async function fetchRestrictionPolicy(
 
 /**
  * Grant editor access to additional teams on a feature flag's restriction policy.
- * Fetches the existing policy, merges new team handles into the editor binding,
- * and PUTs the result. No-op if editorTeamHandles is empty.
+ * Fetches the existing policy, merges new team IDs into the editor binding,
+ * and POSTs the result. No-op if editorTeamIds is empty.
  *
- * Teams are specified as bare handles (e.g. "platform") and converted to
- * "team:platform" principals (the `type:id` format the restriction policy API expects).
+ * Teams are specified as Datadog team UUIDs and converted to "team:<id>"
+ * principals (the `type:id` format the restriction policy API expects).
  *
- * PUT on a resource with no existing policy creates it (upsert semantics), so the
- * 404→[] path in fetchRestrictionPolicy + a subsequent PUT is safe and intentional.
+ * POST on a resource with no existing policy creates it (upsert semantics), so
+ * the 404→[] path in fetchRestrictionPolicy + a subsequent POST is safe and
+ * intentional.
  */
 export async function applyRestrictionPolicy(
 	apiKey: string,
