@@ -73,7 +73,7 @@ async function promptForDatadogKeys(): Promise<{
 				'  Your Application key needs these scopes: feature_flag_config_read,\n' +
 					'  feature_flag_config_write, feature_flag_environment_config_read,\n' +
 					'  feature_flag_environment_config_write\n' +
-					'  Optional: teams_read (enables automatic team tagging)',
+					'  teams_read (required for team-based access controls)',
 			),
 		);
 		const apiKey = await password({
