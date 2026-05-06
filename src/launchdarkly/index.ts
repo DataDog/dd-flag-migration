@@ -97,6 +97,32 @@ function formatAxiosError(err: unknown): string {
 	return `${method} ${url} — ${status ?? 'no status'}: ${bodyPreview}`;
 }
 
+function buildDryRunRestrictionPolicy(
+	flagId: string,
+	editorTeamIds: string[],
+	note: string,
+): { method: string; path: string; body: unknown } {
+	return {
+		method: 'POST',
+		path: `/api/v2/restriction_policy/feature-flag:${flagId}`,
+		body: {
+			_note: note,
+			data: {
+				id: `feature-flag:${flagId}`,
+				type: 'restriction_policy',
+				attributes: {
+					bindings: [
+						{
+							principals: editorTeamIds.map((id) => `team:${id}`),
+							relation: 'editor',
+						},
+					],
+				},
+			},
+		},
+	};
+}
+
 async function applyRestrictionPolicyForFlag(
 	ddApiKey: string,
 	ddAppKey: string,
@@ -810,26 +836,13 @@ async function executeMigration(
 				// Apply restriction policy even when there's nothing else to sync.
 				if (editorTeamIds.length > 0) {
 					if (dryRun) {
-						dryRunRequests.push({
-							method: 'POST',
-							path: `/api/v2/restriction_policy/feature-flag:${existingFlagId}`,
-							body: {
-								_note:
-									'Approximate — live path GETs and merges existing principals already on the flag (e.g. the creator-team principal set by dd-source on initial creation). Editor team IDs derive from project-level RBAC (custom roles + teams).',
-								data: {
-									id: `feature-flag:${existingFlagId}`,
-									type: 'restriction_policy',
-									attributes: {
-										bindings: [
-											{
-												principals: editorTeamIds.map((id) => `team:${id}`),
-												relation: 'editor',
-											},
-										],
-									},
-								},
-							},
-						});
+						dryRunRequests.push(
+							buildDryRunRestrictionPolicy(
+								existingFlagId,
+								editorTeamIds,
+								'Approximate — live path GETs and merges existing principals already on the flag (e.g. the creator-team principal set by dd-source on initial creation). Editor team IDs derive from project-level RBAC (custom roles + teams).',
+							),
+						);
 					} else {
 						await applyRestrictionPolicyForFlag(
 							ddApiKey,
@@ -896,26 +909,13 @@ async function executeMigration(
 					});
 				}
 				if (editorTeamIds.length > 0) {
-					dryRunRequests.push({
-						method: 'POST',
-						path: `/api/v2/restriction_policy/feature-flag:${existingFlagId}`,
-						body: {
-							_note:
-								'Approximate — live path GETs and merges existing principals already on the flag (e.g. the creator-team principal set by dd-source on initial creation). Editor team IDs derive from project-level RBAC (custom roles + teams).',
-							data: {
-								id: `feature-flag:${existingFlagId}`,
-								type: 'restriction_policy',
-								attributes: {
-									bindings: [
-										{
-											principals: editorTeamIds.map((id) => `team:${id}`),
-											relation: 'editor',
-										},
-									],
-								},
-							},
-						},
-					});
+					dryRunRequests.push(
+						buildDryRunRestrictionPolicy(
+							existingFlagId,
+							editorTeamIds,
+							'Approximate — live path GETs and merges existing principals already on the flag (e.g. the creator-team principal set by dd-source on initial creation). Editor team IDs derive from project-level RBAC (custom roles + teams).',
+						),
+					);
 				}
 				const syncFilterLabel = `${syncFilterCount} targeting filter(s)`;
 				const syncRuleLabel =
@@ -1058,26 +1058,13 @@ async function executeMigration(
 				}
 
 				if (editorTeamIds.length > 0) {
-					dryRunRequests.push({
-						method: 'POST',
-						path: `/api/v2/restriction_policy/feature-flag:<uuid-for-${ddKey}>`,
-						body: {
-							_note:
-								'Approximate — live path GETs and merges with the creator-team principal that dd-source sets on initial creation. Editor team IDs derive from project-level RBAC (custom roles + teams).',
-							data: {
-								id: `feature-flag:<uuid-for-${ddKey}>`,
-								type: 'restriction_policy',
-								attributes: {
-									bindings: [
-										{
-											principals: editorTeamIds.map((id) => `team:${id}`),
-											relation: 'editor',
-										},
-									],
-								},
-							},
-						},
-					});
+					dryRunRequests.push(
+						buildDryRunRestrictionPolicy(
+							`<uuid-for-${ddKey}>`,
+							editorTeamIds,
+							'Approximate — live path GETs and merges with the creator-team principal that dd-source sets on initial creation. Editor team IDs derive from project-level RBAC (custom roles + teams).',
+						),
+					);
 				}
 
 				const enableLabel =

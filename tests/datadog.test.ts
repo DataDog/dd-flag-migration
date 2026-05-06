@@ -1027,7 +1027,7 @@ describe('applyRestrictionPolicy', () => {
 		mock.restore();
 	});
 
-	it('merges new team handles into an existing editor binding and PUTs', async () => {
+	it('merges new team IDs into an existing editor binding and POSTs', async () => {
 		mock
 			.onGet(`${BASE}/api/v2/restriction_policy/feature-flag:flag-abc`)
 			.reply(200, {
