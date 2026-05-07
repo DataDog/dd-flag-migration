@@ -13,10 +13,12 @@ import {
 	applyRestrictionPolicy,
 	createFeatureFlag,
 	type DatadogTeam,
+	type DDRestrictionBinding,
 	enableFeatureFlagEnvironment,
 	fetchDatadogEnvironments,
 	fetchDatadogFlags,
 	fetchDatadogTeams,
+	fetchRestrictionPolicy,
 	syncAllocationsForEnvironment,
 	updateFlagTags,
 } from '../datadog.js';
@@ -100,24 +102,34 @@ function formatAxiosError(err: unknown): string {
 function buildDryRunRestrictionPolicy(
 	flagId: string,
 	editorTeamIds: string[],
-	note: string,
-): { method: string; path: string; body: unknown } {
+	existingBindings: DDRestrictionBinding[],
+	approximationNote?: string,
+): {
+	method: string;
+	path: string;
+	params: Record<string, unknown>;
+	body: unknown;
+} {
+	const newPrincipals = editorTeamIds.map((id) => `team:${id}`);
+	const editorBinding = existingBindings.find((b) => b.relation === 'editor');
+	const mergedPrincipals = [
+		...new Set([...(editorBinding?.principals ?? []), ...newPrincipals]),
+	];
+	const otherBindings = existingBindings.filter((b) => b.relation !== 'editor');
+	const updatedBindings: DDRestrictionBinding[] = [
+		...otherBindings,
+		{ principals: mergedPrincipals, relation: 'editor' },
+	];
 	return {
 		method: 'POST',
 		path: `/api/v2/restriction_policy/feature-flag:${flagId}`,
+		params: { allow_self_lockout: true },
 		body: {
-			_note: note,
+			...(approximationNote ? { _note: approximationNote } : {}),
 			data: {
 				id: `feature-flag:${flagId}`,
 				type: 'restriction_policy',
-				attributes: {
-					bindings: [
-						{
-							principals: editorTeamIds.map((id) => `team:${id}`),
-							relation: 'editor',
-						},
-					],
-				},
+				attributes: { bindings: updatedBindings },
 			},
 		},
 	};
@@ -851,11 +863,17 @@ async function executeMigration(
 				// Apply restriction policy even when there's nothing else to sync.
 				if (editorTeamIds.length > 0) {
 					if (dryRun) {
+						const existingBindings = await fetchRestrictionPolicy(
+							ddApiKey,
+							ddAppKey,
+							existingFlagId,
+							ddSite,
+						);
 						dryRunRequests.push(
 							buildDryRunRestrictionPolicy(
 								existingFlagId,
 								editorTeamIds,
-								'Approximate — live path GETs and merges existing principals already on the flag (e.g. the creator-team principal set by dd-source on initial creation). Editor team IDs derive from project-level RBAC (custom roles + teams).',
+								existingBindings,
 							),
 						);
 					} else {
@@ -924,11 +942,17 @@ async function executeMigration(
 					});
 				}
 				if (editorTeamIds.length > 0) {
+					const existingBindings = await fetchRestrictionPolicy(
+						ddApiKey,
+						ddAppKey,
+						existingFlagId,
+						ddSite,
+					);
 					dryRunRequests.push(
 						buildDryRunRestrictionPolicy(
 							existingFlagId,
 							editorTeamIds,
-							'Approximate — live path GETs and merges existing principals already on the flag (e.g. the creator-team principal set by dd-source on initial creation). Editor team IDs derive from project-level RBAC (custom roles + teams).',
+							existingBindings,
 						),
 					);
 				}
@@ -1077,7 +1101,8 @@ async function executeMigration(
 						buildDryRunRestrictionPolicy(
 							`<uuid-for-${ddKey}>`,
 							editorTeamIds,
-							'Approximate — live path GETs and merges with the creator-team principal that dd-source sets on initial creation. Editor team IDs derive from project-level RBAC (custom roles + teams).',
+							[],
+							'Approximate — dd-source adds a creator-team principal on flag creation before this POST runs; that principal is not reflected here.',
 						),
 					);
 				}

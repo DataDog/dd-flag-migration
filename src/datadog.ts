@@ -391,6 +391,8 @@ export async function applyRestrictionPolicy(
 	const resourceId = `feature-flag:${flagId}`;
 	const newPrincipals = editorTeamIds.map((id) => `team:${id}`);
 
+	// GET → merge → POST is not atomic; a concurrent writer between the GET and POST would
+	// cause last-writer-wins. Safe for the expected single in-flight sequential migration.
 	const existingBindings = await fetchRestrictionPolicy(
 		apiKey,
 		appKey,
