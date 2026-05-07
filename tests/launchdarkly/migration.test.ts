@@ -5,17 +5,21 @@ import {
 } from '../../src/launchdarkly/api.js';
 import {
 	buildAllocations,
-	buildFlagTags,
 	buildTargetingRules,
-	buildTeamTags,
 	buildVariants,
-	collectLDTeamKeys,
+	findProjectEditorRoleKeys,
+	findTeamsWithEditAccess,
 	getEnvsToEnable,
 	mapFlagType,
 	mapOperator,
 	shouldSkipFlag,
 } from '../../src/launchdarkly/migration.js';
-import type { LDClause, LDFlag } from '../../src/launchdarkly/types.js';
+import type {
+	LDClause,
+	LDCustomRole,
+	LDFlag,
+	LDTeamWithRoles,
+} from '../../src/launchdarkly/types.js';
 import type { DatadogEnvironment } from '../../src/types.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -919,208 +923,276 @@ describe('getEnvsToEnable', () => {
 	});
 });
 
-// ─── buildTeamTags ───────────────────────────────────────────────────────────
+// ─── findProjectEditorRoleKeys ────────────────────────────────────────────────
 
-describe('buildTeamTags', () => {
-	const emptyCache = new Map<string, string[]>();
-
-	it('returns team tag from maintainerTeamKey', () => {
-		const flag = makeFlag({ key: 'f1', maintainerTeamKey: 'platform' });
-		expect(buildTeamTags(flag, emptyCache)).toEqual(['team:platform']);
+describe('findProjectEditorRoleKeys', () => {
+	it('matches role with exact project resource pattern', () => {
+		const roles: LDCustomRole[] = [
+			{
+				key: 'editor',
+				name: 'Editor',
+				policy: [
+					{
+						effect: 'allow',
+						actions: ['updateFlagVariations'],
+						resources: ['proj/my-project:env/*:flag/*'],
+					},
+				],
+			},
+		];
+		expect(findProjectEditorRoleKeys(roles, 'my-project')).toEqual(
+			new Set(['editor']),
+		);
 	});
 
-	it('returns team tags from cache for individual maintainer', () => {
-		const cache = new Map([['m1', ['eng', 'frontend']]]);
-		const flag = makeFlag({ key: 'f1', maintainerId: 'm1' });
-		expect(buildTeamTags(flag, cache)).toEqual(['team:eng', 'team:frontend']);
+	it('matches role with wildcard project resource', () => {
+		const roles: LDCustomRole[] = [
+			{
+				key: 'super-editor',
+				name: 'Super Editor',
+				policy: [
+					{
+						effect: 'allow',
+						actions: ['createFlag'],
+						resources: ['proj/*:env/*:flag/*'],
+					},
+				],
+			},
+		];
+		expect(findProjectEditorRoleKeys(roles, 'any-project')).toEqual(
+			new Set(['super-editor']),
+		);
 	});
 
-	it('returns empty array when no maintainer is set', () => {
-		const flag = makeFlag({ key: 'f1' });
-		expect(buildTeamTags(flag, emptyCache)).toEqual([]);
+	it('matches role with proj/key:* shorthand', () => {
+		const roles: LDCustomRole[] = [
+			{
+				key: 'proj-admin',
+				name: 'Project Admin',
+				policy: [
+					{
+						effect: 'allow',
+						actions: ['updateFlag'],
+						resources: ['proj/my-project:*'],
+					},
+				],
+			},
+		];
+		expect(findProjectEditorRoleKeys(roles, 'my-project')).toEqual(
+			new Set(['proj-admin']),
+		);
 	});
 
-	it('returns empty array when maintainerId is not in cache', () => {
-		const flag = makeFlag({ key: 'f1', maintainerId: 'm1' });
-		expect(buildTeamTags(flag, emptyCache)).toEqual([]);
+	it('matches role with wildcard actions', () => {
+		const roles: LDCustomRole[] = [
+			{
+				key: 'admin',
+				name: 'Admin',
+				policy: [
+					{
+						effect: 'allow',
+						actions: ['*'],
+						resources: ['proj/my-project:env/*:flag/*'],
+					},
+				],
+			},
+		];
+		expect(findProjectEditorRoleKeys(roles, 'my-project')).toEqual(
+			new Set(['admin']),
+		);
 	});
 
-	// Defensive: buildMemberTeamCache skips members for flags with maintainerTeamKey,
-	// so this cache state won't occur at runtime — but buildTeamTags still deduplicates
-	// correctly if both paths produce the same team key.
-	it('deduplicates when both maintainerTeamKey and cache have same team', () => {
-		const cache = new Map([['m1', ['platform', 'frontend']]]);
-		const flag = makeFlag({
-			key: 'f1',
-			maintainerTeamKey: 'platform',
-			maintainerId: 'm1',
-		});
-		expect(buildTeamTags(flag, cache)).toEqual([
-			'team:platform',
-			'team:frontend',
-		]);
+	it('does not match role with non-edit actions only', () => {
+		const roles: LDCustomRole[] = [
+			{
+				key: 'viewer',
+				name: 'Viewer',
+				policy: [
+					{
+						effect: 'allow',
+						actions: ['viewProject'],
+						resources: ['proj/my-project:env/*:flag/*'],
+					},
+				],
+			},
+		];
+		expect(findProjectEditorRoleKeys(roles, 'my-project').size).toBe(0);
 	});
 
-	it('combines maintainerTeamKey and cache when both present with different teams', () => {
-		const cache = new Map([['m1', ['eng']]]);
-		const flag = makeFlag({
-			key: 'f1',
-			maintainerTeamKey: 'platform',
-			maintainerId: 'm1',
-		});
-		expect(buildTeamTags(flag, cache)).toEqual(['team:platform', 'team:eng']);
+	it('does not match role targeting a different project', () => {
+		const roles: LDCustomRole[] = [
+			{
+				key: 'editor',
+				name: 'Editor',
+				policy: [
+					{
+						effect: 'allow',
+						actions: ['updateFlagVariations'],
+						resources: ['proj/other-project:env/*:flag/*'],
+					},
+				],
+			},
+		];
+		expect(findProjectEditorRoleKeys(roles, 'my-project').size).toBe(0);
+	});
+
+	it('does not match deny-only statements', () => {
+		const roles: LDCustomRole[] = [
+			{
+				key: 'denied',
+				name: 'Denied',
+				policy: [
+					{
+						effect: 'deny',
+						actions: ['updateFlagVariations'],
+						resources: ['proj/my-project:env/*:flag/*'],
+					},
+				],
+			},
+		];
+		expect(findProjectEditorRoleKeys(roles, 'my-project').size).toBe(0);
+	});
+
+	it('matches role using notResources that excludes other projects', () => {
+		const roles: LDCustomRole[] = [
+			{
+				key: 'broad-editor',
+				name: 'Broad Editor',
+				policy: [
+					{
+						effect: 'allow',
+						actions: ['updateFlagVariations'],
+						notResources: ['proj/secret-project:env/*:flag/*'],
+					},
+				],
+			},
+		];
+		expect(findProjectEditorRoleKeys(roles, 'my-project')).toEqual(
+			new Set(['broad-editor']),
+		);
+	});
+
+	it('does NOT match notResources that excludes the requested project', () => {
+		const roles: LDCustomRole[] = [
+			{
+				key: 'excluded-editor',
+				name: 'Excluded',
+				policy: [
+					{
+						effect: 'allow',
+						actions: ['updateFlagVariations'],
+						notResources: ['proj/my-project:env/*:flag/*'],
+					},
+				],
+			},
+		];
+		expect(findProjectEditorRoleKeys(roles, 'my-project').size).toBe(0);
+	});
+
+	it('matches notActions that does not exclude all edit actions', () => {
+		const roles: LDCustomRole[] = [
+			{
+				key: 'most-actions',
+				name: 'Most Actions',
+				policy: [
+					{
+						effect: 'allow',
+						notActions: ['deleteFlag'], // updateFlag still allowed
+						resources: ['proj/my-project:env/*:flag/*'],
+					},
+				],
+			},
+		];
+		expect(findProjectEditorRoleKeys(roles, 'my-project')).toEqual(
+			new Set(['most-actions']),
+		);
+	});
+
+	it('does not match notActions of "*" (excludes everything)', () => {
+		const roles: LDCustomRole[] = [
+			{
+				key: 'no-actions',
+				name: 'No Actions',
+				policy: [
+					{
+						effect: 'allow',
+						notActions: ['*'],
+						resources: ['proj/my-project:env/*:flag/*'],
+					},
+				],
+			},
+		];
+		expect(findProjectEditorRoleKeys(roles, 'my-project').size).toBe(0);
+	});
+
+	it('deny on the same project overrides allow (deny wins)', () => {
+		const roles: LDCustomRole[] = [
+			{
+				key: 'mixed',
+				name: 'Mixed',
+				policy: [
+					{
+						effect: 'allow',
+						actions: ['updateFlagVariations'],
+						resources: ['proj/my-project:env/*:flag/*'],
+					},
+					{
+						effect: 'deny',
+						actions: ['updateFlagVariations'],
+						resources: ['proj/my-project:env/*:flag/*'],
+					},
+				],
+			},
+		];
+		expect(findProjectEditorRoleKeys(roles, 'my-project').size).toBe(0);
 	});
 });
 
-// ─── buildFlagTags ───────────────────────────────────────────────────────────
+// ─── findTeamsWithEditAccess ──────────────────────────────────────────────────
 
-describe('buildFlagTags', () => {
-	const emptyCache = new Map<string, string[]>();
-
-	it('returns only team tags when flag has no LD source tags', () => {
-		const flag = makeFlag({ key: 'f1', maintainerTeamKey: 'platform' });
-		expect(buildFlagTags(flag, emptyCache)).toEqual(['team:platform']);
-	});
-
-	it('returns only LD source tags when flag has no maintainer', () => {
-		const flag = makeFlag({ key: 'f1', tags: ['ui', 'experiment'] });
-		expect(buildFlagTags(flag, emptyCache)).toEqual(['ui', 'experiment']);
-	});
-
-	it('returns team tags first then LD source tags', () => {
-		const flag = makeFlag({
-			key: 'f1',
-			maintainerTeamKey: 'platform',
-			tags: ['ui', 'experiment'],
-		});
-		expect(buildFlagTags(flag, emptyCache)).toEqual([
-			'team:platform',
-			'ui',
-			'experiment',
-		]);
-	});
-
-	it('returns empty array when neither maintainer nor LD tags exist', () => {
-		const flag = makeFlag({ key: 'f1' });
-		expect(buildFlagTags(flag, emptyCache)).toEqual([]);
-	});
-
-	it('includes team tags from cache for individual maintainer', () => {
-		const cache = new Map([['m1', ['eng']]]);
-		const flag = makeFlag({
-			key: 'f1',
-			maintainerId: 'm1',
-			tags: ['beta'],
-		});
-		expect(buildFlagTags(flag, cache)).toEqual(['team:eng', 'beta']);
-	});
-
-	it('applies teamKeyMapping to translate LD keys to DD handles', () => {
-		const mapping = new Map([['ld-platform', 'dd-platform-eng']]);
-		const flag = makeFlag({
-			key: 'f1',
-			maintainerTeamKey: 'ld-platform',
-			tags: ['ui'],
-		});
-		expect(buildFlagTags(flag, emptyCache, mapping)).toEqual([
-			'team:dd-platform-eng',
-			'ui',
-		]);
-	});
-
-	it('passes through unmapped team keys unchanged', () => {
-		const mapping = new Map([['other-team', 'mapped-team']]);
-		const flag = makeFlag({
-			key: 'f1',
-			maintainerTeamKey: 'platform',
-			tags: ['ui'],
-		});
-		expect(buildFlagTags(flag, emptyCache, mapping)).toEqual([
-			'team:platform',
-			'ui',
-		]);
-	});
-});
-
-// ─── collectLDTeamKeys ───────────────────────────────────────────────────────
-
-describe('collectLDTeamKeys', () => {
-	const emptyCache = new Map<string, string[]>();
-
-	it('collects team keys from maintainerTeamKey', () => {
-		const flags = [
-			makeFlag({ key: 'f1', maintainerTeamKey: 'platform' }),
-			makeFlag({ key: 'f2', maintainerTeamKey: 'eng' }),
+describe('findTeamsWithEditAccess', () => {
+	it('returns teams whose roles include any editor role key', () => {
+		const teams: LDTeamWithRoles[] = [
+			{ key: 'platform', name: 'Platform', roles: [{ key: 'editor' }] },
+			{ key: 'sre', name: 'SRE', roles: [{ key: 'viewer' }] },
+			{
+				key: 'security',
+				name: 'Security',
+				roles: [{ key: 'viewer' }, { key: 'editor' }],
+			},
 		];
-		const keys = collectLDTeamKeys(flags, emptyCache);
-		expect(keys).toEqual(new Set(['platform', 'eng']));
+		const editorRoleKeys = new Set(['editor']);
+		expect(findTeamsWithEditAccess(teams, editorRoleKeys)).toEqual(
+			new Set(['platform', 'security']),
+		);
 	});
 
-	it('collects team keys from member cache', () => {
-		const cache = new Map([['m1', ['eng', 'frontend']]]);
-		const flags = [makeFlag({ key: 'f1', maintainerId: 'm1' })];
-		const keys = collectLDTeamKeys(flags, cache);
-		expect(keys).toEqual(new Set(['eng', 'frontend']));
-	});
-
-	it('deduplicates keys across flags', () => {
-		const flags = [
-			makeFlag({ key: 'f1', maintainerTeamKey: 'platform' }),
-			makeFlag({ key: 'f2', maintainerTeamKey: 'platform' }),
+	it('returns empty set when no team has any editor role', () => {
+		const teams: LDTeamWithRoles[] = [
+			{ key: 'platform', name: 'Platform', roles: [{ key: 'viewer' }] },
 		];
-		const keys = collectLDTeamKeys(flags, emptyCache);
-		expect(keys).toEqual(new Set(['platform']));
+		expect(findTeamsWithEditAccess(teams, new Set(['editor']))).toEqual(
+			new Set(),
+		);
 	});
 
-	it('returns empty set when no flags have maintainers', () => {
-		const flags = [makeFlag({ key: 'f1' })];
-		const keys = collectLDTeamKeys(flags, emptyCache);
-		expect(keys.size).toBe(0);
+	it('returns empty set for empty teams list', () => {
+		expect(findTeamsWithEditAccess([], new Set(['editor']))).toEqual(new Set());
 	});
 
-	it('combines keys from both maintainerTeamKey and cache', () => {
-		const cache = new Map([['m1', ['frontend']]]);
-		const flags = [
-			makeFlag({ key: 'f1', maintainerTeamKey: 'platform' }),
-			makeFlag({ key: 'f2', maintainerId: 'm1' }),
+	it('returns empty set when editorRoleKeys is empty', () => {
+		const teams: LDTeamWithRoles[] = [
+			{ key: 'platform', name: 'Platform', roles: [{ key: 'editor' }] },
 		];
-		const keys = collectLDTeamKeys(flags, cache);
-		expect(keys).toEqual(new Set(['platform', 'frontend']));
-	});
-});
-
-// ─── buildTeamTags with mapping ──────────────────────────────────────────────
-
-describe('buildTeamTags with teamKeyMapping', () => {
-	const emptyCache = new Map<string, string[]>();
-
-	it('maps LD team key to DD handle', () => {
-		const mapping = new Map([['ld-eng', 'dd-engineering']]);
-		const flag = makeFlag({ key: 'f1', maintainerTeamKey: 'ld-eng' });
-		expect(buildTeamTags(flag, emptyCache, mapping)).toEqual([
-			'team:dd-engineering',
-		]);
+		expect(findTeamsWithEditAccess(teams, new Set())).toEqual(new Set());
 	});
 
-	it('passes through keys not in mapping', () => {
-		const mapping = new Map([['other', 'mapped']]);
-		const flag = makeFlag({ key: 'f1', maintainerTeamKey: 'platform' });
-		expect(buildTeamTags(flag, emptyCache, mapping)).toEqual(['team:platform']);
-	});
-
-	it('maps cache-derived team keys', () => {
-		const cache = new Map([['m1', ['ld-eng']]]);
-		const mapping = new Map([['ld-eng', 'dd-engineering']]);
-		const flag = makeFlag({ key: 'f1', maintainerId: 'm1' });
-		expect(buildTeamTags(flag, cache, mapping)).toEqual([
-			'team:dd-engineering',
-		]);
-	});
-
-	it('works without mapping (undefined)', () => {
-		const flag = makeFlag({ key: 'f1', maintainerTeamKey: 'platform' });
-		expect(buildTeamTags(flag, emptyCache, undefined)).toEqual([
-			'team:platform',
-		]);
+	it('skips teams with no role assignments', () => {
+		const teams: LDTeamWithRoles[] = [
+			{ key: 'platform', name: 'Platform', roles: [] },
+		];
+		expect(findTeamsWithEditAccess(teams, new Set(['editor']))).toEqual(
+			new Set(),
+		);
 	});
 });

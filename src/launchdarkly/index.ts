@@ -10,12 +10,15 @@ import {
 	saveLaunchDarklyApiKey,
 } from '../config.js';
 import {
+	applyRestrictionPolicy,
 	createFeatureFlag,
 	type DatadogTeam,
+	type DDRestrictionBinding,
 	enableFeatureFlagEnvironment,
 	fetchDatadogEnvironments,
 	fetchDatadogFlags,
 	fetchDatadogTeams,
+	fetchRestrictionPolicy,
 	syncAllocationsForEnvironment,
 	updateFlagTags,
 } from '../datadog.js';
@@ -30,21 +33,22 @@ import type {
 	DatadogFlagEntry,
 } from '../types.js';
 import {
-	buildMemberTeamCache,
+	fetchCustomRoles,
 	fetchFlag,
 	fetchFlagRelease,
 	fetchFlags,
 	fetchProjectEnvironments,
 	fetchProjects,
+	fetchTeamsWithRoles,
 	isReleaseInProgress,
 	type LDProject,
 	validateLDApiKey,
 } from './api.js';
 import {
 	buildAllocations,
-	buildFlagTags,
 	buildVariants,
-	collectLDTeamKeys,
+	findProjectEditorRoleKeys,
+	findTeamsWithEditAccess,
 	getEnvsToEnable,
 	mapFlagType,
 	shouldSkipFlag,
@@ -93,6 +97,70 @@ function formatAxiosError(err: unknown): string {
 	const url = err.config?.url ?? '';
 	const bodyPreview = data ? JSON.stringify(data).slice(0, 300) : 'no body';
 	return `${method} ${url} — ${status ?? 'no status'}: ${bodyPreview}`;
+}
+
+function buildDryRunRestrictionPolicy(
+	flagId: string,
+	editorTeamIds: string[],
+	existingBindings: DDRestrictionBinding[],
+	approximationNote?: string,
+): {
+	method: string;
+	path: string;
+	params: Record<string, unknown>;
+	body: unknown;
+} {
+	const newPrincipals = editorTeamIds.map((id) => `team:${id}`);
+	const editorBinding = existingBindings.find((b) => b.relation === 'editor');
+	const mergedPrincipals = [
+		...new Set([...(editorBinding?.principals ?? []), ...newPrincipals]),
+	];
+	const otherBindings = existingBindings.filter((b) => b.relation !== 'editor');
+	const updatedBindings: DDRestrictionBinding[] = [
+		...otherBindings,
+		{ principals: mergedPrincipals, relation: 'editor' },
+	];
+	return {
+		method: 'POST',
+		path: `/api/v2/restriction_policy/feature-flag:${flagId}`,
+		params: { allow_self_lockout: true },
+		body: {
+			...(approximationNote ? { _note: approximationNote } : {}),
+			data: {
+				id: `feature-flag:${flagId}`,
+				type: 'restriction_policy',
+				attributes: { bindings: updatedBindings },
+			},
+		},
+	};
+}
+
+async function applyRestrictionPolicyForFlag(
+	ddApiKey: string,
+	ddAppKey: string,
+	flagId: string,
+	editorTeamIds: string[],
+	ddSite: string,
+	flagKey: string,
+	failures: Array<{ key: string; error: string }>,
+): Promise<void> {
+	try {
+		await applyRestrictionPolicy(
+			ddApiKey,
+			ddAppKey,
+			flagId,
+			editorTeamIds,
+			ddSite,
+		);
+	} catch (err) {
+		const error = formatAxiosError(err);
+		console.log(
+			chalk.yellow(
+				`  ⚠ Could not set restriction policy for ${flagKey}: ${error}`,
+			),
+		);
+		failures.push({ key: flagKey, error });
+	}
 }
 
 /** Prompt the user to select a DD team handle for a mismatched LD team key. */
@@ -541,40 +609,53 @@ async function executeMigration(
 		return 'cancel';
 	}
 
-	// Build member→teams cache for tag generation
-	const cacheSpinner = ora('Resolving team memberships…').start();
-	let memberTeamCache = new Map<string, string[]>();
+	// Discover teams with edit access via RBAC (project-level)
+	let projectEditorTeamKeys = new Set<string>();
+	const roleSpinner = ora('Fetching custom roles and teams…').start();
 	try {
-		const [cache, wasForbidden] = await buildMemberTeamCache(
-			ldApiKey,
-			detailedFlags,
-		);
-		memberTeamCache = cache;
-		if (wasForbidden) {
-			cacheSpinner.warn(
-				'Members API returned 403 — team tags will only be set for flags with a team maintainer (requires Enterprise plan for individual maintainers)',
+		const [customRoles, teamsWithRoles] = await Promise.all([
+			fetchCustomRoles(ldApiKey),
+			fetchTeamsWithRoles(ldApiKey),
+		]);
+
+		if (customRoles.length === 0 && teamsWithRoles.length === 0) {
+			roleSpinner.warn(
+				'Custom Roles API not available — restriction policy editor teams will be skipped (requires Enterprise plan)',
 			);
 		} else {
-			cacheSpinner.succeed(
-				`Resolved team memberships for ${memberTeamCache.size} member(s)`,
+			const editorRoleKeys = findProjectEditorRoleKeys(customRoles, projectKey);
+			projectEditorTeamKeys = findTeamsWithEditAccess(
+				teamsWithRoles,
+				editorRoleKeys,
 			);
+
+			if (projectEditorTeamKeys.size > 0) {
+				roleSpinner.succeed(
+					`Found ${projectEditorTeamKeys.size} team(s) with edit access to project "${projectKey}"`,
+				);
+			} else {
+				roleSpinner.warn(
+					`No teams found with edit access to project "${projectKey}"`,
+				);
+			}
 		}
 	} catch (err) {
-		cacheSpinner.warn(
-			`Could not resolve team memberships: ${formatAxiosError(err)}`,
-		);
+		roleSpinner.warn(`Could not resolve team access: ${formatAxiosError(err)}`);
 	}
 
 	// Detect LD→DD team key mismatches and prompt for interactive mapping
 	let teamKeyMapping: Map<string, string> | undefined;
-	const ldTeamKeys = collectLDTeamKeys(detailedFlags, memberTeamCache);
+	let ddHandleToId = new Map<string, string>();
+	let ddTeamsFetchFailed = false;
+	const ldTeamKeys = [...projectEditorTeamKeys];
 
-	if (ldTeamKeys.size > 0) {
+	if (ldTeamKeys.length > 0) {
 		const teamSpinner = ora('Fetching Datadog teams…').start();
 		try {
 			const ddTeams = await fetchDatadogTeams(ddApiKey, ddAppKey, ddSite);
 			teamSpinner.succeed(`Found ${ddTeams.length} Datadog team(s)`);
 
+			ddHandleToId = new Map(ddTeams.map((t) => [t.handle, t.id]));
 			const ddHandles = new Set(ddTeams.map((t) => t.handle));
 			const mismatched = [...ldTeamKeys].filter((k) => !ddHandles.has(k));
 
@@ -612,10 +693,52 @@ async function executeMigration(
 				}
 			}
 		} catch (err) {
+			ddTeamsFetchFailed = true;
 			teamSpinner.warn(
 				`Could not fetch Datadog teams: ${formatAxiosError(err)}`,
 			);
 		}
+	}
+
+	// Resolve LD editor-team keys to Datadog team UUIDs once. Skip-and-warn for
+	// any team handle we can't resolve to a DD team ID — sending the bare
+	// handle to the restriction-policy API would silently produce a broken
+	// principal and undermine the access controls this feature exists to set.
+	const editorTeamIds: string[] = [];
+	const unresolvedEditorTeams: string[] = [];
+	if (!ddTeamsFetchFailed) {
+		for (const ldKey of projectEditorTeamKeys) {
+			const ddHandle = teamKeyMapping?.get(ldKey) ?? ldKey;
+			const ddId = ddHandleToId.get(ddHandle);
+			if (ddId) {
+				editorTeamIds.push(ddId);
+			} else {
+				unresolvedEditorTeams.push(ddHandle);
+			}
+		}
+	}
+	if (ddTeamsFetchFailed && projectEditorTeamKeys.size > 0) {
+		console.log(
+			chalk.yellow(
+				`  ⚠ Skipping restriction policy because Datadog teams could not be fetched.`,
+			),
+		);
+		console.log(
+			chalk.dim(
+				'    Editor access will not be granted on migrated flags. Verify the Datadog application key has the teams_read scope and rerun.',
+			),
+		);
+	} else if (unresolvedEditorTeams.length > 0) {
+		console.log(
+			chalk.yellow(
+				`  ⚠ Skipping ${unresolvedEditorTeams.length} editor team(s) without a matching Datadog team handle: ${unresolvedEditorTeams.join(', ')}`,
+			),
+		);
+		console.log(
+			chalk.dim(
+				'    These teams will not be granted editor access on migrated flags.',
+			),
+		);
 	}
 
 	if (dryRun) {
@@ -630,6 +753,7 @@ async function executeMigration(
 	let totalEnabled = 0;
 	const failures: Array<{ key: string; error: string }> = [];
 	const enableFailures: Array<{ key: string; env: string; error: string }> = [];
+	const restrictionPolicyFailures: Array<{ key: string; error: string }> = [];
 	const skippedFlags: Array<{ key: string; reason: string }> = [];
 	const syncedFlagKeys: string[] = [];
 	const dryRunRequests: Array<{ method: string; path: string; body: unknown }> =
@@ -733,9 +857,41 @@ async function executeMigration(
 		const allRuleLabel = allRuleCount > 0 ? `, ${allRuleCount} rule(s)` : '';
 
 		if (existingFlagId) {
+			const syncTags = flag.tags;
+
 			if (envsToEnable.length === 0) {
+				// Apply restriction policy even when there's nothing else to sync.
+				if (editorTeamIds.length > 0) {
+					if (dryRun) {
+						const existingBindings = await fetchRestrictionPolicy(
+							ddApiKey,
+							ddAppKey,
+							existingFlagId,
+							ddSite,
+						);
+						dryRunRequests.push(
+							buildDryRunRestrictionPolicy(
+								existingFlagId,
+								editorTeamIds,
+								existingBindings,
+							),
+						);
+					} else {
+						await applyRestrictionPolicyForFlag(
+							ddApiKey,
+							ddAppKey,
+							existingFlagId,
+							editorTeamIds,
+							ddSite,
+							flag.key,
+							restrictionPolicyFailures,
+						);
+					}
+				}
+				const policyLabel =
+					editorTeamIds.length > 0 ? ' (permissions refreshed)' : '';
 				spinner.succeed(
-					`${chalk.cyan(flag.key)} — already in Datadog, nothing to sync`,
+					`${chalk.cyan(flag.key)} — already in Datadog, nothing to sync${policyLabel}`,
 				);
 				skippedFlags.push({
 					key: flag.key,
@@ -749,8 +905,6 @@ async function executeMigration(
 				`${chalk.cyan(flag.key)} exists in Datadog — targeting filters in ${envsToEnable.map((e) => e.name).join(', ')} will be overwritten`,
 			);
 			spinner = ora(`Migrating ${chalk.cyan(flag.key)}…`).start();
-
-			const syncTags = buildFlagTags(flag, memberTeamCache, teamKeyMapping);
 
 			if (dryRun) {
 				let syncFilterCount = 0;
@@ -786,6 +940,21 @@ async function executeMigration(
 							},
 						},
 					});
+				}
+				if (editorTeamIds.length > 0) {
+					const existingBindings = await fetchRestrictionPolicy(
+						ddApiKey,
+						ddAppKey,
+						existingFlagId,
+						ddSite,
+					);
+					dryRunRequests.push(
+						buildDryRunRestrictionPolicy(
+							existingFlagId,
+							editorTeamIds,
+							existingBindings,
+						),
+					);
 				}
 				const syncFilterLabel = `${syncFilterCount} targeting filter(s)`;
 				const syncRuleLabel =
@@ -833,6 +1002,19 @@ async function executeMigration(
 							existingFlagId,
 							syncTags,
 							ddSite,
+						);
+					}
+
+					// Apply restriction policy for LD editor teams
+					if (editorTeamIds.length > 0) {
+						await applyRestrictionPolicyForFlag(
+							ddApiKey,
+							ddAppKey,
+							existingFlagId,
+							editorTeamIds,
+							ddSite,
+							flag.key,
+							restrictionPolicyFailures,
 						);
 					}
 
@@ -884,7 +1066,7 @@ async function executeMigration(
 				? `${conflictResolution.prefix}-${flag.key}`
 				: flag.key;
 
-			const tags = buildFlagTags(flag, memberTeamCache, teamKeyMapping);
+			const tags = flag.tags;
 
 			const request: DatadogCreateFlagRequest = {
 				key: ddKey,
@@ -909,9 +1091,20 @@ async function executeMigration(
 				for (const ddEnv of envsToEnable) {
 					dryRunRequests.push({
 						method: 'POST',
-						path: `/api/v2/feature-flags/${ddKey}/environments/${ddEnv.id}/enable`,
+						path: `/api/v2/feature-flags/<uuid-for-${ddKey}>/environments/${ddEnv.id}/enable`,
 						body: {},
 					});
+				}
+
+				if (editorTeamIds.length > 0) {
+					dryRunRequests.push(
+						buildDryRunRestrictionPolicy(
+							`<uuid-for-${ddKey}>`,
+							editorTeamIds,
+							[],
+							'Approximate — dd-source adds a creator-team principal on flag creation before this POST runs; that principal is not reflected here.',
+						),
+					);
 				}
 
 				const enableLabel =
@@ -931,6 +1124,19 @@ async function executeMigration(
 						request,
 						ddSite,
 					);
+
+					// Apply restriction policy for LD editor teams
+					if (editorTeamIds.length > 0) {
+						await applyRestrictionPolicyForFlag(
+							ddApiKey,
+							ddAppKey,
+							createdFlag.id,
+							editorTeamIds,
+							ddSite,
+							ddKey,
+							restrictionPolicyFailures,
+						);
+					}
 
 					let enabledCount = 0;
 					for (const ddEnv of envsToEnable) {
@@ -999,6 +1205,17 @@ async function executeMigration(
 		);
 		for (const f of enableFailures) {
 			console.log(`  ${chalk.yellow('⚠')} ${f.key} / ${f.env}: ${f.error}`);
+		}
+	}
+	if (restrictionPolicyFailures.length > 0) {
+		console.log();
+		console.log(
+			chalk.yellow(
+				`  ${restrictionPolicyFailures.length} flag(s) migrated but did not have editor team restrictions applied. Reapply manually or rerun the migration.`,
+			),
+		);
+		for (const f of restrictionPolicyFailures) {
+			console.log(`  ${chalk.yellow('⚠')} ${f.key}: ${f.error}`);
 		}
 	}
 

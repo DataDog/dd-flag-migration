@@ -334,3 +334,99 @@ export async function syncAllocationsForEnvironment(
 		},
 	);
 }
+
+export type DDRestrictionBinding = {
+	principals: string[];
+	relation: string;
+};
+
+/**
+ * Fetch the current restriction policy bindings for a feature flag.
+ * Returns empty array when no policy exists (404).
+ */
+export async function fetchRestrictionPolicy(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	site = 'datadoghq.com',
+): Promise<DDRestrictionBinding[]> {
+	const baseUrl = `https://api.${site}`;
+	try {
+		const response = await axios.get<{
+			data: { attributes: { bindings: DDRestrictionBinding[] } };
+		}>(`${baseUrl}/api/v2/restriction_policy/feature-flag:${flagId}`, {
+			headers: ddHeaders(apiKey, appKey),
+		});
+		return response.data.data.attributes.bindings ?? [];
+	} catch (err) {
+		if (axios.isAxiosError(err) && err.response?.status === 404) {
+			return [];
+		}
+		throw err;
+	}
+}
+
+/**
+ * Grant editor access to additional teams on a feature flag's restriction policy.
+ * Fetches the existing policy, merges new team IDs into the editor binding,
+ * and POSTs the result. No-op if editorTeamIds is empty.
+ *
+ * Teams are specified as Datadog team UUIDs and converted to "team:<id>"
+ * principals (the `type:id` format the restriction policy API expects).
+ *
+ * POST on a resource with no existing policy creates it (upsert semantics), so
+ * the 404→[] path in fetchRestrictionPolicy + a subsequent POST is safe and
+ * intentional.
+ */
+export async function applyRestrictionPolicy(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	editorTeamIds: string[],
+	site = 'datadoghq.com',
+): Promise<void> {
+	if (editorTeamIds.length === 0) return;
+
+	const baseUrl = `https://api.${site}`;
+	const resourceId = `feature-flag:${flagId}`;
+	const newPrincipals = editorTeamIds.map((id) => `team:${id}`);
+
+	// GET → merge → POST is not atomic; a concurrent writer between the GET and POST would
+	// cause last-writer-wins. Safe for the expected single in-flight sequential migration.
+	const existingBindings = await fetchRestrictionPolicy(
+		apiKey,
+		appKey,
+		flagId,
+		site,
+	);
+
+	// Find the existing editor binding (if any) and merge principals
+	const editorBinding = existingBindings.find((b) => b.relation === 'editor');
+	const existingPrincipals = editorBinding?.principals ?? [];
+	const mergedPrincipals = [
+		...new Set([...existingPrincipals, ...newPrincipals]),
+	];
+
+	// Keep all non-editor bindings intact; replace (or add) the editor binding
+	const otherBindings = existingBindings.filter((b) => b.relation !== 'editor');
+	const updatedBindings: DDRestrictionBinding[] = [
+		...otherBindings,
+		{ principals: mergedPrincipals, relation: 'editor' },
+	];
+
+	const body = {
+		data: {
+			id: resourceId,
+			type: 'restriction_policy',
+			attributes: { bindings: updatedBindings },
+		},
+	};
+
+	await axios.post(`${baseUrl}/api/v2/restriction_policy/${resourceId}`, body, {
+		headers: {
+			...ddHeaders(apiKey, appKey),
+			'Content-Type': 'application/json',
+		},
+		params: { allow_self_lockout: true },
+	});
+}

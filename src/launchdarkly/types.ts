@@ -123,6 +123,28 @@ export interface LDFlag {
 	_maintainerTeam?: LDMaintainerTeam;
 }
 
+// ─── LaunchDarkly RBAC Types ────────────────────────────────────────────────
+
+export interface LDPolicyStatement {
+	effect: 'allow' | 'deny';
+	actions?: string[];
+	notActions?: string[];
+	resources?: string[];
+	notResources?: string[];
+}
+
+export interface LDCustomRole {
+	key: string;
+	name: string;
+	policy: LDPolicyStatement[];
+}
+
+export interface LDTeamWithRoles {
+	key: string;
+	name: string;
+	roles: Array<{ key: string }>;
+}
+
 // ─── LaunchDarkly Migration File ────────────────────────────────────────────
 
 export interface LDMigrationFile {
