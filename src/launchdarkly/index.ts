@@ -634,6 +634,7 @@ async function executeMigration(
 	// Detect LD→DD team key mismatches and prompt for interactive mapping
 	let teamKeyMapping: Map<string, string> | undefined;
 	let ddHandleToId = new Map<string, string>();
+	let ddTeamsFetchFailed = false;
 	const ldTeamKeys = [...projectEditorTeamKeys];
 
 	if (ldTeamKeys.length > 0) {
@@ -680,6 +681,7 @@ async function executeMigration(
 				}
 			}
 		} catch (err) {
+			ddTeamsFetchFailed = true;
 			teamSpinner.warn(
 				`Could not fetch Datadog teams: ${formatAxiosError(err)}`,
 			);
@@ -692,16 +694,29 @@ async function executeMigration(
 	// principal and undermine the access controls this feature exists to set.
 	const editorTeamIds: string[] = [];
 	const unresolvedEditorTeams: string[] = [];
-	for (const ldKey of projectEditorTeamKeys) {
-		const ddHandle = teamKeyMapping?.get(ldKey) ?? ldKey;
-		const ddId = ddHandleToId.get(ddHandle);
-		if (ddId) {
-			editorTeamIds.push(ddId);
-		} else {
-			unresolvedEditorTeams.push(ddHandle);
+	if (!ddTeamsFetchFailed) {
+		for (const ldKey of projectEditorTeamKeys) {
+			const ddHandle = teamKeyMapping?.get(ldKey) ?? ldKey;
+			const ddId = ddHandleToId.get(ddHandle);
+			if (ddId) {
+				editorTeamIds.push(ddId);
+			} else {
+				unresolvedEditorTeams.push(ddHandle);
+			}
 		}
 	}
-	if (unresolvedEditorTeams.length > 0) {
+	if (ddTeamsFetchFailed && projectEditorTeamKeys.size > 0) {
+		console.log(
+			chalk.yellow(
+				`  ⚠ Skipping restriction policy because Datadog teams could not be fetched.`,
+			),
+		);
+		console.log(
+			chalk.dim(
+				'    Editor access will not be granted on migrated flags. Verify the Datadog application key has the teams_read scope and rerun.',
+			),
+		);
+	} else if (unresolvedEditorTeams.length > 0) {
 		console.log(
 			chalk.yellow(
 				`  ⚠ Skipping ${unresolvedEditorTeams.length} editor team(s) without a matching Datadog team handle: ${unresolvedEditorTeams.join(', ')}`,
