@@ -128,7 +128,17 @@ export interface EvaluationExportRow {
 	ddResult: string;
 	match: boolean;
 	ddStatus: 'assigned' | 'not-assigned' | 'not-in-dd';
-	migrationStatus: 'created' | 'partial' | 'failed' | 'skipped' | 'unknown';
+	migrationStatus:
+		| 'created'
+		| 'partial'
+		| 'failed'
+		| 'skipped'
+		| 'unknown'
+		| 'not-in-migration-file';
 	ddEnabled: boolean | null;
 	error?: string;
+	// new fields for advanced evaluation
+	inMigrationFile: boolean;
+	providerStatus: 'found' | 'not-found' | 'error' | 'not-evaluated';
+	ddMigrationMetadata?: MigrationMetadata;
 }

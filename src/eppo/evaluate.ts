@@ -343,3 +343,119 @@ export async function evaluateEppoFlag(
 		};
 	}
 }
+
+export async function evaluateEppoFlagAdvanced(
+	flagKey: string,
+	vtype: string,
+	subjectId: string,
+	attributes: SubjectAttributes,
+	eppoClient: EppoClient,
+	ddFlags: Record<string, DDFlagValue>,
+	ddFlagKeys: Set<string>,
+): Promise<
+	EvaluationResult & { providerStatus: 'found' | 'not-found' | 'error' }
+> {
+	const ddFlag = ddFlags[flagKey];
+	const ddStatus: DDStatus =
+		ddFlag !== undefined
+			? 'assigned'
+			: ddFlagKeys.has(flagKey)
+				? 'not-assigned'
+				: 'not-in-dd';
+
+	try {
+		const eppoAttrs = Object.fromEntries(
+			Object.entries(attributes).filter(([, v]) => v !== null),
+		) as Record<string, string | number | boolean>;
+
+		const upperVtype = (vtype ?? 'STRING').toUpperCase();
+		let flagEvaluationCode: string | undefined;
+		let providerResult: string;
+		let ddResult: string;
+
+		switch (upperVtype) {
+			case 'BOOLEAN': {
+				const det = eppoClient.getBooleanAssignmentDetails(
+					flagKey,
+					subjectId,
+					eppoAttrs,
+					false,
+				);
+				flagEvaluationCode = det.evaluationDetails.flagEvaluationCode;
+				providerResult = String(det.variation ?? false);
+				ddResult = ddFlag !== undefined ? String(ddFlag.variationValue) : '';
+				break;
+			}
+			case 'INTEGER': {
+				const det = eppoClient.getIntegerAssignmentDetails(
+					flagKey,
+					subjectId,
+					eppoAttrs,
+					0,
+				);
+				flagEvaluationCode = det.evaluationDetails.flagEvaluationCode;
+				providerResult = String(det.variation ?? 0);
+				ddResult = ddFlag !== undefined ? String(ddFlag.variationValue) : '';
+				break;
+			}
+			case 'NUMERIC': {
+				const det = eppoClient.getNumericAssignmentDetails(
+					flagKey,
+					subjectId,
+					eppoAttrs,
+					0,
+				);
+				flagEvaluationCode = det.evaluationDetails.flagEvaluationCode;
+				providerResult = String(det.variation ?? 0);
+				ddResult = ddFlag !== undefined ? String(ddFlag.variationValue) : '';
+				break;
+			}
+			case 'JSON': {
+				const det = eppoClient.getJSONAssignmentDetails(
+					flagKey,
+					subjectId,
+					eppoAttrs,
+					{},
+				);
+				flagEvaluationCode = det.evaluationDetails.flagEvaluationCode;
+				providerResult = JSON.stringify(sortKeys(det.variation ?? {}));
+				ddResult =
+					ddFlag !== undefined
+						? JSON.stringify(sortKeys(ddFlag.variationValue))
+						: '';
+				break;
+			}
+			default: {
+				const det = eppoClient.getStringAssignmentDetails(
+					flagKey,
+					subjectId,
+					eppoAttrs,
+					'control',
+				);
+				flagEvaluationCode = det.evaluationDetails.flagEvaluationCode;
+				providerResult = String(det.variation ?? 'control');
+				ddResult = ddFlag !== undefined ? String(ddFlag.variationValue) : '';
+				break;
+			}
+		}
+
+		if (flagEvaluationCode === 'FLAG_UNRECOGNIZED_OR_DISABLED') {
+			return {
+				providerResult: '',
+				ddResult: '',
+				ddStatus,
+				providerStatus: 'not-found',
+			};
+		}
+
+		return { providerResult, ddResult, ddStatus, providerStatus: 'found' };
+	} catch (err) {
+		return {
+			providerResult: 'ERROR',
+			ddResult: 'ERROR',
+			ddStatus: 'not-assigned',
+			error: err instanceof Error ? err.message : String(err),
+			providerStatus: 'error',
+		};
+	}
+}
