@@ -53,6 +53,7 @@ import {
 	mapFlagType,
 	shouldSkipFlag,
 } from './migration.js';
+import { migrateSegments } from './segments.js';
 import type { LDEnvironment, LDFlag, LDMigrationFile } from './types.js';
 
 // ─── UI Helpers ──────────────────────────────────────────────────────────────
@@ -743,6 +744,32 @@ async function executeMigration(
 		);
 	}
 
+	// ── Phase 1: Migrate segments as saved filters ─────────────────────────────
+	let savedFilterLookup = new Map<string, string>();
+	if (!dryRun) {
+		try {
+			const segmentResult = await migrateSegments({
+				ldApiKey,
+				projectKey,
+				selectedFlags: detailedFlags,
+				envMapping,
+				ddApiKey,
+				ddAppKey,
+				ddSite,
+			});
+			savedFilterLookup = segmentResult.savedFilterLookup;
+		} catch (err) {
+			console.log(
+				chalk.yellow(
+					`  ⚠ Segment migration failed: ${err instanceof Error ? err.message : String(err)}`,
+				),
+			);
+			console.log(
+				chalk.dim('    Flags with segmentMatch clauses will be skipped.'),
+			);
+		}
+	}
+
 	if (dryRun) {
 		console.log(chalk.bold.yellow('  Dry run — no flags will be created\n'));
 	}
@@ -824,7 +851,11 @@ async function executeMigration(
 			continue;
 		}
 
-		const allocationsResult = buildAllocations(flag, envMapping);
+		const allocationsResult = buildAllocations(
+			flag,
+			envMapping,
+			savedFilterLookup,
+		);
 		if (!Array.isArray(allocationsResult)) {
 			spinner.warn(
 				`Skipped ${chalk.cyan(flag.key)} — ${allocationsResult.flagSkip}`,
