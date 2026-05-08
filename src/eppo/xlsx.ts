@@ -163,6 +163,7 @@ export async function exportEvaluationToXlsx(
 	evalRows: EvaluationExportRow[],
 	providerLabel: string,
 	migratedAt: string,
+	projectInfo?: { key: string; name: string },
 ): Promise<void> {
 	const workbook = new ExcelJS.Workbook();
 	const ws = workbook.addWorksheet('Evaluation Results');
@@ -204,11 +205,14 @@ export async function exportEvaluationToXlsx(
 		day: 'numeric',
 	});
 
+	const projectClause = projectInfo
+		? ` (project: ${projectInfo.name} / ${projectInfo.key})`
+		: '';
 	addSheetHeader(
 		ws,
 		headers.length,
 		`Flag Evaluation Report — ${providerLabel} → Datadog`,
-		`Evaluation run on ${evalDate} against migration from ${migratedDate}. Green rows indicate matching results between ${providerLabel} and Datadog. Yellow rows differ and may require investigation before removing the ${providerLabel} flag. Teams listed in the 'Team' column are responsible for verifying their flags and updating code to use the Datadog flag key.`,
+		`Evaluation run on ${evalDate} against migration from ${migratedDate}${projectClause}. Green rows indicate matching results between ${providerLabel} and Datadog. Yellow rows differ and may require investigation before removing the ${providerLabel} flag. Teams listed in the 'Team' column are responsible for verifying their flags and updating code to use the Datadog flag key.`,
 	);
 	addHeaderRow(ws, headers);
 

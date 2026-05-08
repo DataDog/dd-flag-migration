@@ -1296,12 +1296,21 @@ async function main(): Promise<void> {
 	// 10. Optional .xlsx export
 	const { exportEvaluationToXlsx } = await import('./xlsx.js');
 
+	const ldProjectInfo =
+		migration.provider === 'launchdarkly'
+			? {
+					key: (migration as unknown as LDMigrationFile).projectKey,
+					name: (migration as unknown as LDMigrationFile).projectName,
+				}
+			: undefined;
+
 	if (isAdvanced && totalRows >= 100) {
 		if (!showTable) printSummary(rows);
 		await exportEvaluationToXlsx(
 			exportRows,
 			providerLabel,
 			migration.migratedAt,
+			ldProjectInfo,
 		);
 	} else {
 		const exportToXlsx = await confirm({
@@ -1313,6 +1322,7 @@ async function main(): Promise<void> {
 				exportRows,
 				providerLabel,
 				migration.migratedAt,
+				ldProjectInfo,
 			);
 		}
 	}
