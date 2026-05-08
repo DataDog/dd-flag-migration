@@ -41,7 +41,7 @@ import {
 	promptForLDSdkKey,
 } from './launchdarkly/evaluate.js';
 import { mapFlagType } from './launchdarkly/migration.js';
-import type { LDFlag } from './launchdarkly/types.js';
+import type { LDFlag, LDMigrationFile } from './launchdarkly/types.js';
 import type {
 	DDFlagValue,
 	DDStatus,
@@ -189,14 +189,18 @@ async function pickCsvFile(csvPathArg: string | undefined): Promise<string> {
 		.filter((f) => f.endsWith('.csv') && f !== 'LICENSE-3rdparty.csv')
 		.sort();
 	if (csvFiles.length > 0) {
+		const CUSTOM_PATH = '__custom__';
 		const chosen = await select<string>({
 			message: 'Select a CSV file:',
-			choices: csvFiles.map((f) => ({
-				name: f,
-				value: path.join(process.cwd(), f),
-			})),
+			choices: [
+				...csvFiles.map((f) => ({
+					name: f,
+					value: path.join(process.cwd(), f),
+				})),
+				{ name: 'Enter a different path…', value: CUSTOM_PATH },
+			],
 		});
-		return chosen;
+		if (chosen !== CUSTOM_PATH) return chosen;
 	}
 	const entered = await input({
 		message: 'Enter the path to your CSV file:',
@@ -819,6 +823,16 @@ async function main(): Promise<void> {
 				migration.provider.slice(1);
 
 	console.log(chalk.bold('Migrated from: ') + chalk.green(providerLabel));
+	if (migration.provider === 'launchdarkly') {
+		const ldMigration = migration as unknown as LDMigrationFile;
+		if (ldMigration.projectKey) {
+			console.log(
+				chalk.gray(
+					`  Project:      ${ldMigration.projectName}  (${ldMigration.projectKey})`,
+				),
+			);
+		}
+	}
 	console.log(
 		chalk.gray(
 			`  Migrated at:  ${new Date(migration.migratedAt).toLocaleString()}`,

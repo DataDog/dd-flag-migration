@@ -527,6 +527,7 @@ type ConfirmAction = 'migrate' | 'select-more' | 'cancel';
 interface MigrationOptions {
 	ldApiKey: string;
 	projectKey: string;
+	projectName: string;
 	ddApiKey: string;
 	ddAppKey: string;
 	ddSite: string;
@@ -544,6 +545,7 @@ async function executeMigration(
 	const {
 		ldApiKey,
 		projectKey,
+		projectName,
 		ddApiKey,
 		ddAppKey,
 		ddSite,
@@ -1258,6 +1260,8 @@ async function executeMigration(
 	if (!dryRun && (created > 0 || synced > 0 || errored > 0)) {
 		const migrationData: LDMigrationFile = {
 			provider: 'launchdarkly',
+			projectKey,
+			projectName,
 			migratedAt: timestamp,
 			success: errored === 0,
 			summary: { created, synced, skipped, errored, enabled: totalEnabled },
@@ -1488,6 +1492,7 @@ export async function runLaunchDarklyMigration(
 					{
 						ldApiKey,
 						projectKey: selectedProject.key,
+						projectName: selectedProject.name,
 						ddApiKey,
 						ddAppKey,
 						ddSite,

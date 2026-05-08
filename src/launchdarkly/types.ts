@@ -149,6 +149,8 @@ export interface LDTeamWithRoles {
 
 export interface LDMigrationFile {
 	provider: 'launchdarkly';
+	projectKey: string;
+	projectName: string;
 	migratedAt: string;
 	success: boolean;
 	summary: {
