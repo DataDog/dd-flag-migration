@@ -824,7 +824,16 @@ async function executeMigration(
 			continue;
 		}
 
-		const allocations = buildAllocations(flag, envMapping);
+		const allocationsResult = buildAllocations(flag, envMapping);
+		if (!Array.isArray(allocationsResult)) {
+			spinner.warn(
+				`Skipped ${chalk.cyan(flag.key)} — ${allocationsResult.flagSkip}`,
+			);
+			skippedFlags.push({ key: flag.key, reason: allocationsResult.flagSkip });
+			skipped++;
+			continue;
+		}
+		const allocations = allocationsResult;
 		const envsToEnable = getEnvsToEnable(flag, envMapping);
 		const conflict = classifyConflict(datadogFlags, projectKey, flag.key);
 

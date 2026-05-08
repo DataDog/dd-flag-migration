@@ -12,6 +12,7 @@ import {
 	getEnvsToEnable,
 	mapFlagType,
 	mapOperator,
+	resolveSegmentMatch,
 	shouldSkipFlag,
 } from '../../src/launchdarkly/migration.js';
 import type {
@@ -20,7 +21,7 @@ import type {
 	LDFlag,
 	LDTeamWithRoles,
 } from '../../src/launchdarkly/types.js';
-import type { DatadogEnvironment } from '../../src/types.js';
+import type { DatadogAllocationForFlagCreation, DatadogEnvironment, DatadogTargetingRule } from '../../src/types.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -180,11 +181,9 @@ describe('mapOperator', () => {
 		expect(result).toEqual({ operator: 'SEMVER_GTE', values: ['3.0.0'] });
 	});
 
-	it('returns skip for segmentMatch', () => {
+	it('passes through segmentMatch uppercased (handled before mapOperator in buildTargetingRules)', () => {
 		const result = mapOperator('segmentMatch', false, ['seg-1']);
-		expect(result).toEqual({
-			skip: 'Segment targeting is not supported in Datadog',
-		});
+		expect(result).toEqual({ operator: 'SEGMENTMATCH', values: ['seg-1'] });
 	});
 
 	it('returns skip for before', () => {
@@ -278,7 +277,7 @@ describe('shouldSkipFlag', () => {
 		expect(shouldSkipFlag(flag, ['production'])).toEqual({ skip: false });
 	});
 
-	it('skips flags with segmentMatch', () => {
+	it('does not skip a flag with segmentMatch (handled in buildAllocations now)', () => {
 		const flag = makeFlag({
 			key: 'test',
 			environments: {
@@ -303,8 +302,7 @@ describe('shouldSkipFlag', () => {
 			},
 		});
 		const result = shouldSkipFlag(flag, ['production']);
-		expect(result.skip).toBe(true);
-		expect(result.reason).toContain('Segment targeting');
+		expect(result.skip).toBe(false);
 	});
 
 	it('skips flags with before/after operators', () => {
@@ -382,7 +380,7 @@ describe('shouldSkipFlag', () => {
 						{
 							_id: 'r1',
 							variation: 0,
-							clauses: [makeClause({ op: 'segmentMatch' })],
+							clauses: [makeClause({ op: 'before' })],
 							trackEvents: false,
 						},
 					],
@@ -580,8 +578,8 @@ describe('buildTargetingRules', () => {
 		]);
 	});
 
-	it('returns null for unsupported operator', () => {
-		const clauses = [makeClause({ op: 'segmentMatch' })];
+	it('returns null for unsupported operator (before/after)', () => {
+		const clauses = [makeClause({ op: 'before' })];
 		expect(buildTargetingRules(clauses)).toBeNull();
 	});
 
@@ -597,7 +595,8 @@ describe('buildTargetingRules', () => {
 		];
 		const result = buildTargetingRules(clauses);
 		expect(result).toHaveLength(1);
-		expect(result?.[0].conditions).toHaveLength(2);
+		expect(Array.isArray(result)).toBe(true);
+		expect((result as DatadogTargetingRule[])[0].conditions).toHaveLength(2);
 	});
 });
 
@@ -639,9 +638,11 @@ describe('buildAllocations', () => {
 		});
 
 		const envMapping = new Map([['production', ddProd]]);
-		const allocations = buildAllocations(flag, envMapping);
+		const result = buildAllocations(flag, envMapping);
 
 		// Should have: 1 target + 1 rule + 1 fallthrough = 3 allocations
+		expect(Array.isArray(result)).toBe(true);
+		const allocations = result as DatadogAllocationForFlagCreation[];
 		expect(allocations).toHaveLength(3);
 
 		// Target allocation
@@ -696,8 +697,10 @@ describe('buildAllocations', () => {
 		});
 
 		const envMapping = new Map([['production', ddProd]]);
-		const allocations = buildAllocations(flag, envMapping);
+		const result = buildAllocations(flag, envMapping);
 
+		expect(Array.isArray(result)).toBe(true);
+		const allocations = result as DatadogAllocationForFlagCreation[];
 		expect(allocations).toHaveLength(1);
 		expect(allocations[0].variant_weights).toEqual([
 			{ variant_key: 'true', value: 75 },
@@ -718,7 +721,7 @@ describe('buildAllocations', () => {
 						{
 							_id: 'r1',
 							variation: 0,
-							clauses: [makeClause({ op: 'segmentMatch' })],
+							clauses: [makeClause({ op: 'before' })],
 							trackEvents: false,
 						},
 						{
@@ -739,9 +742,11 @@ describe('buildAllocations', () => {
 		});
 
 		const envMapping = new Map([['production', ddProd]]);
-		const allocations = buildAllocations(flag, envMapping);
+		const result = buildAllocations(flag, envMapping);
 
-		// segmentMatch rule skipped, but "in" rule + fallthrough remain
+		// before rule skipped, but "in" rule + fallthrough remain
+		expect(Array.isArray(result)).toBe(true);
+		const allocations = result as DatadogAllocationForFlagCreation[];
 		expect(allocations).toHaveLength(2);
 		expect(allocations[0].key).toBe('segment-flag-production-rule-1');
 	});
@@ -773,9 +778,11 @@ describe('buildAllocations', () => {
 		});
 
 		const envMapping = new Map([['production', ddProd]]);
-		const allocations = buildAllocations(flag, envMapping);
+		const result = buildAllocations(flag, envMapping);
 
 		// Only fallthrough, disabled rule skipped
+		expect(Array.isArray(result)).toBe(true);
+		const allocations = result as DatadogAllocationForFlagCreation[];
 		expect(allocations).toHaveLength(1);
 		expect(allocations[0].key).toBe('test-production-fallthrough');
 	});
@@ -813,8 +820,10 @@ describe('buildAllocations', () => {
 			['dev', ddDev],
 			['production', ddProd],
 		]);
-		const allocations = buildAllocations(flag, envMapping);
+		const result = buildAllocations(flag, envMapping);
 
+		expect(Array.isArray(result)).toBe(true);
+		const allocations = result as DatadogAllocationForFlagCreation[];
 		expect(allocations).toHaveLength(2);
 		expect(allocations[0].environment_id).toBe('dd-dev');
 		expect(allocations[1].environment_id).toBe('dd-prod');
@@ -1194,5 +1203,344 @@ describe('findTeamsWithEditAccess', () => {
 		expect(findTeamsWithEditAccess(teams, new Set(['editor']))).toEqual(
 			new Set(),
 		);
+	});
+});
+
+// ─── resolveSegmentMatch ──────────────────────────────────────────────────────
+
+describe('resolveSegmentMatch', () => {
+	it('returns AND combine for negated single segment', () => {
+		const lookup = new Map([['seg-a:prod:true', 'sf-not-a']]);
+		const clause = makeClause({ op: 'segmentMatch', values: ['seg-a'], negate: true });
+		const res = resolveSegmentMatch(clause, 'prod', lookup);
+		expect(res).toEqual({ combine: 'AND', savedFilterIds: ['sf-not-a'] });
+	});
+
+	it('returns OR combine for non-negated single segment', () => {
+		const lookup = new Map([['seg-a:prod:false', 'sf-a']]);
+		const clause = makeClause({ op: 'segmentMatch', values: ['seg-a'], negate: false });
+		const res = resolveSegmentMatch(clause, 'prod', lookup);
+		expect(res).toEqual({ combine: 'OR', savedFilterIds: ['sf-a'] });
+	});
+
+	it('returns OR combine for non-negated multi-segment', () => {
+		const lookup = new Map([
+			['seg-a:prod:false', 'sf-a'],
+			['seg-b:prod:false', 'sf-b'],
+		]);
+		const clause = makeClause({ op: 'segmentMatch', values: ['seg-a', 'seg-b'], negate: false });
+		const res = resolveSegmentMatch(clause, 'prod', lookup);
+		expect(res).toEqual({ combine: 'OR', savedFilterIds: ['sf-a', 'sf-b'] });
+	});
+
+	it('returns AND combine for negated multi-segment', () => {
+		const lookup = new Map([
+			['seg-a:prod:true', 'sf-not-a'],
+			['seg-b:prod:true', 'sf-not-b'],
+		]);
+		const clause = makeClause({ op: 'segmentMatch', values: ['seg-a', 'seg-b'], negate: true });
+		const res = resolveSegmentMatch(clause, 'prod', lookup);
+		expect(res).toEqual({ combine: 'AND', savedFilterIds: ['sf-not-a', 'sf-not-b'] });
+	});
+
+	it('returns skip for empty values array', () => {
+		const clause = makeClause({ op: 'segmentMatch', values: [], negate: false });
+		const res = resolveSegmentMatch(clause, 'prod', new Map());
+		expect('skip' in res).toBe(true);
+	});
+
+	it('returns skip if any segment is missing from lookup', () => {
+		const lookup = new Map([['seg-a:prod:false', 'sf-a']]);
+		const clause = makeClause({ op: 'segmentMatch', values: ['seg-a', 'seg-missing'], negate: false });
+		const res = resolveSegmentMatch(clause, 'prod', lookup);
+		expect('skip' in res).toBe(true);
+	});
+});
+
+// ─── buildTargetingRules — segmentMatch support ───────────────────────────────
+
+describe('buildTargetingRules — segmentMatch', () => {
+	it('pure segmentMatch single segment → one rule with one SF-ref condition', () => {
+		const lookup = new Map([['seg-a:prod:false', 'sf-a']]);
+		const clauses = [makeClause({ op: 'segmentMatch', values: ['seg-a'], negate: false })];
+		const result = buildTargetingRules(clauses, 'prod', lookup);
+		expect(Array.isArray(result)).toBe(true);
+		const rules = result as DatadogTargetingRule[];
+		expect(rules).toHaveLength(1);
+		expect(rules[0].conditions[0]).toEqual({ saved_filter_id: 'sf-a' });
+	});
+
+	it('non-negated multi-segment → one rule per segment (fan-out)', () => {
+		const lookup = new Map([
+			['seg-a:prod:false', 'sf-a'],
+			['seg-b:prod:false', 'sf-b'],
+		]);
+		const clauses = [makeClause({ op: 'segmentMatch', values: ['seg-a', 'seg-b'], negate: false })];
+		const result = buildTargetingRules(clauses, 'prod', lookup);
+		expect(Array.isArray(result)).toBe(true);
+		const rules = result as DatadogTargetingRule[];
+		expect(rules).toHaveLength(2);
+		expect(rules[0].conditions[0]).toEqual({ saved_filter_id: 'sf-a' });
+		expect(rules[1].conditions[0]).toEqual({ saved_filter_id: 'sf-b' });
+	});
+
+	it("negated multi-segment → one rule with all negated SF-refs AND'd", () => {
+		const lookup = new Map([
+			['seg-a:prod:true', 'sf-not-a'],
+			['seg-b:prod:true', 'sf-not-b'],
+		]);
+		const clauses = [makeClause({ op: 'segmentMatch', values: ['seg-a', 'seg-b'], negate: true })];
+		const result = buildTargetingRules(clauses, 'prod', lookup);
+		expect(Array.isArray(result)).toBe(true);
+		const rules = result as DatadogTargetingRule[];
+		expect(rules).toHaveLength(1);
+		expect(rules[0].conditions).toHaveLength(2);
+		expect(rules[0].conditions[0]).toEqual({ saved_filter_id: 'sf-not-a' });
+		expect(rules[0].conditions[1]).toEqual({ saved_filter_id: 'sf-not-b' });
+	});
+
+	it('mixed rule: segmentMatch AND inline clause → SF-ref + inline in same rule', () => {
+		const lookup = new Map([['seg-a:prod:false', 'sf-a']]);
+		const clauses = [
+			makeClause({ op: 'segmentMatch', values: ['seg-a'], negate: false }),
+			makeClause({ _id: 'c2', op: 'in', attribute: 'country', values: ['US'], negate: false }),
+		];
+		const result = buildTargetingRules(clauses, 'prod', lookup);
+		expect(Array.isArray(result)).toBe(true);
+		const rules = result as DatadogTargetingRule[];
+		expect(rules).toHaveLength(1);
+		expect(rules[0].conditions).toHaveLength(2);
+		expect(rules[0].conditions[0]).toEqual({ saved_filter_id: 'sf-a' });
+		expect(rules[0].conditions[1]).toEqual({ operator: 'ONE_OF', attribute: 'country', value: ['US'] });
+	});
+
+	it('non-negated multi-segment AND inline → fan-out with inline in each rule', () => {
+		const lookup = new Map([
+			['seg-a:prod:false', 'sf-a'],
+			['seg-b:prod:false', 'sf-b'],
+		]);
+		const clauses = [
+			makeClause({ op: 'segmentMatch', values: ['seg-a', 'seg-b'], negate: false }),
+			makeClause({ _id: 'c2', op: 'semVerGreaterThan', attribute: 'version', values: ['2.0.0'] }),
+		];
+		const result = buildTargetingRules(clauses, 'prod', lookup);
+		expect(Array.isArray(result)).toBe(true);
+		const rules = result as DatadogTargetingRule[];
+		expect(rules).toHaveLength(2);
+		for (const r of rules) {
+			expect(r.conditions).toHaveLength(2);
+			expect(r.conditions[1]).toEqual({ operator: 'SEMVER_GT', attribute: 'version', value: ['2.0.0'] });
+		}
+	});
+
+	it('returns flagSkip when a segment is missing from lookup', () => {
+		const clauses = [makeClause({ op: 'segmentMatch', values: ['missing-seg'], negate: false })];
+		const result = buildTargetingRules(clauses, 'prod', new Map());
+		expect(result).not.toBeNull();
+		expect(Array.isArray(result)).toBe(false);
+		expect((result as { flagSkip: string }).flagSkip).toBeDefined();
+	});
+
+	it('returns flagSkip when fan-out exceeds 100 groups', () => {
+		// Two OR-combine clauses with 11 values each → 11×11=121 > 100
+		const ids = Array.from({ length: 11 }, (_, i) => `seg-${i}`);
+		const lookup = new Map(ids.map((k) => [`${k}:prod:false`, `sf-${k}`]));
+		const clauses = [
+			makeClause({ op: 'segmentMatch', values: [...ids], negate: false }),
+			makeClause({ _id: 'c2', op: 'segmentMatch', values: [...ids], negate: false }),
+		];
+		const result = buildTargetingRules(clauses, 'prod', lookup);
+		expect(Array.isArray(result)).toBe(false);
+		expect((result as { flagSkip: string }).flagSkip).toContain('fan-out');
+	});
+});
+
+// ─── buildAllocations — segmentMatch support ──────────────────────────────────
+
+describe('buildAllocations — segmentMatch', () => {
+	it('builds SF-ref allocation for a pure segmentMatch rule', () => {
+		const lookup = new Map([['seg-a:production:false', 'sf-a']]);
+		const flag = makeFlag({
+			key: 'f1',
+			environments: {
+				production: {
+					on: true,
+					archived: false,
+					targets: [],
+					contextTargets: [],
+					rules: [
+						{
+							_id: 'r1',
+							variation: 0,
+							clauses: [makeClause({ op: 'segmentMatch', values: ['seg-a'], negate: false })],
+							trackEvents: false,
+						},
+					],
+					fallthrough: { variation: 1 },
+					offVariation: 1,
+					prerequisites: [],
+					_environmentName: 'Production',
+				},
+			},
+		});
+		const envMapping = new Map([['production', ddProd]]);
+		const result = buildAllocations(flag, envMapping, lookup);
+		expect(Array.isArray(result)).toBe(true);
+		const allocs = result as DatadogAllocationForFlagCreation[];
+		// rule allocation + fallthrough = 2
+		expect(allocs).toHaveLength(2);
+		expect(allocs[0].targeting_rules![0].conditions[0]).toEqual({ saved_filter_id: 'sf-a' });
+	});
+
+	it('returns flagSkip object when segment is missing from lookup', () => {
+		const flag = makeFlag({
+			key: 'f1',
+			environments: {
+				production: {
+					on: true,
+					archived: false,
+					targets: [],
+					contextTargets: [],
+					rules: [
+						{
+							_id: 'r1',
+							variation: 0,
+							clauses: [makeClause({ op: 'segmentMatch', values: ['missing'], negate: false })],
+							trackEvents: false,
+						},
+					],
+					fallthrough: { variation: 1 },
+					offVariation: 1,
+					prerequisites: [],
+					_environmentName: 'Production',
+				},
+			},
+		});
+		const envMapping = new Map([['production', ddProd]]);
+		const result = buildAllocations(flag, envMapping, new Map());
+		expect(Array.isArray(result)).toBe(false);
+		expect((result as { flagSkip: string }).flagSkip).toBeDefined();
+	});
+
+	it('fan-out creates multiple targeting rules within the same allocation', () => {
+		const lookup = new Map([
+			['seg-a:production:false', 'sf-a'],
+			['seg-b:production:false', 'sf-b'],
+		]);
+		const flag = makeFlag({
+			key: 'f1',
+			environments: {
+				production: {
+					on: true,
+					archived: false,
+					targets: [],
+					contextTargets: [],
+					rules: [
+						{
+							_id: 'r1',
+							variation: 0,
+							clauses: [makeClause({ op: 'segmentMatch', values: ['seg-a', 'seg-b'], negate: false })],
+							trackEvents: false,
+						},
+					],
+					fallthrough: { variation: 1 },
+					offVariation: 1,
+					prerequisites: [],
+					_environmentName: 'Production',
+				},
+			},
+		});
+		const envMapping = new Map([['production', ddProd]]);
+		const result = buildAllocations(flag, envMapping, lookup);
+		expect(Array.isArray(result)).toBe(true);
+		const allocs = result as DatadogAllocationForFlagCreation[];
+		const ruleAlloc = allocs.find((a) => a.key.includes('rule'));
+		expect(ruleAlloc!.targeting_rules).toHaveLength(2);
+	});
+
+	it('variation/rollout carryover: each fanned-out targeting rule inherits the original rollout', () => {
+		const lookup = new Map([
+			['seg-a:production:false', 'sf-a'],
+			['seg-b:production:false', 'sf-b'],
+		]);
+		const flag = makeFlag({
+			key: 'f1',
+			environments: {
+				production: {
+					on: true,
+					archived: false,
+					targets: [],
+					contextTargets: [],
+					rules: [
+						{
+							_id: 'r1',
+							rollout: {
+								variations: [
+									{ variation: 0, weight: 30000 },
+									{ variation: 1, weight: 70000 },
+								],
+							},
+							clauses: [makeClause({ op: 'segmentMatch', values: ['seg-a', 'seg-b'], negate: false })],
+							trackEvents: false,
+						},
+					],
+					fallthrough: { variation: 1 },
+					offVariation: 1,
+					prerequisites: [],
+					_environmentName: 'Production',
+				},
+			},
+		});
+		const envMapping = new Map([['production', ddProd]]);
+		const result = buildAllocations(flag, envMapping, lookup);
+		expect(Array.isArray(result)).toBe(true);
+		const allocs = result as DatadogAllocationForFlagCreation[];
+		const ruleAlloc = allocs.find((a) => a.key.includes('rule'))!;
+		expect(ruleAlloc.targeting_rules).toHaveLength(2);
+		expect(ruleAlloc.variant_weights).toEqual([
+			{ variant_key: 'true', value: 30 },
+			{ variant_key: 'false', value: 70 },
+		]);
+	});
+
+	it("multiple negated segmentMatch clauses AND'd in one rule — all SF-refs in one targeting rule", () => {
+		const lookup = new Map([
+			['seg-a:production:true', 'sf-not-a'],
+			['seg-b:production:true', 'sf-not-b'],
+		]);
+		const flag = makeFlag({
+			key: 'f1',
+			environments: {
+				production: {
+					on: true,
+					archived: false,
+					targets: [],
+					contextTargets: [],
+					rules: [
+						{
+							_id: 'r1',
+							variation: 0,
+							clauses: [
+								makeClause({ op: 'segmentMatch', values: ['seg-a'], negate: true }),
+								makeClause({ _id: 'c2', op: 'segmentMatch', values: ['seg-b'], negate: true }),
+							],
+							trackEvents: false,
+						},
+					],
+					fallthrough: { variation: 1 },
+					offVariation: 1,
+					prerequisites: [],
+					_environmentName: 'Production',
+				},
+			},
+		});
+		const result = buildAllocations(flag, new Map([['production', ddProd]]), lookup);
+		expect(Array.isArray(result)).toBe(true);
+		const allocs = result as DatadogAllocationForFlagCreation[];
+		const ruleAlloc = allocs.find((a) => a.key.includes('rule'))!;
+		expect(ruleAlloc.targeting_rules).toHaveLength(1);
+		expect(ruleAlloc.targeting_rules![0].conditions).toHaveLength(2);
+		expect(ruleAlloc.targeting_rules![0].conditions[0]).toEqual({ saved_filter_id: 'sf-not-a' });
+		expect(ruleAlloc.targeting_rules![0].conditions[1]).toEqual({ saved_filter_id: 'sf-not-b' });
 	});
 });
