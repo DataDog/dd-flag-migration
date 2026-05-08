@@ -234,6 +234,7 @@ export function csvRowsToFlagTestCases(
 	rows: string[][],
 ): FlagTestCaseEntry[] {
 	const map = new Map<string, FlagTestCaseEntry>();
+	const warnings: string[] = [];
 
 	for (let i = 0; i < rows.length; i++) {
 		const row = rows[i];
@@ -241,7 +242,7 @@ export function csvRowsToFlagTestCases(
 
 		// Validate column count
 		if (row.length !== header.length) {
-			console.warn(
+			warnings.push(
 				`Row ${rowNum}: wrong column count (expected ${header.length}, got ${row.length}) — skipping`,
 			);
 			continue;
@@ -251,12 +252,12 @@ export function csvRowsToFlagTestCases(
 		const subjectKey = row[1];
 
 		if (!flagKey) {
-			console.warn(`Row ${rowNum}: flagKey is empty — skipping`);
+			warnings.push(`Row ${rowNum}: flagKey is empty — skipping`);
 			continue;
 		}
 
 		if (!subjectKey) {
-			console.warn(`Row ${rowNum}: subjectKey is empty — skipping`);
+			warnings.push(`Row ${rowNum}: subjectKey is empty — skipping`);
 			continue;
 		}
 
@@ -293,6 +294,14 @@ export function csvRowsToFlagTestCases(
 				team: '',
 				testCases: [testCase],
 			});
+		}
+	}
+
+	if (warnings.length > 0) {
+		const shown = warnings.slice(0, 5);
+		for (const w of shown) console.warn(w);
+		if (warnings.length > 5) {
+			console.warn(`  …and ${warnings.length - 5} more row(s) skipped`);
 		}
 	}
 

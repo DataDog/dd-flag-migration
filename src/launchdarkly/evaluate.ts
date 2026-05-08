@@ -394,7 +394,7 @@ export async function evaluateLDFlagAdvanced(
 		key: subjectId,
 	};
 	for (const [k, v] of Object.entries(attributes)) {
-		if (v !== null && k !== 'key') context[k] = v;
+		if (v !== null && k !== 'key' && k !== 'kind') context[k] = v;
 	}
 
 	// Pick a default value matching the flag's declared type. The LD SDK uses the

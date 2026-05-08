@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
+import type { getInstance as getEppoInstance } from '@eppo/node-server-sdk';
 import { confirm, input, password, select } from '@inquirer/prompts';
 import axios from 'axios';
 import chalk from 'chalk';
@@ -52,6 +53,8 @@ import type {
 	TestCase,
 } from './types.js';
 
+type EppoClient = ReturnType<typeof getEppoInstance>;
+
 // ─── UI Helpers ───────────────────────────────────────────────────────────────
 
 function printHeader(): void {
@@ -80,10 +83,12 @@ function parseArgs(): {
 	useLatestMigration: boolean;
 	flagEnvironment: string | undefined;
 	csvPath: string | undefined;
+	forceShowTable: boolean;
 } {
 	const args = process.argv.slice(2);
 	const useSavedKeys = args.includes('--use-saved-keys');
 	const useLatestMigration = args.includes('--use-latest-migration');
+	const forceShowTable = args.includes('--show-table');
 	const subjectArg = args.find((a) => a.startsWith('--test-subject-id='));
 	const testSubjectId = subjectArg
 		? subjectArg.slice('--test-subject-id='.length)
@@ -100,6 +105,7 @@ function parseArgs(): {
 		useLatestMigration,
 		flagEnvironment,
 		csvPath,
+		forceShowTable,
 	};
 }
 
@@ -800,6 +806,7 @@ async function main(): Promise<void> {
 		useLatestMigration,
 		flagEnvironment,
 		csvPath,
+		forceShowTable,
 	} = parseArgs();
 	printHeader();
 
@@ -1160,6 +1167,8 @@ async function main(): Promise<void> {
 							!evalResult.error &&
 							evalResult.ddStatus === 'assigned' &&
 							evalResult.providerResult === evalResult.ddResult,
+						// Basic mode has no FLAG_NOT_FOUND detection; providerStatus is
+						// always 'found' or 'error' — missing flags show as match/diff.
 						providerStatus: evalResult.error ? 'error' : 'found',
 					});
 				}
@@ -1179,9 +1188,7 @@ async function main(): Promise<void> {
 						vtype,
 						tcSubjectId.trim(),
 						tc.attributes,
-						providerClient as ReturnType<
-							typeof import('@eppo/node-server-sdk').getInstance
-						>,
+						providerClient as EppoClient,
 						ddFlagsForCase,
 						ddFlagKeys,
 					);
@@ -1203,9 +1210,7 @@ async function main(): Promise<void> {
 						eppoFlag,
 						tcSubjectId.trim(),
 						tc.attributes,
-						providerClient as ReturnType<
-							typeof import('@eppo/node-server-sdk').getInstance
-						>,
+						providerClient as EppoClient,
 						ddFlagsForCase,
 						ddFlagKeys,
 					);
@@ -1216,6 +1221,8 @@ async function main(): Promise<void> {
 							!evalResult.error &&
 							evalResult.ddStatus === 'assigned' &&
 							evalResult.providerResult === evalResult.ddResult,
+						// Basic mode has no FLAG_NOT_FOUND detection; providerStatus is
+						// always 'found' or 'error' — missing flags show as match/diff.
 						providerStatus: evalResult.error ? 'error' : 'found',
 					});
 				}
@@ -1241,7 +1248,7 @@ async function main(): Promise<void> {
 
 	// 8. Render results
 	const totalRows = rows.reduce((sum, r) => sum + r.testResults.length, 0);
-	const showTable = !isAdvanced || totalRows < 100;
+	const showTable = forceShowTable || !isAdvanced || totalRows < 100;
 
 	if (showTable) {
 		renderTable(rows, providerLabel);
