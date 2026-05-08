@@ -1526,7 +1526,7 @@ describe('buildAllocations — segmentMatch', () => {
 		const allocs = result as DatadogAllocationForFlagCreation[];
 		// rule allocation + fallthrough = 2
 		expect(allocs).toHaveLength(2);
-		expect(allocs[0].targeting_rules![0].conditions[0]).toEqual({
+		expect(allocs[0].targeting_rules?.[0].conditions[0]).toEqual({
 			saved_filter_id: 'sf-a',
 		});
 	});
@@ -1606,7 +1606,7 @@ describe('buildAllocations — segmentMatch', () => {
 		expect(Array.isArray(result)).toBe(true);
 		const allocs = result as DatadogAllocationForFlagCreation[];
 		const ruleAlloc = allocs.find((a) => a.key.includes('rule'));
-		expect(ruleAlloc!.targeting_rules).toHaveLength(2);
+		expect(ruleAlloc?.targeting_rules).toHaveLength(2);
 	});
 
 	it('variation/rollout carryover: each fanned-out targeting rule inherits the original rollout', () => {
@@ -1652,7 +1652,8 @@ describe('buildAllocations — segmentMatch', () => {
 		const result = buildAllocations(flag, envMapping, lookup);
 		expect(Array.isArray(result)).toBe(true);
 		const allocs = result as DatadogAllocationForFlagCreation[];
-		const ruleAlloc = allocs.find((a) => a.key.includes('rule'))!;
+		const ruleAlloc = allocs.find((a) => a.key.includes('rule'));
+		if (!ruleAlloc) return;
 		expect(ruleAlloc.targeting_rules).toHaveLength(2);
 		expect(ruleAlloc.variant_weights).toEqual([
 			{ variant_key: 'true', value: 30 },
@@ -1707,13 +1708,14 @@ describe('buildAllocations — segmentMatch', () => {
 		);
 		expect(Array.isArray(result)).toBe(true);
 		const allocs = result as DatadogAllocationForFlagCreation[];
-		const ruleAlloc = allocs.find((a) => a.key.includes('rule'))!;
+		const ruleAlloc = allocs.find((a) => a.key.includes('rule'));
+		if (!ruleAlloc) return;
 		expect(ruleAlloc.targeting_rules).toHaveLength(1);
-		expect(ruleAlloc.targeting_rules![0].conditions).toHaveLength(2);
-		expect(ruleAlloc.targeting_rules![0].conditions[0]).toEqual({
+		expect(ruleAlloc.targeting_rules?.[0].conditions).toHaveLength(2);
+		expect(ruleAlloc.targeting_rules?.[0].conditions[0]).toEqual({
 			saved_filter_id: 'sf-not-a',
 		});
-		expect(ruleAlloc.targeting_rules![0].conditions[1]).toEqual({
+		expect(ruleAlloc.targeting_rules?.[0].conditions[1]).toEqual({
 			saved_filter_id: 'sf-not-b',
 		});
 	});

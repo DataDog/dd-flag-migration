@@ -248,7 +248,8 @@ describe('renderSavedFilterName', () => {
 		const name = 'a'.repeat(50);
 		const result = renderSavedFilterName(name, 'prod', false);
 		expect(result).not.toBeNull();
-		expect(Buffer.byteLength(result!, 'utf8')).toBeLessThanOrEqual(200);
+		if (!result) return;
+		expect(Buffer.byteLength(result, 'utf8')).toBeLessThanOrEqual(200);
 		expect(result).toContain(name);
 	});
 
@@ -256,7 +257,8 @@ describe('renderSavedFilterName', () => {
 		const longName = 'a'.repeat(210);
 		const result = renderSavedFilterName(longName, 'production', false);
 		expect(result).not.toBeNull();
-		expect(Buffer.byteLength(result!, 'utf8')).toBe(200);
+		if (!result) return;
+		expect(Buffer.byteLength(result, 'utf8')).toBe(200);
 		expect(result).toContain('…');
 		expect(result).toContain('(production)');
 	});
@@ -265,9 +267,10 @@ describe('renderSavedFilterName', () => {
 		const longName = 'b'.repeat(210);
 		const result = renderSavedFilterName(longName, 'production', true);
 		expect(result).not.toBeNull();
-		expect(Buffer.byteLength(result!, 'utf8')).toBe(200);
-		expect(result!.startsWith('NOT ')).toBe(true);
-		expect(result!.endsWith('(production)')).toBe(true);
+		if (!result) return;
+		expect(Buffer.byteLength(result, 'utf8')).toBe(200);
+		expect(result.startsWith('NOT ')).toBe(true);
+		expect(result.endsWith('(production)')).toBe(true);
 		expect(result).toContain('…');
 	});
 
@@ -291,9 +294,10 @@ describe('renderSavedFilterName', () => {
 		const longName = '日'.repeat(80); // 240 bytes
 		const result = renderSavedFilterName(longName, 'prod', false);
 		expect(result).not.toBeNull();
+		if (!result) return;
 		// Result must be valid UTF-8 (Buffer.from will throw on invalid UTF-8)
-		expect(() => Buffer.from(result!, 'utf8').toString('utf8')).not.toThrow();
-		expect(Buffer.byteLength(result!, 'utf8')).toBeLessThanOrEqual(200);
+		expect(() => Buffer.from(result, 'utf8').toString('utf8')).not.toThrow();
+		expect(Buffer.byteLength(result, 'utf8')).toBeLessThanOrEqual(200);
 		expect(result).toContain('…');
 	});
 });
@@ -313,7 +317,7 @@ describe('buildNonNegatedRules', () => {
 		const result = buildNonNegatedRules(seg);
 		expect(result).not.toBeNull();
 		expect(result).toHaveLength(1);
-		expect(result![0].conditions[0]).toEqual({
+		expect(result?.[0].conditions[0]).toEqual({
 			operator: 'ONE_OF',
 			attribute: 'tenant',
 			value: ['acme'],
@@ -343,7 +347,7 @@ describe('buildNonNegatedRules', () => {
 		const result = buildNonNegatedRules(seg);
 		expect(result).not.toBeNull();
 		expect(result).toHaveLength(1);
-		expect(result![0].conditions[0]).toEqual({
+		expect(result?.[0].conditions[0]).toEqual({
 			operator: 'ONE_OF',
 			attribute: 'key',
 			value: ['u1', 'u2'],
@@ -363,8 +367,8 @@ describe('buildNonNegatedRules', () => {
 		const result = buildNonNegatedRules(seg);
 		expect(result).not.toBeNull();
 		expect(result).toHaveLength(1);
-		expect(result![0].conditions).toHaveLength(2);
-		expect(result![0].conditions[1]).toEqual({
+		expect(result?.[0].conditions).toHaveLength(2);
+		expect(result?.[0].conditions[1]).toEqual({
 			operator: 'NOT_ONE_OF',
 			attribute: 'key',
 			value: ['bad-user'],
@@ -385,12 +389,13 @@ describe('buildNonNegatedRules', () => {
 		const result = buildNonNegatedRules(seg);
 		expect(result).not.toBeNull();
 		expect(result).toHaveLength(2); // rule group + included group
-		for (const r of result!) {
+		if (!result) return;
+		for (const r of result) {
 			const notOneOf = r.conditions.find(
 				(c) => c.operator === 'NOT_ONE_OF' && c.attribute === 'key',
 			);
 			expect(notOneOf).toBeDefined();
-			expect(notOneOf!.value).toEqual(['banned']);
+			expect(notOneOf?.value).toEqual(['banned']);
 		}
 	});
 
@@ -444,7 +449,7 @@ describe('buildNegatedRules', () => {
 		const result = buildNegatedRules(seg);
 		expect(result).not.toBeNull();
 		expect(result).toHaveLength(1);
-		expect(result![0].conditions[0]).toEqual({
+		expect(result?.[0].conditions[0]).toEqual({
 			operator: 'NOT_ONE_OF',
 			attribute: 'tenant',
 			value: ['acme'],
@@ -485,8 +490,9 @@ describe('buildNegatedRules', () => {
 		});
 		const result = buildNegatedRules(seg);
 		expect(result).not.toBeNull();
+		if (!result) return;
 		expect(result).toHaveLength(4);
-		for (const r of result!) {
+		for (const r of result) {
 			for (const c of r.conditions) {
 				expect(c.operator).toBe('NOT_ONE_OF');
 			}
@@ -498,8 +504,8 @@ describe('buildNegatedRules', () => {
 		const result = buildNegatedRules(seg);
 		expect(result).not.toBeNull();
 		expect(result).toHaveLength(1);
-		expect(result![0].conditions).toHaveLength(1);
-		expect(result![0].conditions[0]).toEqual({
+		expect(result?.[0].conditions).toHaveLength(1);
+		expect(result?.[0].conditions[0]).toEqual({
 			operator: 'NOT_ONE_OF',
 			attribute: 'key',
 			value: ['u1', 'u2'],
@@ -514,16 +520,17 @@ describe('buildNegatedRules', () => {
 		});
 		const result = buildNegatedRules(seg);
 		expect(result).not.toBeNull();
+		if (!result) return;
 		expect(result).toHaveLength(2);
-		const hasNotOneOf = result!.some(
+		const hasNotOneOf = result.some(
 			(r) =>
 				r.conditions[0].operator === 'NOT_ONE_OF' &&
-				r.conditions[0].value!.includes('u1'),
+				r.conditions[0].value?.includes('u1'),
 		);
-		const hasOneOf = result!.some(
+		const hasOneOf = result.some(
 			(r) =>
 				r.conditions[0].operator === 'ONE_OF' &&
-				r.conditions[0].value!.includes('u-bad'),
+				r.conditions[0].value?.includes('u-bad'),
 		);
 		expect(hasNotOneOf).toBe(true);
 		expect(hasOneOf).toBe(true);
@@ -588,6 +595,6 @@ describe('buildNegatedRules', () => {
 		const result = buildNegatedRules(seg);
 		expect(result).not.toBeNull();
 		expect(result).toHaveLength(1);
-		expect(result![0].conditions).toHaveLength(0);
+		expect(result?.[0].conditions).toHaveLength(0);
 	});
 });
