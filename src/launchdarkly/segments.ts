@@ -487,6 +487,9 @@ export async function migrateSegments(params: {
 		// Check intra-run collisions
 		if (thisRunNames.has(name)) {
 			collisionSet.add(pending);
+			// biome-ignore lint/style/noNonNullAssertion: safe after .has() check above
+			const first = thisRunNames.get(name)!;
+			collisionSet.add(first);
 		} else {
 			thisRunNames.set(name, pending);
 		}
@@ -530,21 +533,17 @@ export async function migrateSegments(params: {
 			});
 
 			if (action === 'prefix') {
-				// eslint-disable-next-line no-constant-condition
-				while (true) {
-					const prefix = await input({
-						message: 'Enter a prefix for conflicting saved filter names:',
-						validate: (val) => {
-							const trimmed = val.trim();
-							if (trimmed.length === 0) return 'Prefix cannot be empty';
-							if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(trimmed))
-								return 'Prefix must contain only lowercase letters, numbers, and hyphens';
-							return true;
-						},
-					});
-					conflictResolution = { action: 'prefix', prefix: prefix.trim() };
-					break;
-				}
+				const prefix = await input({
+					message: 'Enter a prefix for conflicting saved filter names:',
+					validate: (val) => {
+						const trimmed = val.trim();
+						if (trimmed.length === 0) return 'Prefix cannot be empty';
+						if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(trimmed))
+							return 'Prefix must contain only lowercase letters, numbers, and hyphens';
+						return true;
+					},
+				});
+				conflictResolution = { action: 'prefix', prefix: prefix.trim() };
 			} else {
 				conflictResolution = { action: 'skip' };
 			}
@@ -568,9 +567,11 @@ export async function migrateSegments(params: {
 				);
 				stats.skipped++;
 				continue;
-			}
-			if (conflictResolution?.action === 'prefix') {
+			} else if (conflictResolution?.action === 'prefix') {
 				namePrefix = conflictResolution.prefix;
+			} else {
+				// allHavePrefix short-circuit: no resolution was needed
+				// (this path is safe — name_prefix already in metadata prevents collision)
 			}
 		}
 
