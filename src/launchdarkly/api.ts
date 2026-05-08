@@ -3,9 +3,7 @@ import type {
 	LDCustomRole,
 	LDEnvironment,
 	LDFlag,
-	LDRule,
 	LDSegment,
-	LDSegmentContext,
 	LDTeamWithRoles,
 } from './types.js';
 
