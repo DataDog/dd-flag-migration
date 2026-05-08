@@ -418,7 +418,9 @@ export function buildAllocations(
 				targetingRulesResult !== null &&
 				!Array.isArray(targetingRulesResult)
 			) {
-				return targetingRulesResult; // propagate flag-level skip
+				return {
+					flagSkip: `${targetingRulesResult.flagSkip} (env: ${ldEnvKey})`,
+				};
 			}
 			if (targetingRulesResult === null) continue; // skip this rule
 
@@ -437,7 +439,9 @@ export function buildAllocations(
 				key: `${flag.key}-${envSlug}-rule-${ri}`,
 				type: 'FEATURE_GATE',
 				variant_weights: variantWeights,
-				...(targetingRules.length > 0 ? { targeting_rules: targetingRules } : {}),
+				...(targetingRules.length > 0
+					? { targeting_rules: targetingRules }
+					: {}),
 			});
 		}
 

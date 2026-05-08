@@ -21,7 +21,11 @@ import type {
 	LDFlag,
 	LDTeamWithRoles,
 } from '../../src/launchdarkly/types.js';
-import type { DatadogAllocationForFlagCreation, DatadogEnvironment, DatadogTargetingRule } from '../../src/types.js';
+import type {
+	DatadogAllocationForFlagCreation,
+	DatadogEnvironment,
+	DatadogTargetingRule,
+} from '../../src/types.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1211,14 +1215,22 @@ describe('findTeamsWithEditAccess', () => {
 describe('resolveSegmentMatch', () => {
 	it('returns AND combine for negated single segment', () => {
 		const lookup = new Map([['seg-a:prod:true', 'sf-not-a']]);
-		const clause = makeClause({ op: 'segmentMatch', values: ['seg-a'], negate: true });
+		const clause = makeClause({
+			op: 'segmentMatch',
+			values: ['seg-a'],
+			negate: true,
+		});
 		const res = resolveSegmentMatch(clause, 'prod', lookup);
 		expect(res).toEqual({ combine: 'AND', savedFilterIds: ['sf-not-a'] });
 	});
 
 	it('returns OR combine for non-negated single segment', () => {
 		const lookup = new Map([['seg-a:prod:false', 'sf-a']]);
-		const clause = makeClause({ op: 'segmentMatch', values: ['seg-a'], negate: false });
+		const clause = makeClause({
+			op: 'segmentMatch',
+			values: ['seg-a'],
+			negate: false,
+		});
 		const res = resolveSegmentMatch(clause, 'prod', lookup);
 		expect(res).toEqual({ combine: 'OR', savedFilterIds: ['sf-a'] });
 	});
@@ -1228,7 +1240,11 @@ describe('resolveSegmentMatch', () => {
 			['seg-a:prod:false', 'sf-a'],
 			['seg-b:prod:false', 'sf-b'],
 		]);
-		const clause = makeClause({ op: 'segmentMatch', values: ['seg-a', 'seg-b'], negate: false });
+		const clause = makeClause({
+			op: 'segmentMatch',
+			values: ['seg-a', 'seg-b'],
+			negate: false,
+		});
 		const res = resolveSegmentMatch(clause, 'prod', lookup);
 		expect(res).toEqual({ combine: 'OR', savedFilterIds: ['sf-a', 'sf-b'] });
 	});
@@ -1238,20 +1254,35 @@ describe('resolveSegmentMatch', () => {
 			['seg-a:prod:true', 'sf-not-a'],
 			['seg-b:prod:true', 'sf-not-b'],
 		]);
-		const clause = makeClause({ op: 'segmentMatch', values: ['seg-a', 'seg-b'], negate: true });
+		const clause = makeClause({
+			op: 'segmentMatch',
+			values: ['seg-a', 'seg-b'],
+			negate: true,
+		});
 		const res = resolveSegmentMatch(clause, 'prod', lookup);
-		expect(res).toEqual({ combine: 'AND', savedFilterIds: ['sf-not-a', 'sf-not-b'] });
+		expect(res).toEqual({
+			combine: 'AND',
+			savedFilterIds: ['sf-not-a', 'sf-not-b'],
+		});
 	});
 
 	it('returns skip for empty values array', () => {
-		const clause = makeClause({ op: 'segmentMatch', values: [], negate: false });
+		const clause = makeClause({
+			op: 'segmentMatch',
+			values: [],
+			negate: false,
+		});
 		const res = resolveSegmentMatch(clause, 'prod', new Map());
 		expect('skip' in res).toBe(true);
 	});
 
 	it('returns skip if any segment is missing from lookup', () => {
 		const lookup = new Map([['seg-a:prod:false', 'sf-a']]);
-		const clause = makeClause({ op: 'segmentMatch', values: ['seg-a', 'seg-missing'], negate: false });
+		const clause = makeClause({
+			op: 'segmentMatch',
+			values: ['seg-a', 'seg-missing'],
+			negate: false,
+		});
 		const res = resolveSegmentMatch(clause, 'prod', lookup);
 		expect('skip' in res).toBe(true);
 	});
@@ -1262,7 +1293,9 @@ describe('resolveSegmentMatch', () => {
 describe('buildTargetingRules — segmentMatch', () => {
 	it('pure segmentMatch single segment → one rule with one SF-ref condition', () => {
 		const lookup = new Map([['seg-a:prod:false', 'sf-a']]);
-		const clauses = [makeClause({ op: 'segmentMatch', values: ['seg-a'], negate: false })];
+		const clauses = [
+			makeClause({ op: 'segmentMatch', values: ['seg-a'], negate: false }),
+		];
 		const result = buildTargetingRules(clauses, 'prod', lookup);
 		expect(Array.isArray(result)).toBe(true);
 		const rules = result as DatadogTargetingRule[];
@@ -1275,7 +1308,13 @@ describe('buildTargetingRules — segmentMatch', () => {
 			['seg-a:prod:false', 'sf-a'],
 			['seg-b:prod:false', 'sf-b'],
 		]);
-		const clauses = [makeClause({ op: 'segmentMatch', values: ['seg-a', 'seg-b'], negate: false })];
+		const clauses = [
+			makeClause({
+				op: 'segmentMatch',
+				values: ['seg-a', 'seg-b'],
+				negate: false,
+			}),
+		];
 		const result = buildTargetingRules(clauses, 'prod', lookup);
 		expect(Array.isArray(result)).toBe(true);
 		const rules = result as DatadogTargetingRule[];
@@ -1289,7 +1328,13 @@ describe('buildTargetingRules — segmentMatch', () => {
 			['seg-a:prod:true', 'sf-not-a'],
 			['seg-b:prod:true', 'sf-not-b'],
 		]);
-		const clauses = [makeClause({ op: 'segmentMatch', values: ['seg-a', 'seg-b'], negate: true })];
+		const clauses = [
+			makeClause({
+				op: 'segmentMatch',
+				values: ['seg-a', 'seg-b'],
+				negate: true,
+			}),
+		];
 		const result = buildTargetingRules(clauses, 'prod', lookup);
 		expect(Array.isArray(result)).toBe(true);
 		const rules = result as DatadogTargetingRule[];
@@ -1303,7 +1348,13 @@ describe('buildTargetingRules — segmentMatch', () => {
 		const lookup = new Map([['seg-a:prod:false', 'sf-a']]);
 		const clauses = [
 			makeClause({ op: 'segmentMatch', values: ['seg-a'], negate: false }),
-			makeClause({ _id: 'c2', op: 'in', attribute: 'country', values: ['US'], negate: false }),
+			makeClause({
+				_id: 'c2',
+				op: 'in',
+				attribute: 'country',
+				values: ['US'],
+				negate: false,
+			}),
 		];
 		const result = buildTargetingRules(clauses, 'prod', lookup);
 		expect(Array.isArray(result)).toBe(true);
@@ -1311,7 +1362,11 @@ describe('buildTargetingRules — segmentMatch', () => {
 		expect(rules).toHaveLength(1);
 		expect(rules[0].conditions).toHaveLength(2);
 		expect(rules[0].conditions[0]).toEqual({ saved_filter_id: 'sf-a' });
-		expect(rules[0].conditions[1]).toEqual({ operator: 'ONE_OF', attribute: 'country', value: ['US'] });
+		expect(rules[0].conditions[1]).toEqual({
+			operator: 'ONE_OF',
+			attribute: 'country',
+			value: ['US'],
+		});
 	});
 
 	it('non-negated multi-segment AND inline → fan-out with inline in each rule', () => {
@@ -1320,8 +1375,17 @@ describe('buildTargetingRules — segmentMatch', () => {
 			['seg-b:prod:false', 'sf-b'],
 		]);
 		const clauses = [
-			makeClause({ op: 'segmentMatch', values: ['seg-a', 'seg-b'], negate: false }),
-			makeClause({ _id: 'c2', op: 'semVerGreaterThan', attribute: 'version', values: ['2.0.0'] }),
+			makeClause({
+				op: 'segmentMatch',
+				values: ['seg-a', 'seg-b'],
+				negate: false,
+			}),
+			makeClause({
+				_id: 'c2',
+				op: 'semVerGreaterThan',
+				attribute: 'version',
+				values: ['2.0.0'],
+			}),
 		];
 		const result = buildTargetingRules(clauses, 'prod', lookup);
 		expect(Array.isArray(result)).toBe(true);
@@ -1329,12 +1393,22 @@ describe('buildTargetingRules — segmentMatch', () => {
 		expect(rules).toHaveLength(2);
 		for (const r of rules) {
 			expect(r.conditions).toHaveLength(2);
-			expect(r.conditions[1]).toEqual({ operator: 'SEMVER_GT', attribute: 'version', value: ['2.0.0'] });
+			expect(r.conditions[1]).toEqual({
+				operator: 'SEMVER_GT',
+				attribute: 'version',
+				value: ['2.0.0'],
+			});
 		}
 	});
 
 	it('returns flagSkip when a segment is missing from lookup', () => {
-		const clauses = [makeClause({ op: 'segmentMatch', values: ['missing-seg'], negate: false })];
+		const clauses = [
+			makeClause({
+				op: 'segmentMatch',
+				values: ['missing-seg'],
+				negate: false,
+			}),
+		];
 		const result = buildTargetingRules(clauses, 'prod', new Map());
 		expect(result).not.toBeNull();
 		expect(Array.isArray(result)).toBe(false);
@@ -1347,11 +1421,68 @@ describe('buildTargetingRules — segmentMatch', () => {
 		const lookup = new Map(ids.map((k) => [`${k}:prod:false`, `sf-${k}`]));
 		const clauses = [
 			makeClause({ op: 'segmentMatch', values: [...ids], negate: false }),
-			makeClause({ _id: 'c2', op: 'segmentMatch', values: [...ids], negate: false }),
+			makeClause({
+				_id: 'c2',
+				op: 'segmentMatch',
+				values: [...ids],
+				negate: false,
+			}),
 		];
 		const result = buildTargetingRules(clauses, 'prod', lookup);
 		expect(Array.isArray(result)).toBe(false);
 		expect((result as { flagSkip: string }).flagSkip).toContain('fan-out');
+	});
+
+	it('Case 5: non-negated multi-segment (OR) + negated segment (AND) + inline → 2 rules each with AND-ref and inline', () => {
+		// OR-combine: seg-a,seg-b → fans out to 2 rules
+		// AND-combine: NOT seg-c → AND'd into every fanned-out rule
+		// inline: country=US → AND'd into every fanned-out rule
+		const lookup = new Map([
+			['seg-a:prod:false', 'sf-a'],
+			['seg-b:prod:false', 'sf-b'],
+			['seg-c:prod:true', 'sf-not-c'],
+		]);
+		const clauses = [
+			makeClause({
+				op: 'segmentMatch',
+				values: ['seg-a', 'seg-b'],
+				negate: false,
+			}),
+			makeClause({
+				_id: 'c2',
+				op: 'segmentMatch',
+				values: ['seg-c'],
+				negate: true,
+			}),
+			makeClause({
+				_id: 'c3',
+				op: 'in',
+				attribute: 'country',
+				values: ['US'],
+				negate: false,
+			}),
+		];
+		const result = buildTargetingRules(clauses, 'prod', lookup);
+		expect(Array.isArray(result)).toBe(true);
+		const rules = result as DatadogTargetingRule[];
+		expect(rules).toHaveLength(2);
+		// Each rule: [sf-a or sf-b (OR-selected), sf-not-c (AND), country:US (inline)]
+		expect(rules[0].conditions).toHaveLength(3);
+		expect(rules[1].conditions).toHaveLength(3);
+		expect(rules[0].conditions[0]).toEqual({ saved_filter_id: 'sf-a' });
+		expect(rules[0].conditions[1]).toEqual({ saved_filter_id: 'sf-not-c' });
+		expect(rules[0].conditions[2]).toEqual({
+			operator: 'ONE_OF',
+			attribute: 'country',
+			value: ['US'],
+		});
+		expect(rules[1].conditions[0]).toEqual({ saved_filter_id: 'sf-b' });
+		expect(rules[1].conditions[1]).toEqual({ saved_filter_id: 'sf-not-c' });
+		expect(rules[1].conditions[2]).toEqual({
+			operator: 'ONE_OF',
+			attribute: 'country',
+			value: ['US'],
+		});
 	});
 });
 
@@ -1372,7 +1503,13 @@ describe('buildAllocations — segmentMatch', () => {
 						{
 							_id: 'r1',
 							variation: 0,
-							clauses: [makeClause({ op: 'segmentMatch', values: ['seg-a'], negate: false })],
+							clauses: [
+								makeClause({
+									op: 'segmentMatch',
+									values: ['seg-a'],
+									negate: false,
+								}),
+							],
 							trackEvents: false,
 						},
 					],
@@ -1389,7 +1526,9 @@ describe('buildAllocations — segmentMatch', () => {
 		const allocs = result as DatadogAllocationForFlagCreation[];
 		// rule allocation + fallthrough = 2
 		expect(allocs).toHaveLength(2);
-		expect(allocs[0].targeting_rules![0].conditions[0]).toEqual({ saved_filter_id: 'sf-a' });
+		expect(allocs[0].targeting_rules![0].conditions[0]).toEqual({
+			saved_filter_id: 'sf-a',
+		});
 	});
 
 	it('returns flagSkip object when segment is missing from lookup', () => {
@@ -1405,7 +1544,13 @@ describe('buildAllocations — segmentMatch', () => {
 						{
 							_id: 'r1',
 							variation: 0,
-							clauses: [makeClause({ op: 'segmentMatch', values: ['missing'], negate: false })],
+							clauses: [
+								makeClause({
+									op: 'segmentMatch',
+									values: ['missing'],
+									negate: false,
+								}),
+							],
 							trackEvents: false,
 						},
 					],
@@ -1439,7 +1584,13 @@ describe('buildAllocations — segmentMatch', () => {
 						{
 							_id: 'r1',
 							variation: 0,
-							clauses: [makeClause({ op: 'segmentMatch', values: ['seg-a', 'seg-b'], negate: false })],
+							clauses: [
+								makeClause({
+									op: 'segmentMatch',
+									values: ['seg-a', 'seg-b'],
+									negate: false,
+								}),
+							],
 							trackEvents: false,
 						},
 					],
@@ -1480,7 +1631,13 @@ describe('buildAllocations — segmentMatch', () => {
 									{ variation: 1, weight: 70000 },
 								],
 							},
-							clauses: [makeClause({ op: 'segmentMatch', values: ['seg-a', 'seg-b'], negate: false })],
+							clauses: [
+								makeClause({
+									op: 'segmentMatch',
+									values: ['seg-a', 'seg-b'],
+									negate: false,
+								}),
+							],
 							trackEvents: false,
 						},
 					],
@@ -1521,8 +1678,17 @@ describe('buildAllocations — segmentMatch', () => {
 							_id: 'r1',
 							variation: 0,
 							clauses: [
-								makeClause({ op: 'segmentMatch', values: ['seg-a'], negate: true }),
-								makeClause({ _id: 'c2', op: 'segmentMatch', values: ['seg-b'], negate: true }),
+								makeClause({
+									op: 'segmentMatch',
+									values: ['seg-a'],
+									negate: true,
+								}),
+								makeClause({
+									_id: 'c2',
+									op: 'segmentMatch',
+									values: ['seg-b'],
+									negate: true,
+								}),
 							],
 							trackEvents: false,
 						},
@@ -1534,13 +1700,21 @@ describe('buildAllocations — segmentMatch', () => {
 				},
 			},
 		});
-		const result = buildAllocations(flag, new Map([['production', ddProd]]), lookup);
+		const result = buildAllocations(
+			flag,
+			new Map([['production', ddProd]]),
+			lookup,
+		);
 		expect(Array.isArray(result)).toBe(true);
 		const allocs = result as DatadogAllocationForFlagCreation[];
 		const ruleAlloc = allocs.find((a) => a.key.includes('rule'))!;
 		expect(ruleAlloc.targeting_rules).toHaveLength(1);
 		expect(ruleAlloc.targeting_rules![0].conditions).toHaveLength(2);
-		expect(ruleAlloc.targeting_rules![0].conditions[0]).toEqual({ saved_filter_id: 'sf-not-a' });
-		expect(ruleAlloc.targeting_rules![0].conditions[1]).toEqual({ saved_filter_id: 'sf-not-b' });
+		expect(ruleAlloc.targeting_rules![0].conditions[0]).toEqual({
+			saved_filter_id: 'sf-not-a',
+		});
+		expect(ruleAlloc.targeting_rules![0].conditions[1]).toEqual({
+			saved_filter_id: 'sf-not-b',
+		});
 	});
 });
