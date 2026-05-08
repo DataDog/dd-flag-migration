@@ -127,11 +127,12 @@ export async function exportLDMigrationToXlsx(
 		day: 'numeric',
 	});
 
+	const projectLabel = `${migration.projectName} (${migration.projectKey})`;
 	addSheetHeader(
 		ws,
 		headers.length,
 		'Flag Migration Report — LaunchDarkly → Datadog',
-		`Migration completed on ${dateLabel}. Flags with status 'Created' require a code change: update your flag evaluation calls to reference the Datadog flag key shown in the 'Action Required' column. Flags with status 'Skipped' were not migrated (unsupported operator or archived).`,
+		`Migration completed on ${dateLabel} for project ${projectLabel}. Flags with status 'Created' require a code change: update your flag evaluation calls to reference the Datadog flag key shown in the 'Action Required' column. Flags with status 'Skipped' were not migrated (unsupported operator or archived).`,
 	);
 	addHeaderRow(ws, headers);
 

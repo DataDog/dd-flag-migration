@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
+import type { getInstance as getEppoInstance } from '@eppo/node-server-sdk';
 import { confirm, input, password, select } from '@inquirer/prompts';
 import axios from 'axios';
 import chalk from 'chalk';
@@ -15,27 +16,44 @@ import {
 } from './config.js';
 import {
 	evaluateEppoFlag,
-	generateEppoTestCases,
+	evaluateEppoFlagAdvanced,
 	initializeEppo,
 	promptForEppoSdkKey,
 } from './eppo/evaluate.js';
 import {
+	formatExampleTable,
+	parseCsv,
+	validateHeader,
+} from './evaluate/csv.js';
+import type { ClassifiedRow, RowColor } from './evaluate/result-classifier.js';
+import { classifyRow } from './evaluate/result-classifier.js';
+import {
+	CsvSource,
+	type FlagWithTestCases,
+	SyntheticSource,
+	type TestCaseSource,
+} from './evaluate/test-case-sources.js';
+import {
 	evaluateLDFlag,
-	generateLDTestCases,
+	evaluateLDFlagAdvanced,
 	initializeLaunchDarkly,
 	type LDClient,
 	promptForLDSdkKey,
 } from './launchdarkly/evaluate.js';
-import type { LDFlag } from './launchdarkly/types.js';
+import { mapFlagType } from './launchdarkly/migration.js';
+import type { LDFlag, LDMigrationFile } from './launchdarkly/types.js';
 import type {
 	DDFlagValue,
 	DDStatus,
 	EvaluationExportRow,
 	MigrationEnvironmentMapping,
 	MigrationFile,
+	MigrationMetadata,
 	SubjectAttributes,
 	TestCase,
 } from './types.js';
+
+type EppoClient = ReturnType<typeof getEppoInstance>;
 
 // ─── UI Helpers ───────────────────────────────────────────────────────────────
 
@@ -64,10 +82,13 @@ function parseArgs(): {
 	testSubjectId: string | undefined;
 	useLatestMigration: boolean;
 	flagEnvironment: string | undefined;
+	csvPath: string | undefined;
+	forceShowTable: boolean;
 } {
 	const args = process.argv.slice(2);
 	const useSavedKeys = args.includes('--use-saved-keys');
 	const useLatestMigration = args.includes('--use-latest-migration');
+	const forceShowTable = args.includes('--show-table');
 	const subjectArg = args.find((a) => a.startsWith('--test-subject-id='));
 	const testSubjectId = subjectArg
 		? subjectArg.slice('--test-subject-id='.length)
@@ -76,7 +97,16 @@ function parseArgs(): {
 	const flagEnvironment = envArg
 		? envArg.slice('--flag-environment='.length)
 		: undefined;
-	return { useSavedKeys, testSubjectId, useLatestMigration, flagEnvironment };
+	const csvArg = args.find((a) => a.startsWith('--csv='));
+	const csvPath = csvArg ? csvArg.slice('--csv='.length) : undefined;
+	return {
+		useSavedKeys,
+		testSubjectId,
+		useLatestMigration,
+		flagEnvironment,
+		csvPath,
+		forceShowTable,
+	};
 }
 
 // ─── Migration File Selection ─────────────────────────────────────────────────
@@ -128,6 +158,59 @@ async function selectMigrationFile(useLatest = false): Promise<MigrationFile> {
 	const filepath = path.join(CONFIG_DIR, chosen);
 	const raw = fs.readFileSync(filepath, 'utf-8');
 	return JSON.parse(raw) as MigrationFile;
+}
+
+// ─── Evaluation Mode Selection ────────────────────────────────────────────────
+
+async function promptForEvaluationMode(
+	csvPathArg: string | undefined,
+): Promise<'basic' | 'advanced'> {
+	if (csvPathArg !== undefined) return 'advanced';
+	const choice = await select<'basic' | 'advanced'>({
+		message: 'Which evaluation type would you like to run?',
+		choices: [
+			{
+				name: "Basic Evaluation — auto-generate test cases from each flag's targeting rules",
+				value: 'basic',
+			},
+			{
+				name: 'Advanced Evaluation (CSV import) — provide your own test cases via CSV',
+				value: 'advanced',
+			},
+		],
+	});
+	return choice;
+}
+
+async function pickCsvFile(csvPathArg: string | undefined): Promise<string> {
+	if (csvPathArg !== undefined) return csvPathArg;
+	const csvFiles = fs
+		.readdirSync(process.cwd())
+		.filter((f) => f.endsWith('.csv') && f !== 'LICENSE-3rdparty.csv')
+		.sort();
+	if (csvFiles.length > 0) {
+		const CUSTOM_PATH = '__custom__';
+		const chosen = await select<string>({
+			message: 'Select a CSV file:',
+			choices: [
+				...csvFiles.map((f) => ({
+					name: f,
+					value: path.join(process.cwd(), f),
+				})),
+				{ name: 'Enter a different path…', value: CUSTOM_PATH },
+			],
+		});
+		if (chosen !== CUSTOM_PATH) return chosen;
+	}
+	const entered = await input({
+		message: 'Enter the path to your CSV file:',
+		validate: (v) => {
+			if (!v.trim()) return 'Path cannot be empty';
+			if (!fs.existsSync(v.trim())) return `File not found: ${v.trim()}`;
+			return true;
+		},
+	});
+	return path.resolve(entered.trim());
 }
 
 // ─── Datadog Credential Prompts ──────────────────────────────────────────────
@@ -318,9 +401,34 @@ function buildEndpointHost(site: string): string {
 	return `preview.ff-cdn.${site}`;
 }
 
+const DD_FETCH_CONCURRENCY = 10;
+
+async function mapWithConcurrency<T, R>(
+	items: T[],
+	limit: number,
+	fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+	const results: R[] = new Array(items.length);
+	let next = 0;
+	const workers = Array.from(
+		{ length: Math.min(limit, items.length) },
+		async () => {
+			while (true) {
+				const i = next++;
+				if (i >= items.length) return;
+				results[i] = await fn(items[i], i);
+			}
+		},
+	);
+	await Promise.all(workers);
+	return results;
+}
+
 type DDFlagListItem = {
 	attributes: {
 		key: string;
+		value_type?: string;
+		migration_metadata?: MigrationMetadata;
 		feature_flag_environments?: Array<{
 			environment_id: string;
 			status: 'ENABLED' | 'DISABLED';
@@ -333,10 +441,17 @@ async function fetchDDFlagData(
 	appKey: string,
 	site: string,
 	envId: string,
-): Promise<{ keys: Set<string>; enabledByKey: Map<string, boolean> }> {
+): Promise<{
+	keys: Set<string>;
+	enabledByKey: Map<string, boolean>;
+	valueTypeByKey: Map<string, string>;
+	migrationMetadataByKey: Map<string, MigrationMetadata>;
+}> {
 	const baseUrl = `https://api.${site}`;
 	const keys = new Set<string>();
 	const enabledByKey = new Map<string, boolean>();
+	const valueTypeByKey = new Map<string, string>();
+	const migrationMetadataByKey = new Map<string, MigrationMetadata>();
 	let offset = 0;
 	const limit = 200;
 	try {
@@ -356,6 +471,13 @@ async function fetchDDFlagData(
 				);
 				if (envEntry !== undefined)
 					enabledByKey.set(f.attributes.key, envEntry.status === 'ENABLED');
+				if (f.attributes.value_type)
+					valueTypeByKey.set(f.attributes.key, f.attributes.value_type);
+				if (f.attributes.migration_metadata)
+					migrationMetadataByKey.set(
+						f.attributes.key,
+						f.attributes.migration_metadata,
+					);
 			}
 			if (flags.length < limit) break;
 			offset += limit;
@@ -377,7 +499,7 @@ async function fetchDDFlagData(
 		}
 		throw err;
 	}
-	return { keys, enabledByKey };
+	return { keys, enabledByKey, valueTypeByKey, migrationMetadataByKey };
 }
 
 async function fetchDDFlags(
@@ -427,7 +549,13 @@ async function fetchDDFlags(
 
 // ─── Table Rendering ──────────────────────────────────────────────────────────
 
-type MigrationStatus = 'created' | 'partial' | 'failed' | 'skipped' | 'unknown';
+type MigrationStatus =
+	| 'created'
+	| 'partial'
+	| 'failed'
+	| 'skipped'
+	| 'unknown'
+	| 'not-in-migration-file';
 
 interface FlagTestResult {
 	testCase: TestCase;
@@ -436,6 +564,7 @@ interface FlagTestResult {
 	ddStatus: DDStatus;
 	match: boolean;
 	error?: string;
+	providerStatus: 'found' | 'not-found' | 'error' | 'not-evaluated';
 }
 
 interface TableRow {
@@ -444,6 +573,8 @@ interface TableRow {
 	migrationStatus: MigrationStatus;
 	ddEnabled: boolean | null;
 	partialDetails: string[];
+	inMigrationFile: boolean;
+	ddMigrationMetadata?: MigrationMetadata;
 }
 
 function renderTable(rows: TableRow[], providerLabel: string): void {
@@ -511,7 +642,10 @@ function renderTable(rows: TableRow[], providerLabel: string): void {
 			: chalk.gray('✗ Disabled'.padEnd(COL_ENA));
 	};
 
+	const isLD = providerLabel.toLowerCase() !== 'eppo';
+
 	for (const row of rows) {
+		const classifiedResults: ClassifiedRow[] = [];
 		for (let i = 0; i < row.testResults.length; i++) {
 			const tr = row.testResults[i];
 			const isFirst = i === 0;
@@ -522,31 +656,42 @@ function renderTable(rows: TableRow[], providerLabel: string): void {
 
 			const testLabelStr = pad(tr.testCase.label, COL_TEST);
 
-			let providerDisplay: string;
-			let ddDisplay: string;
+			const classified = classifyRow({
+				flagKey: row.key,
+				inMigrationFile: row.inMigrationFile,
+				ddStatus: tr.ddStatus,
+				providerStatus: tr.providerStatus,
+				providerError: tr.error,
+				match: tr.match,
+				ddMigrationMetadata: row.ddMigrationMetadata,
+				provider: isLD ? 'launchdarkly' : 'eppo',
+			});
+			classifiedResults.push(classified);
 
-			if (tr.error) {
-				providerDisplay = chalk.red(pad('ERROR', COL_EVAL));
-				ddDisplay =
-					tr.ddStatus === 'assigned'
-						? chalk.dim(pad(tr.ddResult, COL_EVAL))
-						: chalk.dim(pad('—', COL_EVAL));
-			} else if (
-				tr.ddStatus === 'not-in-dd' ||
-				tr.ddStatus === 'not-assigned'
-			) {
-				providerDisplay = chalk.dim(pad(tr.providerResult, COL_EVAL));
-				ddDisplay = chalk.dim(pad('—', COL_EVAL));
-			} else if (tr.match) {
-				providerDisplay = chalk.green(pad(tr.providerResult, COL_EVAL));
-				ddDisplay = chalk.green(pad(tr.ddResult, COL_EVAL));
-			} else {
-				providerDisplay = chalk.yellow(pad(tr.providerResult, COL_EVAL));
-				ddDisplay = chalk.yellow(pad(tr.ddResult, COL_EVAL));
-			}
+			const chalkForColor = (s: string): string => {
+				switch (classified.color as RowColor) {
+					case 'match':
+					case 'notMigrated':
+						return chalk.green(s);
+					case 'diff':
+					case 'drift':
+						return chalk.yellow(s);
+					case 'error':
+						return chalk.red(s);
+					default:
+						return chalk.dim(s);
+				}
+			};
+
+			const providerDisplay = chalkForColor(
+				pad(tr.providerResult || '—', COL_EVAL),
+			);
+			const ddDisplay = chalkForColor(pad(tr.ddResult || '—', COL_EVAL));
 
 			const migDisplay = isFirst
-				? migrationCol(row.migrationStatus)
+				? row.inMigrationFile
+					? migrationCol(row.migrationStatus)
+					: chalk.dim('—'.padEnd(COL_MIG))
 				: ' '.repeat(COL_MIG);
 			const enaDisplay = isFirst
 				? enabledCol(row.ddEnabled)
@@ -571,6 +716,16 @@ function renderTable(rows: TableRow[], providerLabel: string): void {
 			console.log(
 				' '.repeat(COL_FLAG + 3) +
 					chalk.yellow(`⚠ ${row.partialDetails.join(' | ')}`),
+			);
+		}
+
+		// Show classifier notes — collect from all test results and dedupe
+		const notes = [
+			...new Set(classifiedResults.map((c) => c.notes).filter(Boolean)),
+		];
+		if (notes.length > 0) {
+			console.log(
+				' '.repeat(COL_FLAG + 3) + chalk.dim(`ℹ ${notes.join(' | ')}`),
 			);
 		}
 
@@ -649,8 +804,14 @@ function printSummary(rows: TableRow[]): void {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-	const { useSavedKeys, testSubjectId, useLatestMigration, flagEnvironment } =
-		parseArgs();
+	const {
+		useSavedKeys,
+		testSubjectId,
+		useLatestMigration,
+		flagEnvironment,
+		csvPath,
+		forceShowTable,
+	} = parseArgs();
 	printHeader();
 
 	// 1. Select migration file
@@ -662,6 +823,16 @@ async function main(): Promise<void> {
 				migration.provider.slice(1);
 
 	console.log(chalk.bold('Migrated from: ') + chalk.green(providerLabel));
+	if (migration.provider === 'launchdarkly') {
+		const ldMigration = migration as unknown as LDMigrationFile;
+		if (ldMigration.projectKey) {
+			console.log(
+				chalk.gray(
+					`  Project:      ${ldMigration.projectName}  (${ldMigration.projectKey})`,
+				),
+			);
+		}
+	}
 	console.log(
 		chalk.gray(
 			`  Migrated at:  ${new Date(migration.migratedAt).toLocaleString()}`,
@@ -669,6 +840,42 @@ async function main(): Promise<void> {
 	);
 	console.log(chalk.gray(`  Flags:        ${migration.flags.length}`));
 	console.log();
+
+	// 1b. Determine evaluation mode
+	const isAdvanced = (await promptForEvaluationMode(csvPath)) === 'advanced';
+
+	let resolvedCsvPath: string | undefined;
+	let parsedCsv: { header: string[]; rows: string[][] } | undefined;
+	if (isAdvanced) {
+		const provider =
+			migration.provider === 'launchdarkly' ? 'launchdarkly' : 'eppo';
+		console.log();
+		console.log(formatExampleTable(provider));
+		console.log();
+		resolvedCsvPath = await pickCsvFile(csvPath);
+
+		let csvContent: string;
+		try {
+			csvContent = fs.readFileSync(resolvedCsvPath, 'utf-8');
+		} catch (err) {
+			console.error(
+				chalk.red('\n  Could not read CSV file:'),
+				err instanceof Error ? err.message : String(err),
+			);
+			process.exit(1);
+		}
+		try {
+			parsedCsv = parseCsv(csvContent);
+			validateHeader(parsedCsv.header, parsedCsv.rows, provider);
+		} catch (err) {
+			console.error(
+				chalk.red('\n  CSV validation failed:'),
+				err instanceof Error ? err.message : String(err),
+			);
+			process.exit(1);
+		}
+		console.log();
+	}
 
 	// 2. Collect Datadog credentials
 	const { apiKey: ddApiKey, appKey: ddAppKey } =
@@ -700,47 +907,52 @@ async function main(): Promise<void> {
 	}
 	console.log();
 
-	// 4b. Prompt for test subject ID
+	// 4b. Prompt for test subject ID (only in Basic mode)
 	let subjectId: string;
-	if (testSubjectId !== undefined) {
-		console.log(
-			chalk.gray(`  Using test subject ID: ${chalk.cyan(testSubjectId)}\n`),
+	if (!isAdvanced) {
+		if (testSubjectId !== undefined) {
+			console.log(
+				chalk.gray(`  Using test subject ID: ${chalk.cyan(testSubjectId)}\n`),
+			);
+			subjectId = testSubjectId;
+		} else {
+			subjectId = await input({
+				message: 'Enter a test subject ID (user ID for flag evaluation):',
+				validate: (v) =>
+					v.trim().length > 0 ? true : 'Subject ID cannot be empty',
+			});
+			console.log();
+		}
+	} else {
+		// Advanced mode: each CSV row provides its own subjectId via subjectIdOverride
+		subjectId = '';
+	}
+
+	// 5a. Load test cases via source
+	// resolvedCsvPath is always set when isAdvanced (assigned in the isAdvanced block above)
+	if (isAdvanced && resolvedCsvPath === undefined) {
+		throw new Error(
+			'Internal error: resolvedCsvPath must be set in Advanced mode',
 		);
-		subjectId = testSubjectId;
-	} else {
-		subjectId = await input({
-			message: 'Enter a test subject ID (user ID for flag evaluation):',
-			validate: (v) =>
-				v.trim().length > 0 ? true : 'Subject ID cannot be empty',
-		});
-		console.log();
 	}
+	const source: TestCaseSource = isAdvanced
+		? // biome-ignore lint/style/noNonNullAssertion: invariant checked above
+			new CsvSource(resolvedCsvPath!, parsedCsv)
+		: new SyntheticSource();
 
-	// 5a. Generate test cases for each flag from its targeting rules
-	type FlagWithTestCases = {
-		flagKey: string;
-		flagName: string;
-		team: string;
-		testCases: TestCase[];
-	};
 	let flagTestCases: FlagWithTestCases[];
-
-	if (isLD) {
-		const ldFlags = migration.flags as unknown as LDFlag[];
-		flagTestCases = ldFlags.map((flag) => ({
-			flagKey: flag.key,
-			flagName: flag.name,
-			team: flag._maintainerTeam?.name ?? flag._maintainer?.email ?? '',
-			testCases: generateLDTestCases(flag, sourceEnvName),
-		}));
-	} else {
-		flagTestCases = migration.flags.map((flag) => ({
-			flagKey: flag.key,
-			flagName: flag.name,
-			team: flag.owner?.name ?? '',
-			testCases: generateEppoTestCases(flag),
-		}));
+	try {
+		flagTestCases = await source.collect(migration, sourceEnvName);
+	} catch (err) {
+		console.error(
+			chalk.red('\n  Error loading test cases:'),
+			err instanceof Error ? err.message : String(err),
+		);
+		process.exit(1);
 	}
+
+	// Track which flag keys are in the migration file
+	const migrationFileKeys = new Set(migration.flags.map((f) => f.key));
 
 	// Collect all unique (subjectId, attributes) contexts needed across all flags
 	type DDContext = { subjectId: string; attributes: SubjectAttributes };
@@ -780,12 +992,18 @@ async function main(): Promise<void> {
 	let ddFlagsPerContext: Map<string, Record<string, DDFlagValue>>;
 	let ddFlagKeys: Set<string>;
 	let ddEnabledByKey: Map<string, boolean>;
+	let ddValueTypeByKey: Map<string, string>;
+	let ddMigrationMetadataByKey: Map<string, MigrationMetadata>;
+
+	const contextEntries = [...uniqueContexts.entries()];
 
 	try {
 		const [flagData, contextResults] = await Promise.all([
 			fetchDDFlagData(ddApiKey, ddAppKey, ddSite, ddEnvId),
-			Promise.all(
-				[...uniqueContexts.entries()].map(async ([key, ctx]) => ({
+			mapWithConcurrency(
+				contextEntries,
+				DD_FETCH_CONCURRENCY,
+				async ([key, ctx]) => ({
 					key,
 					result: await fetchDDFlags(
 						ddClientToken,
@@ -794,12 +1012,14 @@ async function main(): Promise<void> {
 						ctx.subjectId.trim(),
 						ctx.attributes,
 					),
-				})),
+				}),
 			),
 		]);
 
 		ddFlagKeys = flagData.keys;
 		ddEnabledByKey = flagData.enabledByKey;
+		ddValueTypeByKey = flagData.valueTypeByKey;
+		ddMigrationMetadataByKey = flagData.migrationMetadataByKey;
 		ddFlagsPerContext = new Map(contextResults.map((r) => [r.key, r.result]));
 
 		const totalAssignments = contextResults.reduce(
@@ -850,6 +1070,9 @@ async function main(): Promise<void> {
 		: null;
 
 	for (const { flagKey, testCases } of flagTestCases) {
+		const inMigrationFile = migrationFileKeys.has(flagKey);
+		const ddMigrationMetadata = ddMigrationMetadataByKey.get(flagKey);
+
 		const skipReason = skippedFlagReason.get(flagKey);
 		const envFailCount = enableFailCountByFlag.get(flagKey) ?? 0;
 		const partialDetails: string[] = [];
@@ -859,8 +1082,9 @@ async function main(): Promise<void> {
 			partialDetails.push(`Could not enable (${envFailCount} env(s))`);
 		}
 
-		const migrationStatus: MigrationStatus =
-			skipReason !== undefined
+		const migrationStatus: MigrationStatus = !inMigrationFile
+			? 'not-in-migration-file'
+			: skipReason !== undefined
 				? 'skipped'
 				: !hasMigrationDetail
 					? 'unknown'
@@ -896,13 +1120,53 @@ async function main(): Promise<void> {
 					ddStatus,
 					match: false,
 					error: `${providerLabel} SDK: ${providerInitError}`,
+					providerStatus: 'error',
+				});
+			} else if (isAdvanced && !inMigrationFile && !ddFlagKeys.has(flagKey)) {
+				// Flag not in migration file and not found in DD — skip provider call, will classify as notInDD
+				testResults.push({
+					testCase: tc,
+					providerResult: '',
+					ddResult: '',
+					ddStatus: 'not-in-dd',
+					match: false,
+					providerStatus: 'not-evaluated',
 				});
 			} else if (isLD) {
-				// biome-ignore lint/style/noNonNullAssertion: ldFlagByKey is always set when isLD
-				const ldFlag = ldFlagByKey!.get(flagKey);
-				if (!ldFlag) continue;
-				const { providerResult, ddResult, ddStatus, error } =
-					await evaluateLDFlag(
+				if (isAdvanced) {
+					// Advanced LD mode
+					let vtype = 'STRING';
+					if (inMigrationFile) {
+						// biome-ignore lint/style/noNonNullAssertion: ldFlagByKey is set when isLD
+						const ldFlag = ldFlagByKey!.get(flagKey);
+						if (ldFlag) vtype = mapFlagType(ldFlag);
+					} else {
+						vtype = ddValueTypeByKey.get(flagKey) ?? 'STRING';
+					}
+					const evalResult = await evaluateLDFlagAdvanced(
+						flagKey,
+						vtype,
+						tcSubjectId.trim(),
+						tc.attributes,
+						providerClient as LDClient,
+						ddFlagsForCase,
+						ddFlagKeys,
+					);
+					testResults.push({
+						testCase: tc,
+						...evalResult,
+						match:
+							evalResult.providerStatus === 'found' &&
+							evalResult.ddStatus === 'assigned' &&
+							!evalResult.error &&
+							evalResult.providerResult === evalResult.ddResult,
+					});
+				} else {
+					// Basic LD mode
+					// biome-ignore lint/style/noNonNullAssertion: ldFlagByKey is always set when isLD
+					const ldFlag = ldFlagByKey!.get(flagKey);
+					if (!ldFlag) continue;
+					const evalResult = await evaluateLDFlag(
 						ldFlag,
 						tcSubjectId.trim(),
 						tc.attributes,
@@ -910,39 +1174,72 @@ async function main(): Promise<void> {
 						ddFlagsForCase,
 						ddFlagKeys,
 					);
-				testResults.push({
-					testCase: tc,
-					providerResult,
-					ddResult,
-					ddStatus,
-					match:
-						!error && ddStatus === 'assigned' && providerResult === ddResult,
-					error,
-				});
+					testResults.push({
+						testCase: tc,
+						...evalResult,
+						match:
+							!evalResult.error &&
+							evalResult.ddStatus === 'assigned' &&
+							evalResult.providerResult === evalResult.ddResult,
+						// Basic mode has no FLAG_NOT_FOUND detection; providerStatus is
+						// always 'found' or 'error' — missing flags show as match/diff.
+						providerStatus: evalResult.error ? 'error' : 'found',
+					});
+				}
 			} else {
-				// biome-ignore lint/style/noNonNullAssertion: eppoFlagByKey is always set when !isLD
-				const eppoFlag = eppoFlagByKey!.get(flagKey);
-				if (!eppoFlag) continue;
-				const { providerResult, ddResult, ddStatus, error } =
-					await evaluateEppoFlag(
-						eppoFlag,
+				if (isAdvanced) {
+					// Advanced Eppo mode
+					// biome-ignore lint/style/noNonNullAssertion: eppoFlagByKey is set when !isLD
+					const eppoFlag = eppoFlagByKey!.get(flagKey);
+					let vtype = 'STRING';
+					if (inMigrationFile && eppoFlag) {
+						vtype = eppoFlag.variation_type ?? 'STRING';
+					} else {
+						vtype = ddValueTypeByKey.get(flagKey) ?? 'STRING';
+					}
+					const evalResult = await evaluateEppoFlagAdvanced(
+						flagKey,
+						vtype,
 						tcSubjectId.trim(),
 						tc.attributes,
-						providerClient as ReturnType<
-							typeof import('@eppo/node-server-sdk').getInstance
-						>,
+						providerClient as EppoClient,
 						ddFlagsForCase,
 						ddFlagKeys,
 					);
-				testResults.push({
-					testCase: tc,
-					providerResult,
-					ddResult,
-					ddStatus,
-					match:
-						!error && ddStatus === 'assigned' && providerResult === ddResult,
-					error,
-				});
+					testResults.push({
+						testCase: tc,
+						...evalResult,
+						match:
+							evalResult.providerStatus === 'found' &&
+							evalResult.ddStatus === 'assigned' &&
+							!evalResult.error &&
+							evalResult.providerResult === evalResult.ddResult,
+					});
+				} else {
+					// Basic Eppo mode
+					// biome-ignore lint/style/noNonNullAssertion: eppoFlagByKey is always set when !isLD
+					const eppoFlag = eppoFlagByKey!.get(flagKey);
+					if (!eppoFlag) continue;
+					const evalResult = await evaluateEppoFlag(
+						eppoFlag,
+						tcSubjectId.trim(),
+						tc.attributes,
+						providerClient as EppoClient,
+						ddFlagsForCase,
+						ddFlagKeys,
+					);
+					testResults.push({
+						testCase: tc,
+						...evalResult,
+						match:
+							!evalResult.error &&
+							evalResult.ddStatus === 'assigned' &&
+							evalResult.providerResult === evalResult.ddResult,
+						// Basic mode has no FLAG_NOT_FOUND detection; providerStatus is
+						// always 'found' or 'error' — missing flags show as match/diff.
+						providerStatus: evalResult.error ? 'error' : 'found',
+					});
+				}
 			}
 		}
 
@@ -952,6 +1249,8 @@ async function main(): Promise<void> {
 			migrationStatus,
 			ddEnabled,
 			partialDetails,
+			inMigrationFile,
+			ddMigrationMetadata,
 		});
 	}
 	evalSpinner.succeed('Evaluation complete');
@@ -962,40 +1261,70 @@ async function main(): Promise<void> {
 	}
 
 	// 8. Render results
-	renderTable(rows, providerLabel);
-	printSummary(rows);
+	const totalRows = rows.reduce((sum, r) => sum + r.testResults.length, 0);
+	const showTable = forceShowTable || !isAdvanced || totalRows < 100;
 
-	// 9. Optional .xlsx export
-	const exportToXlsx = await confirm({
-		message: 'Would you like to export evaluation results to an .xlsx file?',
-		default: false,
+	if (showTable) {
+		renderTable(rows, providerLabel);
+		printSummary(rows);
+	}
+
+	// 9. Build export rows
+	const flagMeta = new Map(
+		flagTestCases.map((f) => [f.flagKey, { name: f.flagName, team: f.team }]),
+	);
+	const exportRows: EvaluationExportRow[] = rows.flatMap((row) => {
+		const meta = flagMeta.get(row.key);
+		return row.testResults.map((tr) => ({
+			flagKey: row.key,
+			flagName: meta?.name ?? row.key,
+			team: meta?.team ?? '',
+			testCaseLabel: tr.testCase.label,
+			providerResult: tr.providerResult,
+			ddResult: tr.ddResult,
+			match: tr.match,
+			ddStatus: tr.ddStatus,
+			migrationStatus: row.migrationStatus,
+			ddEnabled: row.ddEnabled,
+			error: tr.error,
+			inMigrationFile: row.inMigrationFile,
+			providerStatus: tr.providerStatus,
+			ddMigrationMetadata: row.ddMigrationMetadata,
+		}));
 	});
-	if (exportToXlsx) {
-		const flagMeta = new Map(
-			flagTestCases.map((f) => [f.flagKey, { name: f.flagName, team: f.team }]),
-		);
-		const exportRows: EvaluationExportRow[] = rows.flatMap((row) => {
-			const meta = flagMeta.get(row.key);
-			return row.testResults.map((tr) => ({
-				flagKey: row.key,
-				flagName: meta?.name ?? row.key,
-				team: meta?.team ?? '',
-				testCaseLabel: tr.testCase.label,
-				providerResult: tr.providerResult,
-				ddResult: tr.ddResult,
-				match: tr.match,
-				ddStatus: tr.ddStatus,
-				migrationStatus: row.migrationStatus,
-				ddEnabled: row.ddEnabled,
-				error: tr.error,
-			}));
-		});
-		const { exportEvaluationToXlsx } = await import('./xlsx.js');
+
+	// 10. Optional .xlsx export
+	const { exportEvaluationToXlsx } = await import('./xlsx.js');
+
+	const ldProjectInfo =
+		migration.provider === 'launchdarkly'
+			? {
+					key: (migration as unknown as LDMigrationFile).projectKey,
+					name: (migration as unknown as LDMigrationFile).projectName,
+				}
+			: undefined;
+
+	if (isAdvanced && totalRows >= 100) {
+		if (!showTable) printSummary(rows);
 		await exportEvaluationToXlsx(
 			exportRows,
 			providerLabel,
 			migration.migratedAt,
+			ldProjectInfo,
 		);
+	} else {
+		const exportToXlsx = await confirm({
+			message: 'Would you like to export evaluation results to an .xlsx file?',
+			default: isAdvanced,
+		});
+		if (exportToXlsx) {
+			await exportEvaluationToXlsx(
+				exportRows,
+				providerLabel,
+				migration.migratedAt,
+				ldProjectInfo,
+			);
+		}
 	}
 }
 

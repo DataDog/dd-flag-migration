@@ -369,3 +369,92 @@ export async function evaluateLDFlag(
 		};
 	}
 }
+
+export async function evaluateLDFlagAdvanced(
+	flagKey: string,
+	vtype: string,
+	subjectId: string,
+	attributes: SubjectAttributes,
+	ldClient: LDClient,
+	ddFlags: Record<string, DDFlagValue>,
+	ddFlagKeys: Set<string>,
+): Promise<
+	EvaluationResult & { providerStatus: 'found' | 'not-found' | 'error' }
+> {
+	const ddFlag = ddFlags[flagKey];
+	const ddStatus: DDStatus =
+		ddFlag !== undefined
+			? 'assigned'
+			: ddFlagKeys.has(flagKey)
+				? 'not-assigned'
+				: 'not-in-dd';
+
+	const context: { kind: string; key: string; [attr: string]: unknown } = {
+		kind: 'user',
+		key: subjectId,
+	};
+	for (const [k, v] of Object.entries(attributes)) {
+		if (v !== null && k !== 'key' && k !== 'kind') context[k] = v;
+	}
+
+	// Pick a default value matching the flag's declared type. The LD SDK uses the
+	// default for type-mismatch detection; passing a typed default avoids spurious
+	// WRONG_TYPE warnings even though FLAG_NOT_FOUND detection itself is type-agnostic.
+	const defaultValue: unknown =
+		vtype === 'BOOLEAN'
+			? false
+			: vtype === 'NUMERIC' || vtype === 'INTEGER'
+				? 0
+				: vtype === 'JSON'
+					? {}
+					: '';
+	try {
+		const detail = await ldClient.variationDetail(
+			flagKey,
+			context,
+			defaultValue,
+		);
+
+		if (detail.reason?.errorKind === 'FLAG_NOT_FOUND') {
+			return {
+				providerResult: '',
+				ddResult: '',
+				ddStatus,
+				providerStatus: 'not-found',
+			};
+		}
+
+		const ldValue = (detail as { value: unknown }).value;
+		const isJsonValue = ldValue !== null && typeof ldValue === 'object';
+
+		let providerResult: string;
+		if (vtype === 'JSON' || isJsonValue) {
+			providerResult = JSON.stringify(sortKeys(ldValue));
+		} else {
+			providerResult = String(ldValue);
+		}
+
+		let ddResult: string;
+		if (ddFlag !== undefined) {
+			const ddIsJson =
+				ddFlag.variationType === 'JSON' ||
+				(ddFlag.variationValue !== null &&
+					typeof ddFlag.variationValue === 'object');
+			ddResult = ddIsJson
+				? JSON.stringify(sortKeys(ddFlag.variationValue))
+				: String(ddFlag.variationValue);
+		} else {
+			ddResult = '';
+		}
+
+		return { providerResult, ddResult, ddStatus, providerStatus: 'found' };
+	} catch (err) {
+		return {
+			providerResult: 'ERROR',
+			ddResult: 'ERROR',
+			ddStatus: 'not-assigned',
+			error: err instanceof Error ? err.message : String(err),
+			providerStatus: 'error',
+		};
+	}
+}

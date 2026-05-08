@@ -1,6 +1,8 @@
 import path from 'node:path';
 import chalk from 'chalk';
 import ExcelJS from 'exceljs';
+import type { RowColor } from '../evaluate/result-classifier.js';
+import { classifyRow } from '../evaluate/result-classifier.js';
 import type { EvaluationExportRow } from '../types.js';
 import {
 	ARGB,
@@ -147,27 +149,21 @@ export async function exportMigrationToXlsx(
 
 // ─── Evaluation Export ────────────────────────────────────────────────────────
 
-type EvalRowColor = 'match' | 'diff' | 'error' | 'notInDD' | 'notAssigned';
-
-const EVAL_ARGB: Record<EvalRowColor, string> = {
+const CLASSIFIED_ROW_ARGB: Record<RowColor, string> = {
 	match: ARGB.matchGreen,
+	notMigrated: ARGB.matchGreen,
 	diff: ARGB.diffYellow,
-	error: ARGB.errorRed,
+	drift: ARGB.diffYellow,
 	notInDD: ARGB.notInDDGray,
-	notAssigned: ARGB.notInDDGray,
+	notInProvider: ARGB.notInDDGray,
+	error: ARGB.errorRed,
 };
-
-function evalRowColor(row: EvaluationExportRow): EvalRowColor {
-	if (row.error) return 'error';
-	if (row.ddStatus === 'not-in-dd') return 'notInDD';
-	if (row.ddStatus === 'not-assigned') return 'notAssigned';
-	return row.match ? 'match' : 'diff';
-}
 
 export async function exportEvaluationToXlsx(
 	evalRows: EvaluationExportRow[],
 	providerLabel: string,
 	migratedAt: string,
+	projectInfo?: { key: string; name: string },
 ): Promise<void> {
 	const workbook = new ExcelJS.Workbook();
 	const ws = workbook.addWorksheet('Evaluation Results');
@@ -209,32 +205,56 @@ export async function exportEvaluationToXlsx(
 		day: 'numeric',
 	});
 
+	const projectClause = projectInfo
+		? ` (project: ${projectInfo.name} / ${projectInfo.key})`
+		: '';
 	addSheetHeader(
 		ws,
 		headers.length,
 		`Flag Evaluation Report — ${providerLabel} → Datadog`,
-		`Evaluation run on ${evalDate} against migration from ${migratedDate}. Green rows indicate matching results between ${providerLabel} and Datadog. Yellow rows differ and may require investigation before removing the ${providerLabel} flag. Teams listed in the 'Team' column are responsible for verifying their flags and updating code to use the Datadog flag key.`,
+		`Evaluation run on ${evalDate} against migration from ${migratedDate}${projectClause}. Green rows indicate matching results between ${providerLabel} and Datadog. Yellow rows differ and may require investigation before removing the ${providerLabel} flag. Teams listed in the 'Team' column are responsible for verifying their flags and updating code to use the Datadog flag key.`,
 	);
 	addHeaderRow(ws, headers);
+
+	const provider: 'launchdarkly' | 'eppo' =
+		providerLabel.toLowerCase() === 'eppo' ? 'eppo' : 'launchdarkly';
 
 	const sorted = [...evalRows].sort(
 		(a, b) =>
 			a.team.localeCompare(b.team) || a.flagName.localeCompare(b.flagName),
 	);
 
-	for (const row of sorted) {
-		const match = row.error
-			? 'Error'
-			: row.ddStatus !== 'assigned'
-				? '—'
-				: row.match
-					? 'Yes'
-					: 'No';
+	const classifications = sorted.map((r) =>
+		classifyRow({
+			flagKey: r.flagKey,
+			inMigrationFile: r.inMigrationFile,
+			ddStatus: r.ddStatus,
+			providerStatus: r.providerStatus,
+			providerError: r.error,
+			match: r.match,
+			ddMigrationMetadata: r.ddMigrationMetadata,
+			provider,
+		}),
+	);
+
+	for (let i = 0; i < sorted.length; i++) {
+		const row = sorted[i];
+		const classified = classifications[i];
+
+		const match =
+			classified.color === 'error'
+				? 'Error'
+				: row.ddStatus !== 'assigned'
+					? '—'
+					: row.match
+						? 'Yes'
+						: 'No';
 		const ddEnabled =
 			row.ddEnabled === null ? '—' : row.ddEnabled ? 'Yes' : 'No';
-		const migStatus =
-			row.migrationStatus.charAt(0).toUpperCase() +
-			row.migrationStatus.slice(1);
+		const migStatus = row.inMigrationFile
+			? row.migrationStatus.charAt(0).toUpperCase() +
+				row.migrationStatus.slice(1)
+			: '—';
 
 		const dataRow = ws.addRow([
 			row.flagKey,
@@ -246,9 +266,9 @@ export async function exportEvaluationToXlsx(
 			match,
 			migStatus,
 			ddEnabled,
-			row.error ?? '',
+			classified.notes,
 		]);
-		colorRow(dataRow, EVAL_ARGB[evalRowColor(row)]);
+		colorRow(dataRow, CLASSIFIED_ROW_ARGB[classified.color]);
 	}
 
 	const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -256,11 +276,13 @@ export async function exportEvaluationToXlsx(
 	const filepath = path.join(process.cwd(), filename);
 	await workbook.xlsx.writeFile(filepath);
 
-	const matchCount = sorted.filter((r) => r.match).length;
-	const diffCount = sorted.filter(
-		(r) => !r.match && !r.error && r.ddStatus === 'assigned',
+	const matchCount = classifications.filter(
+		(c) => c.color === 'match' || c.color === 'notMigrated',
 	).length;
-	const errorCount = sorted.filter((r) => Boolean(r.error)).length;
+	const diffCount = classifications.filter(
+		(c) => c.color === 'diff' || c.color === 'drift',
+	).length;
+	const errorCount = classifications.filter((c) => c.color === 'error').length;
 
 	console.log();
 	console.log(chalk.green('  Spreadsheet saved!'));
