@@ -1,6 +1,6 @@
 {
-	"name": "dd-flag-migration",
-	"version": "0.1.0-preview.1",
+	"name": "@datadog/dd-flag-migration",
+	"version": "0.1.0",
 	"description": "CLI tool to migrate feature flags to Datadog",
 	"license": "Apache-2.0",
 	"type": "module",
@@ -52,5 +52,23 @@
 	"engines": {
 		"yarn": "1.x"
 	},
-	"packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/DataDog/dd-flag-migration.git"
+	},
+	"keywords": [
+		"feature-flags",
+		"migration",
+		"launchdarkly",
+		"eppo",
+		"datadog",
+		"cli",
+		"devtools",
+		"feature-toggles",
+		"feature-management"
+	],
+	"bugs": {
+		"url": "https://github.com/DataDog/dd-flag-migration/issues"
+	},
+	"homepage": "https://github.com/DataDog/dd-flag-migration#readme"
 }

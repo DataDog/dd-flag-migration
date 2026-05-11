@@ -1,4 +1,4 @@
-# Contributing to dd-flag-migration
+# Contributing to @datadog/dd-flag-migration
 
 Thank you for your interest in contributing to the Datadog Feature Flag Migration tool! This document provides guidelines for contributing to the project.
 

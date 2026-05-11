@@ -80,9 +80,9 @@ jobs:
           VERSION=$(node -p "require('./package.json').version")
           TAG="${{ steps.npm-tag.outputs.tag }}"
 
-          if npm view "dd-flag-migration@$VERSION" --json > /dev/null 2>&1; then
-            echo "⏭️  dd-flag-migration@$VERSION already published, skipping"
+          if npm view "@datadog/dd-flag-migration@$VERSION" --json > /dev/null 2>&1; then
+            echo "⏭️  @datadog/dd-flag-migration@$VERSION already published, skipping"
           else
-            echo "📦 Publishing dd-flag-migration@$VERSION with tag $TAG..."
+            echo "📦 Publishing @datadog/dd-flag-migration@$VERSION with tag $TAG..."
             npm publish --provenance --tag "$TAG"
           fi
