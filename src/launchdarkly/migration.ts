@@ -4,6 +4,7 @@ import type {
 	DatadogEnvironment,
 	DatadogTargetingRule,
 } from '../types.js';
+import { NEGATION_TABLE } from './negation.js';
 import type {
 	LDClause,
 	LDCustomRole,
@@ -107,19 +108,8 @@ export function mapOperator(
 
 	if (directMap[op]) {
 		if (negate) {
-			// Negate by mapping to the inverse comparison operator
-			const negateMap: Record<string, string> = {
-				LT: 'GTE',
-				LTE: 'GT',
-				GT: 'LTE',
-				GTE: 'LT',
-				SEMVER_LT: 'SEMVER_GTE',
-				SEMVER_GT: 'SEMVER_LTE',
-				SEMVER_LTE: 'SEMVER_GT',
-				SEMVER_GTE: 'SEMVER_LT',
-			};
 			const mapped = directMap[op];
-			const negated = negateMap[mapped];
+			const negated = NEGATION_TABLE[mapped];
 			if (!negated) {
 				return {
 					skip: `Negated "${op}" cannot be mapped to a Datadog operator`,
