@@ -50,9 +50,11 @@ import {
 	findProjectEditorRoleKeys,
 	findTeamsWithEditAccess,
 	getEnvsToEnable,
+	hasSemverConditions,
 	mapFlagType,
 	shouldSkipFlag,
 } from './migration.js';
+import { discoverSegmentRefs, migrateSegments } from './segments.js';
 import type { LDEnvironment, LDFlag, LDMigrationFile } from './types.js';
 
 // ─── UI Helpers ──────────────────────────────────────────────────────────────
@@ -743,6 +745,43 @@ async function executeMigration(
 		);
 	}
 
+	// ── Phase 1: Migrate segments as saved filters ─────────────────────────────
+	let savedFilterLookup = new Map<string, string>();
+	if (dryRun) {
+		// Populate the lookup with placeholder IDs so buildAllocations can
+		// accurately simulate the migration for segment-backed flags.
+		const refs = discoverSegmentRefs(detailedFlags, [...envMapping.keys()]);
+		for (let i = 0; i < refs.length; i++) {
+			const { segmentKey, envKey, negated } = refs[i];
+			savedFilterLookup.set(
+				`${segmentKey}:${envKey}:${negated}`,
+				`dry-run-placeholder-${i}`,
+			);
+		}
+	} else {
+		try {
+			const segmentResult = await migrateSegments({
+				ldApiKey,
+				projectKey,
+				selectedFlags: detailedFlags,
+				envMapping,
+				ddApiKey,
+				ddAppKey,
+				ddSite,
+			});
+			savedFilterLookup = segmentResult.savedFilterLookup;
+		} catch (err) {
+			console.log(
+				chalk.yellow(
+					`  ⚠ Segment migration failed: ${err instanceof Error ? err.message : String(err)}`,
+				),
+			);
+			console.log(
+				chalk.dim('    Flags with segmentMatch clauses will be skipped.'),
+			);
+		}
+	}
+
 	if (dryRun) {
 		console.log(chalk.bold.yellow('  Dry run — no flags will be created\n'));
 	}
@@ -824,7 +863,20 @@ async function executeMigration(
 			continue;
 		}
 
-		const allocations = buildAllocations(flag, envMapping);
+		const allocationsResult = buildAllocations(
+			flag,
+			envMapping,
+			savedFilterLookup,
+		);
+		if (!Array.isArray(allocationsResult)) {
+			spinner.warn(
+				`Skipped ${chalk.cyan(flag.key)} — ${allocationsResult.flagSkip}`,
+			);
+			skippedFlags.push({ key: flag.key, reason: allocationsResult.flagSkip });
+			skipped++;
+			continue;
+		}
+		const allocations = allocationsResult;
 		const envsToEnable = getEnvsToEnable(flag, envMapping);
 		const conflict = classifyConflict(datadogFlags, projectKey, flag.key);
 
@@ -1082,6 +1134,9 @@ async function executeMigration(
 					...(usePrefix ? { key_prefix: conflictResolution.prefix } : {}),
 				},
 				...(tags.length > 0 ? { tags } : {}),
+				...(hasSemverConditions(allocations)
+					? { distribution_channel: 'CLIENT' }
+					: {}),
 			};
 
 			if (dryRun) {

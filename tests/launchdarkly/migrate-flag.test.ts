@@ -81,7 +81,15 @@ function migrateFlag(
 	}
 
 	const variants = buildVariants(flag);
-	const allocations = buildAllocations(flag, envMapping);
+	const allocationsResult = buildAllocations(flag, envMapping);
+	if (!Array.isArray(allocationsResult)) {
+		return {
+			skipped: true,
+			skipReason: allocationsResult.flagSkip,
+			envsToEnable: [],
+		};
+	}
+	const allocations = allocationsResult;
 	const envsToEnable = getEnvsToEnable(flag, envMapping);
 	const tags = flag.tags;
 
@@ -629,7 +637,7 @@ describe('migrate a flag with semver operators', () => {
 	});
 });
 
-describe('skip a flag with segmentMatch operator', () => {
+describe('skip a flag with segmentMatch operator (no saved filter lookup)', () => {
 	const flag: LDFlag = {
 		name: 'Segment Flag',
 		kind: 'boolean',
@@ -676,8 +684,8 @@ describe('skip a flag with segmentMatch operator', () => {
 		expect(result.skipped).toBe(true);
 	});
 
-	it('gives a reason mentioning segment targeting', () => {
-		expect(result.skipReason).toContain('Segment targeting');
+	it('gives a reason mentioning segment not migrated', () => {
+		expect(result.skipReason).toContain('segment not migrated');
 	});
 
 	it('does not produce a request', () => {
@@ -768,7 +776,7 @@ describe('migrate a flag with rollout percentages in fallthrough', () => {
 });
 
 describe('migrate a flag with a rule containing mixed supported/unsupported clauses', () => {
-	// If ANY clause in a rule is unsupported, the entire rule is dropped
+	// segmentMatch is now handled — with empty lookup it causes a flag-level skip
 	const flag: LDFlag = {
 		name: 'Mixed Rule Flag',
 		kind: 'boolean',
@@ -784,7 +792,7 @@ describe('migrate a flag with a rule containing mixed supported/unsupported clau
 				on: true,
 				rules: [
 					{
-						// This rule has a segmentMatch clause — entire rule should be dropped
+						// This rule has a segmentMatch clause — now causes flag-level skip (no lookup)
 						_id: 'r1',
 						variation: 0,
 						clauses: [
@@ -808,7 +816,7 @@ describe('migrate a flag with a rule containing mixed supported/unsupported clau
 						trackEvents: false,
 					},
 					{
-						// This rule is fully supported — should be preserved
+						// This rule is fully supported
 						_id: 'r2',
 						variation: 0,
 						clauses: [
@@ -836,19 +844,17 @@ describe('migrate a flag with a rule containing mixed supported/unsupported clau
 
 	const envMapping = new Map([['production', ddProd]]);
 
-	it('is NOT skipped at the flag level (shouldSkipFlag checks entire flag)', () => {
-		// shouldSkipFlag sees the segmentMatch and skips the whole flag
+	it('is NOT skipped at the flag level by shouldSkipFlag (segmentMatch no longer in UNSUPPORTED_OPS)', () => {
+		// shouldSkipFlag no longer skips for segmentMatch
 		const skip = shouldSkipFlag(flag, ['production']);
-		expect(skip.skip).toBe(true);
+		expect(skip.skip).toBe(false);
 	});
 
-	it('but buildAllocations gracefully drops only the unsupported rule', () => {
-		// buildAllocations is more granular — it drops individual rules
-		const allocations = buildAllocations(flag, envMapping);
-		// rule 1 dropped (segmentMatch), rule 2 kept + fallthrough
-		expect(allocations).toHaveLength(2);
-		expect(allocations[0].name).toBe('Enterprise users');
-		expect(allocations[0].key).toContain('rule-1');
+	it('buildAllocations returns flagSkip when segment is not in the lookup', () => {
+		// No lookup provided — segmentMatch clause cannot be resolved → flag-level skip
+		const result = buildAllocations(flag, envMapping);
+		expect(Array.isArray(result)).toBe(false);
+		expect((result as { flagSkip: string }).flagSkip).toBeDefined();
 	});
 });
 
@@ -1100,7 +1106,15 @@ function migrateFlagWithConflicts(
 	}
 
 	const variants = buildVariants(flag);
-	const allocations = buildAllocations(flag, envMapping);
+	const allocationsResult = buildAllocations(flag, envMapping);
+	if (!Array.isArray(allocationsResult)) {
+		return {
+			action: 'skip',
+			skipReason: allocationsResult.flagSkip,
+			envsToEnable: [],
+		};
+	}
+	const allocations = allocationsResult;
 	const envsToEnable = getEnvsToEnable(flag, envMapping);
 	const conflict = classifyConflict(datadogFlags, projectKey, flag.key);
 

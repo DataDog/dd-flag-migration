@@ -3,6 +3,7 @@ import type {
 	LDCustomRole,
 	LDEnvironment,
 	LDFlag,
+	LDSegment,
 	LDTeamWithRoles,
 } from './types.js';
 
@@ -452,6 +453,102 @@ export async function fetchTeamsWithRoles(
 	} catch (err) {
 		if (axios.isAxiosError(err) && err.response?.status === 403) {
 			return [];
+		}
+		throw err;
+	}
+}
+
+// ─── Segments ────────────────────────────────────────────────────────────────
+
+/**
+ * Fetch all segments for a project+environment.
+ * LD uses Link-header pagination (rel="next"). We follow all pages because
+ * needed segments can appear on any page.
+ */
+export async function fetchSegments(
+	apiKey: string,
+	projectKey: string,
+	envKey: string,
+): Promise<LDSegment[]> {
+	const segments: LDSegment[] = [];
+	let url: string | null =
+		`${LD_BASE_URL}/api/v2/segments/${projectKey}/${envKey}?limit=50`;
+
+	type SegmentsPage = {
+		items: Array<Partial<LDSegment>>;
+		_links?: { next?: { href?: string } };
+	};
+
+	while (url !== null) {
+		// Explicit AxiosResponse annotation avoids TS7022 circular-initializer error
+		// that arises when `url` (the while-condition variable) is reassigned from
+		// the same response object inside the loop body.
+		const response: AxiosResponse<SegmentsPage> =
+			await ldClient.get<SegmentsPage>(url, {
+				headers: ldHeaders(apiKey),
+			});
+
+		for (const item of response.data.items ?? []) {
+			segments.push({
+				key: item.key ?? '',
+				name: item.name ?? '',
+				description: item.description,
+				tags: item.tags ?? [],
+				included: item.included ?? [],
+				excluded: item.excluded ?? [],
+				includedContexts: item.includedContexts ?? [],
+				excludedContexts: item.excludedContexts ?? [],
+				rules: item.rules ?? [],
+				deleted: item.deleted ?? false,
+				_flags: item._flags ?? [],
+			});
+		}
+
+		const rawHref = response.data._links?.next?.href ?? null;
+		url =
+			rawHref === null
+				? null
+				: rawHref.startsWith('/')
+					? `${LD_BASE_URL}${rawHref}`
+					: rawHref;
+	}
+
+	return segments;
+}
+
+/**
+ * Fetch a single segment by key. Returns null on 404 (segment was deleted or
+ * never existed). Used as fallback when a needed key is absent from the
+ * list-endpoint pages.
+ */
+export async function fetchSegment(
+	apiKey: string,
+	projectKey: string,
+	envKey: string,
+	segmentKey: string,
+): Promise<LDSegment | null> {
+	try {
+		const response = await ldClient.get<Partial<LDSegment>>(
+			`${LD_BASE_URL}/api/v2/segments/${projectKey}/${envKey}/${segmentKey}`,
+			{ headers: ldHeaders(apiKey) },
+		);
+		const item = response.data;
+		return {
+			key: item.key ?? segmentKey,
+			name: item.name ?? segmentKey,
+			description: item.description,
+			tags: item.tags ?? [],
+			included: item.included ?? [],
+			excluded: item.excluded ?? [],
+			includedContexts: item.includedContexts ?? [],
+			excludedContexts: item.excludedContexts ?? [],
+			rules: item.rules ?? [],
+			deleted: item.deleted ?? false,
+			_flags: item._flags ?? [],
+		};
+	} catch (err) {
+		if (axios.isAxiosError(err) && err.response?.status === 404) {
+			return null;
 		}
 		throw err;
 	}

@@ -145,6 +145,27 @@ export interface LDTeamWithRoles {
 	roles: Array<{ key: string }>;
 }
 
+// ─── LaunchDarkly Segment Types ─────────────────────────────────────────────
+
+export interface LDSegmentContext {
+	contextKind: string;
+	values: string[];
+}
+
+export interface LDSegment {
+	key: string;
+	name: string;
+	description?: string;
+	tags: string[];
+	included: string[];
+	excluded: string[];
+	includedContexts: LDSegmentContext[];
+	excludedContexts: LDSegmentContext[];
+	rules: LDRule[];
+	deleted: boolean;
+	_flags: Array<{ key: string; name: string }>;
+}
+
 // ─── LaunchDarkly Migration File ────────────────────────────────────────────
 
 export interface LDMigrationFile {

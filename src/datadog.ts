@@ -1,11 +1,14 @@
 import axios from 'axios';
 import type {
+	CreateSavedFilterRequest,
 	DatadogAllocationSyncRequest,
 	DatadogCreatedFlag,
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,
 	DatadogFlagEntry,
 	MigrationMetadata,
+	SavedFilterMigrationMetadata,
+	SavedFilterSummary,
 } from './types.js';
 
 function ddHeaders(apiKey: string, appKey: string) {
@@ -429,4 +432,73 @@ export async function applyRestrictionPolicy(
 		},
 		params: { allow_self_lockout: true },
 	});
+}
+
+// ─── Saved Filters ───────────────────────────────────────────────────────────
+
+export async function createSavedFilter(
+	apiKey: string,
+	appKey: string,
+	request: CreateSavedFilterRequest,
+	site = 'datadoghq.com',
+): Promise<{ id: string }> {
+	const baseUrl = `https://api.${site}`;
+	const body = { data: { type: 'saved-filters', attributes: request } };
+	const response = await axios.post<{ data: { id: string } }>(
+		`${baseUrl}/api/v2/feature-flags/saved-filters`,
+		body,
+		{
+			headers: {
+				...ddHeaders(apiKey, appKey),
+				'Content-Type': 'application/json',
+			},
+		},
+	);
+	return { id: response.data.data.id };
+}
+
+/**
+ * List saved filters (paginated). The v2 endpoint does not support filtering
+ * by migration_metadata, so results are paged and matched client-side.
+ */
+export async function listSavedFilters(
+	apiKey: string,
+	appKey: string,
+	opts: {
+		search?: string;
+		offset?: number;
+		include_archived?: boolean;
+	} = {},
+	site = 'datadoghq.com',
+): Promise<{ data: SavedFilterSummary[]; total: number }> {
+	const baseUrl = `https://api.${site}`;
+	const response = await axios.get<{
+		data: Array<{
+			id: string;
+			attributes: {
+				name: string;
+				migration_metadata?: SavedFilterMigrationMetadata;
+			};
+		}>;
+		meta?: { total?: number };
+	}>(`${baseUrl}/api/v2/feature-flags/saved-filters`, {
+		headers: ddHeaders(apiKey, appKey),
+		params: {
+			...(opts.search !== undefined ? { search: opts.search } : {}),
+			...(opts.offset !== undefined ? { offset: opts.offset } : {}),
+			...(opts.include_archived !== undefined
+				? { include_archived: opts.include_archived }
+				: {}),
+		},
+	});
+
+	const data = response.data.data ?? [];
+	return {
+		data: data.map((item) => ({
+			id: item.id,
+			name: item.attributes.name,
+			migration_metadata: item.attributes.migration_metadata,
+		})),
+		total: response.data.meta?.total ?? data.length,
+	};
 }

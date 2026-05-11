@@ -1,6 +1,7 @@
 launchdarkly-requests/
 node_modules/
 dist/
+coverage/
 *.js.map
 *.xlsx
 dry-run*.json

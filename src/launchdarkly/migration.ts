@@ -4,6 +4,7 @@ import type {
 	DatadogEnvironment,
 	DatadogTargetingRule,
 } from '../types.js';
+import { NEGATION_TABLE } from './negation.js';
 import type {
 	LDClause,
 	LDCustomRole,
@@ -35,7 +36,7 @@ type OperatorResult =
 	| { operator: string; values: string[]; skip?: undefined }
 	| { skip: string; operator?: undefined; values?: undefined };
 
-const UNSUPPORTED_OPS = new Set(['segmentMatch', 'before', 'after']);
+const UNSUPPORTED_OPS = new Set(['before', 'after']);
 
 /** Map a single LD operator + negate + values → DD operator + transformed values */
 export function mapOperator(
@@ -45,7 +46,6 @@ export function mapOperator(
 ): OperatorResult {
 	if (UNSUPPORTED_OPS.has(op)) {
 		const reasons: Record<string, string> = {
-			segmentMatch: 'Segment targeting is not supported in Datadog',
 			before: 'Date-based targeting (before/after) is not supported in Datadog',
 			after: 'Date-based targeting (before/after) is not supported in Datadog',
 		};
@@ -108,19 +108,8 @@ export function mapOperator(
 
 	if (directMap[op]) {
 		if (negate) {
-			// Negate by mapping to the inverse comparison operator
-			const negateMap: Record<string, string> = {
-				LT: 'GTE',
-				LTE: 'GT',
-				GT: 'LTE',
-				GTE: 'LT',
-				SEMVER_LT: 'SEMVER_GTE',
-				SEMVER_GT: 'SEMVER_LTE',
-				SEMVER_LTE: 'SEMVER_GT',
-				SEMVER_GTE: 'SEMVER_LT',
-			};
 			const mapped = directMap[op];
-			const negated = negateMap[mapped];
+			const negated = NEGATION_TABLE[mapped];
 			if (!negated) {
 				return {
 					skip: `Negated "${op}" cannot be mapped to a Datadog operator`,
@@ -143,6 +132,40 @@ function escapeRegex(s: string): string {
 function combineRegex(patterns: string[]): string {
 	if (patterns.length === 1) return patterns[0];
 	return patterns.map((p) => `(${p})`).join('|');
+}
+
+// ─── Segment Match Resolution ────────────────────────────────────────────────
+
+export type SegmentMatchResolution =
+	| { combine: 'AND'; savedFilterIds: string[] }
+	| { combine: 'OR'; savedFilterIds: string[] }
+	| { skip: string };
+
+/**
+ * Resolve a segmentMatch clause to saved filter IDs.
+ * negate:false → OR semantics → combine:"OR" (one targeting rule per id)
+ * negate:true  → AND semantics → combine:"AND" (all ids in one targeting rule)
+ */
+export function resolveSegmentMatch(
+	clause: LDClause,
+	envKey: string,
+	savedFilterLookup: Map<string, string>,
+): SegmentMatchResolution {
+	if ((clause.values as unknown[]).length === 0) {
+		return { skip: 'segment not migrated' };
+	}
+
+	const savedFilterIds: string[] = [];
+	for (const segKey of clause.values as string[]) {
+		const mapKey = `${segKey}:${envKey}:${clause.negate}`;
+		const id = savedFilterLookup.get(mapKey);
+		if (!id) return { skip: 'segment not migrated' };
+		savedFilterIds.push(id);
+	}
+
+	return clause.negate
+		? { combine: 'AND', savedFilterIds }
+		: { combine: 'OR', savedFilterIds };
 }
 
 // ─── Skip Detection ──────────────────────────────────────────────────────────
@@ -220,29 +243,76 @@ function slugify(s: string): string {
 
 // ─── Targeting Rule Building ─────────────────────────────────────────────────
 
-/** Convert LD clauses → DD targeting rules. Returns null if any clause is unsupported. */
+export type BuildTargetingRulesResult =
+	| DatadogTargetingRule[]
+	| null
+	| { flagSkip: string };
+
+const FAN_OUT_LIMIT = 100;
+
+/**
+ * Convert LD clauses → DD targeting rules.
+ * Returns null to skip this rule (unsupported non-segment operator — safety net).
+ * Returns { flagSkip } to skip the entire flag (missing segment, fan-out cap).
+ * Returns DatadogTargetingRule[] (may be multiple rules due to OR fan-out).
+ */
 export function buildTargetingRules(
 	clauses: LDClause[],
-): DatadogTargetingRule[] | null {
+	envKey = '',
+	savedFilterLookup: Map<string, string> = new Map(),
+): BuildTargetingRulesResult {
 	if (clauses.length === 0) return [];
 
-	const conditions: DatadogTargetingRule['conditions'] = [];
+	const inlineConditions: DatadogTargetingRule['conditions'] = [];
+	const andCombineIds: string[] = [];
+	const orCombineGroups: string[][] = [];
 
 	for (const clause of clauses) {
-		const result = mapOperator(clause.op, clause.negate, clause.values);
-		if ('skip' in result) return null;
-
-		conditions.push({
-			operator: result.operator,
-			attribute: clause.attribute,
-			value: result.values,
-		});
+		if (clause.op === 'segmentMatch') {
+			const res = resolveSegmentMatch(clause, envKey, savedFilterLookup);
+			if ('skip' in res) return { flagSkip: res.skip };
+			if (res.combine === 'AND') {
+				andCombineIds.push(...res.savedFilterIds);
+			} else {
+				orCombineGroups.push(res.savedFilterIds);
+			}
+		} else {
+			const result = mapOperator(clause.op, clause.negate, clause.values);
+			if ('skip' in result) return null; // unsupported non-segment op (safety net)
+			inlineConditions.push({
+				operator: result.operator,
+				attribute: clause.attribute,
+				value: result.values,
+			});
+		}
 	}
 
-	return [{ conditions }];
-}
+	// Fan-out cap: product of all OR-combine group sizes
+	const fanOutSize = orCombineGroups.reduce((prod, g) => prod * g.length, 1);
+	if (fanOutSize > FAN_OUT_LIMIT) {
+		return { flagSkip: 'segmentMatch fan-out exceeds 100 groups' };
+	}
 
-// ─── Allocation Building ─────────────────────────────────────────────────────
+	// Cartesian product of OR-combine groups
+	let fanOutCombinations: string[][] = [[]];
+	for (const group of orCombineGroups) {
+		const next: string[][] = [];
+		for (const existing of fanOutCombinations) {
+			for (const id of group) {
+				next.push([...existing, id]);
+			}
+		}
+		fanOutCombinations = next;
+	}
+
+	return fanOutCombinations.map((fanOutIds) => ({
+		conditions: [
+			...fanOutIds.map((id) => ({ saved_filter_id: id })),
+			...andCombineIds.map((id) => ({ saved_filter_id: id })),
+			...inlineConditions,
+		],
+	}));
+}
 
 /** Build variant weights from a rollout or single variation index */
 function buildVariantWeights(
@@ -276,11 +346,17 @@ function buildVariantWeights(
 	}));
 }
 
-/** Build DD allocations for a single LD flag across selected environments */
+// ─── Allocation Building ─────────────────────────────────────────────────────
+
+export type BuildAllocationsResult =
+	| DatadogAllocationForFlagCreation[]
+	| { flagSkip: string };
+
 export function buildAllocations(
 	flag: LDFlag,
 	envMapping: Map<string, DatadogEnvironment>,
-): DatadogAllocationForFlagCreation[] {
+	savedFilterLookup: Map<string, string> = new Map(),
+): BuildAllocationsResult {
 	const allocations: DatadogAllocationForFlagCreation[] = [];
 
 	for (const [ldEnvKey, ddEnv] of envMapping) {
@@ -317,14 +393,28 @@ export function buildAllocations(
 			});
 		}
 
-		// 2. Rules → one allocation per rule
+		// 2. Rules → one allocation per rule (targeting_rules may fan out)
 		for (let ri = 0; ri < envConfig.rules.length; ri++) {
 			const rule = envConfig.rules[ri];
 			if (rule.disabled) continue;
 
-			const targetingRules = buildTargetingRules(rule.clauses);
-			if (targetingRules === null) continue; // unsupported operator in clause
+			const targetingRulesResult = buildTargetingRules(
+				rule.clauses,
+				ldEnvKey,
+				savedFilterLookup,
+			);
 
+			if (
+				targetingRulesResult !== null &&
+				!Array.isArray(targetingRulesResult)
+			) {
+				return {
+					flagSkip: `${targetingRulesResult.flagSkip} (env: ${ldEnvKey})`,
+				};
+			}
+			if (targetingRulesResult === null) continue; // skip this rule
+
+			const targetingRules = targetingRulesResult;
 			const variantWeights = buildVariantWeights(
 				flag,
 				rule.variation,
@@ -363,6 +453,31 @@ export function buildAllocations(
 	}
 
 	return allocations;
+}
+
+// ─── Distribution Channel Detection ─────────────────────────────────────────
+
+const SEMVER_OPS = new Set([
+	'SEMVER_EQ',
+	'SEMVER_NEQ',
+	'SEMVER_LT',
+	'SEMVER_LTE',
+	'SEMVER_GT',
+	'SEMVER_GTE',
+]);
+
+/** Returns true if any allocation contains a SEMVER targeting rule condition. */
+export function hasSemverConditions(
+	allocations: DatadogAllocationForFlagCreation[],
+): boolean {
+	for (const alloc of allocations) {
+		for (const rule of alloc.targeting_rules ?? []) {
+			for (const cond of rule.conditions) {
+				if (cond.operator && SEMVER_OPS.has(cond.operator)) return true;
+			}
+		}
+	}
+	return false;
 }
 
 // ─── Environment Enablement ──────────────────────────────────────────────────

@@ -55,9 +55,12 @@ export interface MigrationEnvironmentMapping {
 }
 
 export interface DatadogCondition {
-	operator: string;
-	attribute: string;
-	value: string[];
+	// Inline shape — all three present when saved_filter_id is absent
+	operator?: string;
+	attribute?: string;
+	value?: string[];
+	// SF-ref shape — present alone when this condition references a saved filter
+	saved_filter_id?: string;
 }
 
 export interface DatadogTargetingRule {
@@ -86,11 +89,35 @@ export interface DatadogCreateFlagRequest {
 	allocations?: DatadogAllocationForFlagCreation[];
 	migration_metadata?: MigrationMetadata;
 	tags?: string[];
+	distribution_channel?: 'CLIENT' | 'SERVER' | 'BOTH';
 }
 
 export interface DatadogCreatedFlag {
 	id: string;
 	key: string;
+}
+
+export interface SavedFilterMigrationMetadata {
+	provider: 'launchdarkly';
+	project_key: string;
+	segment_key: string;
+	environment_key: string;
+	negated: boolean;
+	name_prefix?: string;
+}
+
+export interface SavedFilterSummary {
+	id: string;
+	name: string;
+	migration_metadata?: SavedFilterMigrationMetadata;
+}
+
+export interface CreateSavedFilterRequest {
+	name: string;
+	description?: string;
+	creation_type: 'RULES' | 'LIST';
+	targeting_rules: DatadogTargetingRule[];
+	migration_metadata?: SavedFilterMigrationMetadata;
 }
 
 // ─── Evaluation Types ────────────────────────────────────────────────────────
