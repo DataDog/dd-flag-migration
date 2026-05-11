@@ -1,34 +1,43 @@
-# Contributing to dd-flag-migration
+# Contributing to @datadog/dd-flag-migration
 
 Thank you for your interest in contributing to the Datadog Feature Flag Migration tool! This document provides guidelines for contributing to the project.
 
 ## Development Setup
 
-1. **Install dependencies:**
+1. **Clone the repo:**
+
+   ```bash
+   git clone https://github.com/DataDog/dd-flag-migration.git
+   cd dd-flag-migration
+   ```
+
+2. **Install dependencies:**
 
    ```bash
    yarn setup
    ```
 
-2. **Build:**
+   > **Note:** Use `yarn setup` instead of `yarn install`. This project uses [`@lavamoat/allow-scripts`](https://www.npmjs.com/package/@lavamoat/allow-scripts) to protect against supply-chain attacks by blocking all dependency lifecycle scripts by default. `yarn setup` runs `yarn install` and then selectively executes only the explicitly allowed postinstall scripts.
+
+3. **Build:**
 
    ```bash
    yarn build
    ```
 
-3. **Run tests:**
+4. **Run tests:**
 
    ```bash
    yarn test
    ```
 
-4. **Type checking:**
+5. **Type checking:**
 
    ```bash
    yarn typecheck
    ```
 
-5. **Linting:**
+6. **Linting:**
    ```bash
    yarn lint
    yarn lint:fix  # Auto-fix issues
@@ -39,6 +48,21 @@ Before submitting changes, always run:
 ```bash
 yarn typecheck && yarn lint:fix && yarn test
 ```
+
+### Adding new packages
+
+When you add a new dependency that has lifecycle scripts (`preinstall`, `install`, or `postinstall`), you'll see this error the next time you run `yarn allow-scripts`:
+
+```
+@lavamoat/allow-scripts has detected dependencies without configuration. explicit configuration required.
+run "allow-scripts auto" to automatically populate the configuration.
+```
+
+To fix this:
+
+1. Inspect the new dependency's install scripts to verify they are safe.
+2. Run `yarn allow-scripts auto` to add the new dependency to the allowlist in `package.json`.
+3. Run `yarn setup` to re-install with the newly allowed scripts executing.
 
 ## Release Process
 

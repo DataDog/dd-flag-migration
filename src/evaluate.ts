@@ -116,7 +116,9 @@ async function selectMigrationFile(useLatest = false): Promise<MigrationFile> {
 	if (!fs.existsSync(CONFIG_DIR)) {
 		console.log(chalk.red('\n  No migration files found.'));
 		console.log(
-			chalk.gray(`  Run 'yarn migrate' to perform a migration first.\n`),
+			chalk.gray(
+				`  Run 'dd-flag-migration migrate' to perform a migration first.\n`,
+			),
 		);
 		process.exit(1);
 	}
@@ -130,7 +132,9 @@ async function selectMigrationFile(useLatest = false): Promise<MigrationFile> {
 	if (files.length === 0) {
 		console.log(chalk.red('\n  No migration files found.'));
 		console.log(
-			chalk.gray(`  Run 'yarn migrate' to perform a migration first.\n`),
+			chalk.gray(
+				`  Run 'dd-flag-migration migrate' to perform a migration first.\n`,
+			),
 		);
 		process.exit(1);
 	}
