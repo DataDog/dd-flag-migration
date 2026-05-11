@@ -465,6 +465,31 @@ export function buildAllocations(
 	return allocations;
 }
 
+// ─── Distribution Channel Detection ─────────────────────────────────────────
+
+const SEMVER_OPS = new Set([
+	'SEMVER_EQ',
+	'SEMVER_NEQ',
+	'SEMVER_LT',
+	'SEMVER_LTE',
+	'SEMVER_GT',
+	'SEMVER_GTE',
+]);
+
+/** Returns true if any allocation contains a SEMVER targeting rule condition. */
+export function hasSemverConditions(
+	allocations: DatadogAllocationForFlagCreation[],
+): boolean {
+	for (const alloc of allocations) {
+		for (const rule of alloc.targeting_rules ?? []) {
+			for (const cond of rule.conditions) {
+				if (cond.operator && SEMVER_OPS.has(cond.operator)) return true;
+			}
+		}
+	}
+	return false;
+}
+
 // ─── Environment Enablement ──────────────────────────────────────────────────
 
 /** Determine which DD environments should be enabled for a flag */

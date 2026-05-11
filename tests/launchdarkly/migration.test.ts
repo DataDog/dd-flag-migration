@@ -10,6 +10,7 @@ import {
 	findProjectEditorRoleKeys,
 	findTeamsWithEditAccess,
 	getEnvsToEnable,
+	hasSemverConditions,
 	mapFlagType,
 	mapOperator,
 	resolveSegmentMatch,
@@ -1718,5 +1719,115 @@ describe('buildAllocations — segmentMatch', () => {
 		expect(ruleAlloc.targeting_rules?.[0].conditions[1]).toEqual({
 			saved_filter_id: 'sf-not-b',
 		});
+	});
+});
+
+describe('hasSemverConditions', () => {
+	it('returns false for empty allocations', () => {
+		expect(hasSemverConditions([])).toBe(false);
+	});
+
+	it('returns false when no targeting rules are present', () => {
+		expect(
+			hasSemverConditions([
+				{
+					environment_id: 'env-1',
+					name: 'alloc',
+					key: 'alloc-key',
+					type: 'FEATURE_GATE',
+					variant_weights: [{ variant_key: 'on', value: 100 }],
+				},
+			]),
+		).toBe(false);
+	});
+
+	it('returns false when conditions use non-SEMVER operators', () => {
+		expect(
+			hasSemverConditions([
+				{
+					environment_id: 'env-1',
+					name: 'alloc',
+					key: 'alloc-key',
+					type: 'FEATURE_GATE',
+					variant_weights: [{ variant_key: 'on', value: 100 }],
+					targeting_rules: [
+						{
+							conditions: [
+								{ operator: 'ONE_OF', attribute: 'key', value: ['user-1'] },
+							],
+						},
+					],
+				},
+			]),
+		).toBe(false);
+	});
+
+	it('returns true when any condition uses a SEMVER operator', () => {
+		for (const op of [
+			'SEMVER_EQ',
+			'SEMVER_NEQ',
+			'SEMVER_LT',
+			'SEMVER_LTE',
+			'SEMVER_GT',
+			'SEMVER_GTE',
+		]) {
+			expect(
+				hasSemverConditions([
+					{
+						environment_id: 'env-1',
+						name: 'alloc',
+						key: 'alloc-key',
+						type: 'FEATURE_GATE',
+						variant_weights: [{ variant_key: 'on', value: 100 }],
+						targeting_rules: [
+							{
+								conditions: [
+									{ operator: op, attribute: 'version', value: ['1.0.0'] },
+								],
+							},
+						],
+					},
+				]),
+			).toBe(true);
+		}
+	});
+
+	it('returns true when SEMVER condition is in a second allocation', () => {
+		expect(
+			hasSemverConditions([
+				{
+					environment_id: 'env-1',
+					name: 'alloc-1',
+					key: 'alloc-1-key',
+					type: 'FEATURE_GATE',
+					variant_weights: [{ variant_key: 'on', value: 100 }],
+					targeting_rules: [
+						{
+							conditions: [
+								{ operator: 'ONE_OF', attribute: 'key', value: ['u'] },
+							],
+						},
+					],
+				},
+				{
+					environment_id: 'env-1',
+					name: 'alloc-2',
+					key: 'alloc-2-key',
+					type: 'FEATURE_GATE',
+					variant_weights: [{ variant_key: 'on', value: 100 }],
+					targeting_rules: [
+						{
+							conditions: [
+								{
+									operator: 'SEMVER_GTE',
+									attribute: 'appVersion',
+									value: ['2.0.0'],
+								},
+							],
+						},
+					],
+				},
+			]),
+		).toBe(true);
 	});
 });

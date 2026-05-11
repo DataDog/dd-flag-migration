@@ -50,6 +50,7 @@ import {
 	findProjectEditorRoleKeys,
 	findTeamsWithEditAccess,
 	getEnvsToEnable,
+	hasSemverConditions,
 	mapFlagType,
 	shouldSkipFlag,
 } from './migration.js';
@@ -1122,6 +1123,9 @@ async function executeMigration(
 					...(usePrefix ? { key_prefix: conflictResolution.prefix } : {}),
 				},
 				...(tags.length > 0 ? { tags } : {}),
+				...(hasSemverConditions(allocations)
+					? { distribution_channel: 'CLIENT' }
+					: {}),
 			};
 
 			if (dryRun) {

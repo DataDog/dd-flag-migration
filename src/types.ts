@@ -89,6 +89,7 @@ export interface DatadogCreateFlagRequest {
 	allocations?: DatadogAllocationForFlagCreation[];
 	migration_metadata?: MigrationMetadata;
 	tags?: string[];
+	distribution_channel?: 'CLIENT' | 'SERVER' | 'BOTH';
 }
 
 export interface DatadogCreatedFlag {
