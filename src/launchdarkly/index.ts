@@ -54,7 +54,7 @@ import {
 	mapFlagType,
 	shouldSkipFlag,
 } from './migration.js';
-import { migrateSegments } from './segments.js';
+import { discoverSegmentRefs, migrateSegments } from './segments.js';
 import type { LDEnvironment, LDFlag, LDMigrationFile } from './types.js';
 
 // ─── UI Helpers ──────────────────────────────────────────────────────────────
@@ -747,7 +747,18 @@ async function executeMigration(
 
 	// ── Phase 1: Migrate segments as saved filters ─────────────────────────────
 	let savedFilterLookup = new Map<string, string>();
-	if (!dryRun) {
+	if (dryRun) {
+		// Populate the lookup with placeholder IDs so buildAllocations can
+		// accurately simulate the migration for segment-backed flags.
+		const refs = discoverSegmentRefs(detailedFlags, [...envMapping.keys()]);
+		for (let i = 0; i < refs.length; i++) {
+			const { segmentKey, envKey, negated } = refs[i];
+			savedFilterLookup.set(
+				`${segmentKey}:${envKey}:${negated}`,
+				`dry-run-placeholder-${i}`,
+			);
+		}
+	} else {
 		try {
 			const segmentResult = await migrateSegments({
 				ldApiKey,

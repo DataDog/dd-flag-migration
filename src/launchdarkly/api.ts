@@ -504,7 +504,13 @@ export async function fetchSegments(
 			});
 		}
 
-		url = response.data._links?.next?.href ?? null;
+		const rawHref = response.data._links?.next?.href ?? null;
+		url =
+			rawHref === null
+				? null
+				: rawHref.startsWith('/')
+					? `${LD_BASE_URL}${rawHref}`
+					: rawHref;
 	}
 
 	return segments;
