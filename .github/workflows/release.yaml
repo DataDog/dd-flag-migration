@@ -43,6 +43,7 @@ jobs:
         with:
           node-version: '24'
           cache: 'yarn'
+          registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies
         run: yarn install && yarn allow-scripts
