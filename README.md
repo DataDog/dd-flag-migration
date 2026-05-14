@@ -17,34 +17,28 @@ A CLI tool for migrating feature flags from your current provider into [Datadog 
 
 ## Installation
 
+Install globally so the `dd-flag-migration` command is available anywhere:
+
 ```bash
-git clone https://github.com/DataDog/dd-flag-migration.git
-cd dd-flag-migration
-yarn setup
+npm install -g @datadog/dd-flag-migration
 ```
 
-> **Note:** Use `yarn setup` instead of `yarn install`. This project uses [`@lavamoat/allow-scripts`](https://www.npmjs.com/package/@lavamoat/allow-scripts) to protect against supply-chain attacks by blocking all dependency lifecycle scripts by default. `yarn setup` runs `yarn install` and then selectively executes only the explicitly allowed postinstall scripts.
+Or run without installing using `npx`:
 
-### Adding new packages
-
-When you add a new dependency that has lifecycle scripts (`preinstall`, `install`, or `postinstall`), you'll see this error the next time you run `yarn allow-scripts`:
-
-```
-@lavamoat/allow-scripts has detected dependencies without configuration. explicit configuration required.
-run "allow-scripts auto" to automatically populate the configuration.
+```bash
+npx @datadog/dd-flag-migration migrate
+npx @datadog/dd-flag-migration evaluate
 ```
 
-To fix this:
+### Contributing / running from source
 
-1. Inspect the new dependency's install scripts to verify they are safe.
-2. Run `yarn allow-scripts auto` to add the new dependency to the allowlist in `package.json`.
-3. Run `yarn setup` to re-install with the newly allowed scripts executing.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
 ## Credentials you'll need
 
-### For migration (`yarn migrate`)
+### For migration
 
 #### Eppo
 
@@ -80,7 +74,7 @@ Your Datadog Application Key must have the following scopes enabled:
 
 To set these permissions, go to **Organization Settings → Application Keys**, select your key, and enable the scopes listed above. The feature flag scopes are under the **Feature Flags** section; `restriction_policies_read` and `restriction_policies_write` are under **Access Management**; `teams_read` is under **Teams**.
 
-### For evaluation (`yarn evaluate`)
+### For evaluation
 
 Everything above, plus:
 
@@ -96,7 +90,7 @@ All credentials are prompted interactively and saved to `~/.dd-flag-migration/co
 ## Step 1 — Migrate flags
 
 ```bash
-yarn migrate
+dd-flag-migration migrate
 ```
 
 The tool will walk you through:
@@ -134,7 +128,7 @@ To create and manage sub-organizations, see [Multi-Organization Accounts](https:
 To preview what would be created without making any changes:
 
 ```bash
-yarn migrate --dry-run
+dd-flag-migration migrate --dry-run
 ```
 
 This writes the full list of API requests that would be sent to a `dry-run-<timestamp>.json` file in the current directory.
@@ -146,7 +140,7 @@ This writes the full list of API requests that would be sent to a `dry-run-<time
 Once flags have been migrated, run the evaluation to compare how flags are evaluated in Eppo vs. Datadog for the same inputs:
 
 ```bash
-yarn evaluate
+dd-flag-migration evaluate
 ```
 
 The tool will:
@@ -174,7 +168,7 @@ You can optionally export the full results to an `.xlsx` file.
 Example for scripted use:
 
 ```bash
-yarn evaluate \
+dd-flag-migration evaluate \
   --use-saved-keys \
   --use-latest-migration \
   --test-subject-id=user-123 \
