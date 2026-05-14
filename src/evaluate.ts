@@ -13,6 +13,7 @@ import {
 	getDatadogSite,
 	saveDatadogClientToken,
 	saveDatadogKeys,
+	saveDatadogSite,
 } from './config.js';
 import {
 	evaluateEppoFlag,
@@ -244,8 +245,35 @@ async function promptForDatadogClientToken(
 	return token.trim();
 }
 
-function getDatadogSiteFromConfig(): string {
-	return getDatadogSite() ?? 'datadoghq.com';
+async function promptForDatadogSite(useSaved = false): Promise<string> {
+	const stored = getDatadogSite();
+
+	if (stored && useSaved) {
+		console.log(chalk.gray(`  Using saved Datadog site: ${stored}\n`));
+		return stored;
+	}
+
+	if (stored) {
+		const useStored = await confirm({
+			message: `Use your saved Datadog site (${stored})?`,
+			default: true,
+		});
+		if (useStored) return stored;
+	}
+
+	console.log(
+		chalk.gray('  (e.g. "datadoghq.com", "datadoghq.eu", "us5.datadoghq.com")'),
+	);
+	const site = await input({
+		message: 'Which Datadog site does your org use?',
+		default: 'datadoghq.com',
+		validate: (v) => (v.trim().length > 0 ? true : 'Site cannot be empty'),
+	});
+
+	const trimmed = site.trim();
+	saveDatadogSite(trimmed);
+	console.log(chalk.gray('  Site saved for future sessions.\n'));
+	return trimmed;
 }
 
 async function promptForDatadogKeys(
@@ -878,10 +906,10 @@ async function main(): Promise<void> {
 	}
 
 	// 2. Collect Datadog credentials
+	const ddSite = await promptForDatadogSite(useSavedKeys);
 	const { apiKey: ddApiKey, appKey: ddAppKey } =
 		await promptForDatadogKeys(useSavedKeys);
 	const ddClientToken = await promptForDatadogClientToken(useSavedKeys);
-	const ddSite = getDatadogSiteFromConfig();
 
 	// 3. Select Datadog environment (resolved via API)
 	const isLD = migration.provider === 'launchdarkly';

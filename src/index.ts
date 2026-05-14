@@ -1,7 +1,12 @@
 #!/usr/bin/env node
 import { select } from '@inquirer/prompts';
 import chalk from 'chalk';
-import { getDatadogKeys, getDatadogSite, saveDatadogKeys } from './config.js';
+import {
+	getDatadogKeys,
+	getDatadogSite,
+	saveDatadogKeys,
+	saveDatadogSite,
+} from './config.js';
 import { validateDatadogKeys } from './datadog.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -48,6 +53,33 @@ async function selectProvider(): Promise<ProviderValue> {
 			short: p.name,
 		})),
 	});
+}
+
+async function promptForDatadogSite(): Promise<string> {
+	const { confirm, input } = await import('@inquirer/prompts');
+	const stored = getDatadogSite();
+
+	if (stored) {
+		const useStored = await confirm({
+			message: `Use your saved Datadog site (${stored})?`,
+			default: true,
+		});
+		if (useStored) return stored;
+	}
+
+	console.log(
+		chalk.gray('  (e.g. "datadoghq.com", "datadoghq.eu", "us5.datadoghq.com")'),
+	);
+	const site = await input({
+		message: 'Which Datadog site does your org use?',
+		default: 'datadoghq.com',
+		validate: (v) => (v.trim().length > 0 ? true : 'Site cannot be empty'),
+	});
+
+	const trimmed = site.trim();
+	saveDatadogSite(trimmed);
+	console.log(chalk.gray('  Site saved for future sessions.\n'));
+	return trimmed;
 }
 
 async function promptForDatadogKeys(): Promise<{
@@ -127,8 +159,8 @@ async function main(): Promise<void> {
 	);
 	console.log();
 
+	const ddSite = await promptForDatadogSite();
 	const { apiKey: ddApiKey, appKey: ddAppKey } = await promptForDatadogKeys();
-	const ddSite = getDatadogSite() ?? 'datadoghq.com';
 
 	if (provider === 'launchdarkly') {
 		const { runLaunchDarklyMigration } = await import(
