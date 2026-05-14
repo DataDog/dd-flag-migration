@@ -14,7 +14,7 @@ jobs:
 
     strategy:
       matrix:
-        node-version: [20.x]
+        node-version: [24.x]
 
     steps:
       - name: Checkout code
@@ -30,7 +30,7 @@ jobs:
           cache: yarn
 
       - name: Install dependencies
-        run: yarn install --immutable && yarn allow-scripts
+        run: yarn install --immutable
 
       - name: Lint
         run: yarn lint
