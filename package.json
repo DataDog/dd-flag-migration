@@ -5,9 +5,7 @@
 	"license": "Apache-2.0",
 	"type": "module",
 	"main": "dist/cli.js",
-	"bin": {
-		"dd-flag-migration": "dist/cli.js"
-	},
+	"bin": "dist/cli.js",
 	"scripts": {
 		"setup": "yarn install && yarn allow-scripts",
 		"migrate": "tsx src/cli.ts migrate",
@@ -49,8 +47,9 @@
 			"jest>@jest/core>jest-resolve>unrs-resolver": true
 		}
 	},
+	"packageManager": "yarn@4.10.3",
 	"engines": {
-		"yarn": "1.x"
+		"yarn": ">=4.10.3"
 	},
 	"repository": {
 		"type": "git",
