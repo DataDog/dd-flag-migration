@@ -49,6 +49,7 @@
 	},
 	"packageManager": "yarn@4.10.3",
 	"engines": {
+		"node": ">=18",
 		"yarn": ">=4.10.3"
 	},
 	"repository": {
