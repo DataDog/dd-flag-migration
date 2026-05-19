@@ -417,13 +417,7 @@ async function selectDDEnvironment(
 	const envId = chosen.datadogEnvId;
 	const sourceEnvName = chosen.sourceEnvName;
 
-	if (matched.queries.length === 1 || flagEnvironment !== undefined)
-		return { ddEnvName: matched.queries[0], envId, sourceEnvName };
-
-	const ddEnvName = await select<string>({
-		message: `Select a DD_ENV for "${chosen.datadogEnvName}":`,
-		choices: matched.queries.map((q) => ({ name: q, value: q })),
-	});
+	const ddEnvName = matched.queries[0];
 	return { ddEnvName, envId, sourceEnvName };
 }
 
