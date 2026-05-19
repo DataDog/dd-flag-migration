@@ -108,15 +108,15 @@ async function promptForDatadogKeys(): Promise<{
 					'  restriction_policies_write, teams_read',
 			),
 		);
-		const apiKey = await password({
-			message: 'Enter your Datadog API key:',
-			validate: (input) =>
-				input.trim().length > 0 ? true : 'API key cannot be empty',
-		});
 		const appKey = await password({
 			message: 'Enter your Datadog Application key:',
 			validate: (input) =>
 				input.trim().length > 0 ? true : 'Application key cannot be empty',
+		});
+		const apiKey = await password({
+			message: 'Enter your Datadog API key:',
+			validate: (input) =>
+				input.trim().length > 0 ? true : 'API key cannot be empty',
 		});
 
 		const spinner = ora('Validating Datadog keys…').start();

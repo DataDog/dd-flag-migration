@@ -298,14 +298,14 @@ async function promptForDatadogKeys(
 		if (useStored) return { apiKey: stored.apiKey, appKey: stored.appKey };
 	}
 
-	const apiKey = await password({
-		message: 'Enter your Datadog API key:',
-		validate: (v) => (v.trim().length > 0 ? true : 'API key cannot be empty'),
-	});
 	const appKey = await password({
 		message: 'Enter your Datadog Application key:',
 		validate: (v) =>
 			v.trim().length > 0 ? true : 'Application key cannot be empty',
+	});
+	const apiKey = await password({
+		message: 'Enter your Datadog API key:',
+		validate: (v) => (v.trim().length > 0 ? true : 'API key cannot be empty'),
 	});
 
 	saveDatadogKeys(apiKey.trim(), appKey.trim());
@@ -417,13 +417,7 @@ async function selectDDEnvironment(
 	const envId = chosen.datadogEnvId;
 	const sourceEnvName = chosen.sourceEnvName;
 
-	if (matched.queries.length === 1 || flagEnvironment !== undefined)
-		return { ddEnvName: matched.queries[0], envId, sourceEnvName };
-
-	const ddEnvName = await select<string>({
-		message: `Select a DD_ENV for "${chosen.datadogEnvName}":`,
-		choices: matched.queries.map((q) => ({ name: q, value: q })),
-	});
+	const ddEnvName = matched.queries[0];
 	return { ddEnvName, envId, sourceEnvName };
 }
 

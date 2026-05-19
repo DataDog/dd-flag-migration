@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.1] — 2026-05-19
+
+### CLI
+
+- Prompt for Application key before API key to match the order of the help text shown above the prompts
+- Auto-select the first available DD_ENV query during evaluation instead of prompting the user to choose
+
+### Requirements
+
+- Require Node.js >=18
+
 ## [0.1.0] — 2026-05-11
 
 First public release.
