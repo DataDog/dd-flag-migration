@@ -726,7 +726,11 @@ export async function runEppoMigration(
 
 	try {
 		[flags, datadogKeys, datadogEnvs] = await Promise.all([
-			fetchEppoFlags(apiKey),
+			fetchEppoFlags(apiKey, {
+				onProgress: (fetched) => {
+					spinner.text = `Loading data… (${fetched} Eppo flag${fetched === 1 ? '' : 's'} fetched)`;
+				},
+			}),
 			fetchDatadogFlagKeys(ddApiKey, ddAppKey, ddSite),
 			fetchDatadogEnvironments(ddApiKey, ddAppKey, ddSite),
 		]);
