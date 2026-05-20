@@ -914,9 +914,21 @@ async function executeMigration(
 			const syncTags = flag.tags;
 
 			if (envsToEnable.length === 0) {
-				// Apply restriction policy even when there's nothing else to sync.
-				if (editorTeamIds.length > 0) {
-					if (dryRun) {
+				// Sync tags and restriction policy even when no new environments need enabling.
+				if (dryRun) {
+					if (syncTags.length > 0) {
+						dryRunRequests.push({
+							method: 'PUT',
+							path: `/api/v2/feature-flags/${existingFlagId}`,
+							body: {
+								data: {
+									type: 'feature-flags',
+									attributes: { tags: syncTags },
+								},
+							},
+						});
+					}
+					if (editorTeamIds.length > 0) {
 						const existingBindings = await fetchRestrictionPolicy(
 							ddApiKey,
 							ddAppKey,
@@ -930,7 +942,18 @@ async function executeMigration(
 								existingBindings,
 							),
 						);
-					} else {
+					}
+				} else {
+					if (syncTags.length > 0) {
+						await updateFlagTags(
+							ddApiKey,
+							ddAppKey,
+							existingFlagId,
+							syncTags,
+							ddSite,
+						);
+					}
+					if (editorTeamIds.length > 0) {
 						await applyRestrictionPolicyForFlag(
 							ddApiKey,
 							ddAppKey,
@@ -944,14 +967,25 @@ async function executeMigration(
 				}
 				const policyLabel =
 					editorTeamIds.length > 0 ? ' (permissions refreshed)' : '';
-				spinner.succeed(
-					`${chalk.cyan(flag.key)} — already in Datadog, nothing to sync${policyLabel}`,
-				);
-				skippedFlags.push({
-					key: flag.key,
-					reason: 'Already in Datadog, no new environments to enable',
-				});
-				skipped++;
+				if (syncTags.length > 0) {
+					const tagLabel = `${syncTags.length} tag(s)`;
+					spinner.succeed(
+						dryRun
+							? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (${tagLabel}${policyLabel})`
+							: `Synced ${chalk.cyan(flag.key)} (${tagLabel}${policyLabel})`,
+					);
+					syncedFlagKeys.push(flag.key);
+					synced++;
+				} else {
+					spinner.succeed(
+						`${chalk.cyan(flag.key)} — already in Datadog, nothing to sync${policyLabel}`,
+					);
+					skippedFlags.push({
+						key: flag.key,
+						reason: 'Already in Datadog, no new environments to enable',
+					});
+					skipped++;
+				}
 				continue;
 			}
 

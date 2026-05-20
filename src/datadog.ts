@@ -168,14 +168,9 @@ export async function updateFlagTags(
 	tags: string[],
 	site = 'datadoghq.com',
 ): Promise<void> {
-	// The DD API replaces tags entirely on PUT, so fetch existing tags
-	// and merge to avoid dropping manually-added tags.
-	const existing = await fetchFlagTags(apiKey, appKey, flagId, site);
-	const merged = [...new Set([...tags, ...existing])];
-
 	const baseUrl = `https://api.${site}`;
 	const body = {
-		data: { type: 'feature-flags', attributes: { tags: merged } },
+		data: { type: 'feature-flags', attributes: { tags } },
 	};
 	await axios.put(`${baseUrl}/api/v2/feature-flags/${flagId}`, body, {
 		headers: {

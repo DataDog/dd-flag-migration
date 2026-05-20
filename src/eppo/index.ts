@@ -409,15 +409,47 @@ async function confirmMigration(
 
 		if (existingFlagId) {
 			// Flag already exists in Datadog — sync targeting and enable in new environments
+			const syncTags = flag.tag_names ?? [];
+
 			if (envsToEnable.length === 0) {
-				spinner.succeed(
-					`${chalk.cyan(flag.key)} — already in Datadog, nothing to sync`,
-				);
-				skippedFlags.push({
-					key: flag.key,
-					reason: 'Already in Datadog, no new environments to enable',
-				});
-				skipped++;
+				// Sync tags even when no new environments need to be enabled.
+				if (syncTags.length > 0) {
+					if (dryRun) {
+						dryRunRequests.push({
+							method: 'PUT',
+							path: `/api/v2/feature-flags/${existingFlagId}`,
+							body: {
+								data: {
+									type: 'feature-flags',
+									attributes: { tags: syncTags },
+								},
+							},
+						});
+					} else {
+						await updateFlagTags(
+							ddApiKey,
+							ddAppKey,
+							existingFlagId,
+							syncTags,
+							site,
+						);
+					}
+					spinner.succeed(
+						dryRun
+							? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (${syncTags.length} tag(s))`
+							: `Synced ${chalk.cyan(flag.key)} (${syncTags.length} tag(s))`,
+					);
+					synced++;
+				} else {
+					spinner.succeed(
+						`${chalk.cyan(flag.key)} — already in Datadog, nothing to sync`,
+					);
+					skippedFlags.push({
+						key: flag.key,
+						reason: 'Already in Datadog, no new environments to enable',
+					});
+					skipped++;
+				}
 				continue;
 			}
 
@@ -425,8 +457,6 @@ async function confirmMigration(
 				`${chalk.cyan(flag.key)} exists in Datadog — targeting filters in ${envsToEnable.map((e) => e.name).join(', ')} will be overwritten`,
 			);
 			spinner = ora(`Migrating ${chalk.cyan(flag.key)}…`).start();
-
-			const syncTags = flag.tag_names ?? [];
 
 			if (dryRun) {
 				let syncFilterCount = 0;
