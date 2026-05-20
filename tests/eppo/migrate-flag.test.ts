@@ -8,6 +8,7 @@ import { describe, expect, it } from '@jest/globals';
 import {
 	buildAllocations,
 	getEnvsToEnable,
+	hasSemverConditions,
 	mapVariationType,
 } from '../../src/eppo/migration.js';
 import type { EppoFlag } from '../../src/eppo/types.js';
@@ -41,6 +42,9 @@ function migrateFlag(
 		value_type: mapVariationType(flag.variation_type),
 		variants,
 		allocations: allocations.length > 0 ? allocations : undefined,
+		...(hasSemverConditions(allocations)
+			? { distribution_channel: 'CLIENT' as const }
+			: {}),
 	};
 
 	return { request, envsToEnable };
@@ -926,5 +930,104 @@ describe('migrate a flag with weight normalization from non-100 totals', () => {
 			{ variant_key: 'a', value: 25 },
 			{ variant_key: 'b', value: 75 },
 		]);
+	});
+});
+
+describe('migrate a flag with semver targeting rules', () => {
+	const flag = makeFlag({
+		id: 17,
+		key: 'semver-gate',
+		name: 'Semver Gate',
+		variation_type: 'BOOLEAN',
+		variations: [
+			{ id: 10, name: 'On', variant_key: 'on' },
+			{ id: 20, name: 'Off', variant_key: 'off' },
+		],
+		environments: [
+			{ id: 100, name: 'Production', active: true, is_production: true },
+		],
+		allocations: [
+			makeAllocation({
+				id: 1,
+				key: 'new-app-versions',
+				name: 'New App Versions',
+				environment_id: 100,
+				variation_weight: [
+					{ variation_id: 10, weight: 100 },
+					{ variation_id: 20, weight: 0 },
+				],
+				targeting_rules: [
+					{
+						conditions: [
+							{
+								operator: 'GTE',
+								attribute: 'app.version',
+								values: ['2.3.0'],
+							},
+						],
+					},
+				],
+			}),
+		],
+	});
+
+	const envMapping = new Map<number, DatadogEnvironment>([[100, ddProd]]);
+	const result = migrateFlag(flag, envMapping);
+
+	it('translates GTE with semver value to SEMVER_GTE', () => {
+		const cond =
+			result.request.allocations?.[0].targeting_rules?.[0].conditions[0];
+		expect(cond?.operator).toBe('SEMVER_GTE');
+		expect(cond?.value).toEqual(['2.3.0']);
+	});
+
+	it('sets distribution_channel to CLIENT', () => {
+		expect(result.request.distribution_channel).toBe('CLIENT');
+	});
+});
+
+describe('migrate a flag with numeric (non-semver) comparison targeting', () => {
+	const flag = makeFlag({
+		id: 18,
+		key: 'age-gate',
+		name: 'Age Gate',
+		variation_type: 'BOOLEAN',
+		variations: [
+			{ id: 10, name: 'On', variant_key: 'on' },
+			{ id: 20, name: 'Off', variant_key: 'off' },
+		],
+		environments: [
+			{ id: 100, name: 'Production', active: true, is_production: true },
+		],
+		allocations: [
+			makeAllocation({
+				id: 1,
+				key: 'adults',
+				name: 'Adults',
+				environment_id: 100,
+				variation_weight: [
+					{ variation_id: 10, weight: 100 },
+					{ variation_id: 20, weight: 0 },
+				],
+				targeting_rules: [
+					{
+						conditions: [{ operator: 'GTE', attribute: 'age', values: ['18'] }],
+					},
+				],
+			}),
+		],
+	});
+
+	const envMapping = new Map<number, DatadogEnvironment>([[100, ddProd]]);
+	const result = migrateFlag(flag, envMapping);
+
+	it('keeps GTE as GTE for numeric values', () => {
+		const cond =
+			result.request.allocations?.[0].targeting_rules?.[0].conditions[0];
+		expect(cond?.operator).toBe('GTE');
+	});
+
+	it('does not set distribution_channel', () => {
+		expect(result.request.distribution_channel).toBeUndefined();
 	});
 });

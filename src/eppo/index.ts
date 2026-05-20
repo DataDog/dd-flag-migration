@@ -27,6 +27,7 @@ import {
 import {
 	buildAllocations,
 	getEnvsToEnable,
+	hasSemverConditions,
 	mapVariationType,
 } from './migration.js';
 import type {
@@ -529,6 +530,9 @@ async function confirmMigration(
 				value_type: mapVariationType(flag.variation_type),
 				variants,
 				allocations: allocations.length > 0 ? allocations : undefined,
+				...(hasSemverConditions(allocations)
+					? { distribution_channel: 'CLIENT' as const }
+					: {}),
 			};
 
 			if (dryRun) {
