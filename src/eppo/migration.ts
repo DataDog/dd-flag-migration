@@ -6,6 +6,14 @@ import type {
 } from '../types.js';
 import type { EppoAllocation, EppoFlag } from './types.js';
 
+// MAJOR.MINOR.PATCH with optional pre-release and build metadata; no leading zeros
+const SEMVER_RE =
+	/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([\w.-]+))?(?:\+([\w.-]+))?$/;
+
+function isValidSemver(value: string): boolean {
+	return SEMVER_RE.test(value);
+}
+
 // Map Eppo variation_type → Datadog value_type
 export function mapVariationType(
 	eppoType: string,
@@ -24,8 +32,25 @@ export function mapVariationType(
 	}
 }
 
-// Map Eppo condition operator → Datadog condition operator
-export function mapOperator(eppoOp: string): string {
+// Map Eppo condition operator → Datadog condition operator.
+// For LT/LTE/GT/GTE, emits SEMVER_* when every value is a valid semver string;
+// otherwise falls back to the plain numeric operator.
+export function mapOperator(eppoOp: string, values?: string[]): string {
+	const op = eppoOp.toUpperCase();
+	const semverMap: Record<string, string> = {
+		LT: 'SEMVER_LT',
+		LTE: 'SEMVER_LTE',
+		GT: 'SEMVER_GT',
+		GTE: 'SEMVER_GTE',
+	};
+	if (
+		op in semverMap &&
+		values &&
+		values.length > 0 &&
+		values.every(isValidSemver)
+	) {
+		return semverMap[op];
+	}
 	const mapping: Record<string, string> = {
 		LT: 'LT',
 		LTE: 'LTE',
@@ -36,7 +61,20 @@ export function mapOperator(eppoOp: string): string {
 		NOT_ONE_OF: 'NOT_ONE_OF',
 		IS_NULL: 'IS_NULL',
 	};
-	return mapping[eppoOp.toUpperCase()] ?? eppoOp.toUpperCase();
+	return mapping[op] ?? op;
+}
+
+// Returns true if any allocation contains at least one SEMVER_* condition.
+// Datadog requires distribution_channel = 'CLIENT' when SEMVER operators are present.
+export function hasSemverConditions(
+	allocations: DatadogAllocationForFlagCreation[],
+): boolean {
+	return allocations.some(
+		(alloc) =>
+			alloc.targeting_rules?.some((rule) =>
+				rule.conditions.some((cond) => cond.operator?.startsWith('SEMVER_')),
+			) ?? false,
+	);
 }
 
 // Convert Eppo targeting rules → Datadog targeting rules
@@ -46,7 +84,7 @@ export function buildTargetingRules(
 	return (eppoAlloc.targeting_rules ?? [])
 		.map((rule) => ({
 			conditions: (rule.conditions ?? []).map((cond) => ({
-				operator: mapOperator(cond.operator),
+				operator: mapOperator(cond.operator, cond.values),
 				attribute: cond.attribute,
 				value: cond.values ?? [],
 			})),

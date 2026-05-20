@@ -1,16 +1,21 @@
 /**
  * Unit tests for Eppo → Datadog migration functions:
- * mapVariationType, mapOperator, buildTargetingRules, buildAllocations, getEnvsToEnable.
+ * mapVariationType, mapOperator, buildTargetingRules, buildAllocations, getEnvsToEnable,
+ * hasSemverConditions.
  */
 import { describe, expect, it } from '@jest/globals';
 import {
 	buildAllocations,
 	buildTargetingRules,
 	getEnvsToEnable,
+	hasSemverConditions,
 	mapOperator,
 	mapVariationType,
 } from '../../src/eppo/migration.js';
-import type { DatadogEnvironment } from '../../src/types.js';
+import type {
+	DatadogAllocationForFlagCreation,
+	DatadogEnvironment,
+} from '../../src/types.js';
 import { ddDev, ddProd, makeAllocation, makeFlag } from './helpers.js';
 
 // ─── mapVariationType ─────────────────────────────────────────────────────────
@@ -61,19 +66,19 @@ describe('mapOperator', () => {
 		expect(mapOperator('MATCHES')).toBe('MATCHES');
 	});
 
-	it('maps LT to LT', () => {
+	it('maps LT to LT when no values provided', () => {
 		expect(mapOperator('LT')).toBe('LT');
 	});
 
-	it('maps LTE to LTE', () => {
+	it('maps LTE to LTE when no values provided', () => {
 		expect(mapOperator('LTE')).toBe('LTE');
 	});
 
-	it('maps GT to GT', () => {
+	it('maps GT to GT when no values provided', () => {
 		expect(mapOperator('GT')).toBe('GT');
 	});
 
-	it('maps GTE to GTE', () => {
+	it('maps GTE to GTE when no values provided', () => {
 		expect(mapOperator('GTE')).toBe('GTE');
 	});
 
@@ -88,6 +93,47 @@ describe('mapOperator', () => {
 	it('handles lowercase known operators', () => {
 		expect(mapOperator('one_of')).toBe('ONE_OF');
 		expect(mapOperator('matches')).toBe('MATCHES');
+	});
+
+	// semver detection
+	it('maps LT to SEMVER_LT when all values are valid semver', () => {
+		expect(mapOperator('LT', ['2.3.0'])).toBe('SEMVER_LT');
+	});
+
+	it('maps LTE to SEMVER_LTE when all values are valid semver', () => {
+		expect(mapOperator('LTE', ['1.0.0'])).toBe('SEMVER_LTE');
+	});
+
+	it('maps GT to SEMVER_GT when all values are valid semver', () => {
+		expect(mapOperator('GT', ['0.9.1'])).toBe('SEMVER_GT');
+	});
+
+	it('maps GTE to SEMVER_GTE when all values are valid semver', () => {
+		expect(mapOperator('GTE', ['2.10.0'])).toBe('SEMVER_GTE');
+	});
+
+	it('maps GTE to SEMVER_GTE for semver with pre-release tag', () => {
+		expect(mapOperator('GTE', ['1.0.0-beta.1'])).toBe('SEMVER_GTE');
+	});
+
+	it('keeps LT as LT when values are numeric strings', () => {
+		expect(mapOperator('LT', ['18'])).toBe('LT');
+	});
+
+	it('keeps GTE as GTE when values are numeric strings', () => {
+		expect(mapOperator('GTE', ['100'])).toBe('GTE');
+	});
+
+	it('keeps LT as LT when values array is empty', () => {
+		expect(mapOperator('LT', [])).toBe('LT');
+	});
+
+	it('keeps GTE as GTE when any value is not valid semver (mixed)', () => {
+		expect(mapOperator('GTE', ['2.3.0', 'not-semver'])).toBe('GTE');
+	});
+
+	it('keeps GT as GT when value is a plain version string without patch', () => {
+		expect(mapOperator('GT', ['2.3'])).toBe('GT');
 	});
 });
 
@@ -203,6 +249,58 @@ describe('buildTargetingRules', () => {
 		});
 		const result = buildTargetingRules(alloc);
 		expect(result[0].conditions[0].value).toEqual(['beta', 'alpha']);
+	});
+
+	it('maps GTE with semver values to SEMVER_GTE', () => {
+		const alloc = makeAllocation({
+			id: 1,
+			targeting_rules: [
+				{
+					conditions: [
+						{
+							operator: 'GTE',
+							attribute: 'app.version',
+							values: ['2.3.0'],
+						},
+					],
+				},
+			],
+		});
+		const result = buildTargetingRules(alloc);
+		expect(result[0].conditions[0].operator).toBe('SEMVER_GTE');
+		expect(result[0].conditions[0].value).toEqual(['2.3.0']);
+	});
+
+	it('keeps GTE as GTE for numeric (non-semver) values', () => {
+		const alloc = makeAllocation({
+			id: 1,
+			targeting_rules: [
+				{
+					conditions: [{ operator: 'GTE', attribute: 'age', values: ['18'] }],
+				},
+			],
+		});
+		const result = buildTargetingRules(alloc);
+		expect(result[0].conditions[0].operator).toBe('GTE');
+	});
+
+	it('falls back to numeric operator when only some values are valid semver', () => {
+		const alloc = makeAllocation({
+			id: 1,
+			targeting_rules: [
+				{
+					conditions: [
+						{
+							operator: 'LT',
+							attribute: 'app.version',
+							values: ['2.3.0', 'not-a-semver'],
+						},
+					],
+				},
+			],
+		});
+		const result = buildTargetingRules(alloc);
+		expect(result[0].conditions[0].operator).toBe('LT');
 	});
 });
 
@@ -693,5 +791,56 @@ describe('getEnvsToEnable', () => {
 		const flag = makeFlag({ id: 1, key: 'test', environments: [] });
 		const mapping = new Map<number, DatadogEnvironment>([[10, ddDev]]);
 		expect(getEnvsToEnable(flag, mapping)).toEqual([]);
+	});
+});
+
+// ─── hasSemverConditions ──────────────────────────────────────────────────────
+
+describe('hasSemverConditions', () => {
+	const makeAlloc = (operator: string): DatadogAllocationForFlagCreation => ({
+		environment_id: 'dd-prod',
+		name: 'test',
+		key: 'test',
+		type: 'FEATURE_GATE',
+		variant_weights: [],
+		targeting_rules: [
+			{ conditions: [{ operator, attribute: 'v', value: ['1.0.0'] }] },
+		],
+	});
+
+	it('returns true when an allocation has a SEMVER_GTE condition', () => {
+		expect(hasSemverConditions([makeAlloc('SEMVER_GTE')])).toBe(true);
+	});
+
+	it('returns true for any SEMVER_* variant', () => {
+		for (const op of ['SEMVER_LT', 'SEMVER_LTE', 'SEMVER_GT', 'SEMVER_GTE']) {
+			expect(hasSemverConditions([makeAlloc(op)])).toBe(true);
+		}
+	});
+
+	it('returns false when all conditions are non-semver', () => {
+		expect(hasSemverConditions([makeAlloc('GTE')])).toBe(false);
+		expect(hasSemverConditions([makeAlloc('ONE_OF')])).toBe(false);
+	});
+
+	it('returns false for empty allocations', () => {
+		expect(hasSemverConditions([])).toBe(false);
+	});
+
+	it('returns false when allocations have no targeting rules', () => {
+		const alloc: DatadogAllocationForFlagCreation = {
+			environment_id: 'dd-prod',
+			name: 'test',
+			key: 'test',
+			type: 'FEATURE_GATE',
+			variant_weights: [],
+		};
+		expect(hasSemverConditions([alloc])).toBe(false);
+	});
+
+	it('returns true when only one of multiple allocations has a SEMVER condition', () => {
+		expect(
+			hasSemverConditions([makeAlloc('ONE_OF'), makeAlloc('SEMVER_LT')]),
+		).toBe(true);
 	});
 });
