@@ -1017,18 +1017,16 @@ async function executeMigration(
 						body: {},
 					});
 				}
-				if (syncTags.length > 0) {
-					dryRunRequests.push({
-						method: 'PUT',
-						path: `/api/v2/feature-flags/${existingFlagId}`,
-						body: {
-							data: {
-								type: 'feature-flags',
-								attributes: { tags: syncTags },
-							},
+				dryRunRequests.push({
+					method: 'PUT',
+					path: `/api/v2/feature-flags/${existingFlagId}`,
+					body: {
+						data: {
+							type: 'feature-flags',
+							attributes: { tags: syncTags },
 						},
-					});
-				}
+					},
+				});
 				if (editorTeamIds.length > 0) {
 					const existingBindings = await fetchRestrictionPolicy(
 						ddApiKey,
@@ -1048,7 +1046,9 @@ async function executeMigration(
 				const syncRuleLabel =
 					syncRuleCount > 0 ? `, ${syncRuleCount} rule(s)` : '';
 				const tagLabel =
-					syncTags.length > 0 ? `, ${syncTags.length} tag(s)` : '';
+					syncTags.length > 0
+						? `, ${syncTags.length} tag(s)`
+						: ', tags cleared';
 				const enableLabel =
 					envsToEnable.length > 0
 						? `, would enable in ${envsToEnable.map((e) => e.name).join(', ')}`
@@ -1082,16 +1082,14 @@ async function executeMigration(
 						}
 					}
 
-					// Update tags on existing flag
-					if (syncTags.length > 0) {
-						await updateFlagTags(
-							ddApiKey,
-							ddAppKey,
-							existingFlagId,
-							syncTags,
-							ddSite,
-						);
-					}
+					// Update tags on existing flag (replace so removals propagate)
+					await updateFlagTags(
+						ddApiKey,
+						ddAppKey,
+						existingFlagId,
+						syncTags,
+						ddSite,
+					);
 
 					// Apply restriction policy for LD editor teams
 					if (editorTeamIds.length > 0) {
@@ -1130,7 +1128,9 @@ async function executeMigration(
 					const syncedRuleLabel =
 						syncedRuleCount > 0 ? `, ${syncedRuleCount} rule(s)` : '';
 					const tagLabel =
-						syncTags.length > 0 ? `, ${syncTags.length} tag(s)` : '';
+						syncTags.length > 0
+							? `, ${syncTags.length} tag(s)`
+							: ', tags cleared';
 					const enableLabel =
 						enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
 					spinner.succeed(

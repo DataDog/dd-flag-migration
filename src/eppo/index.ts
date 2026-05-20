@@ -481,23 +481,23 @@ async function confirmMigration(
 						body: {},
 					});
 				}
-				if (syncTags.length > 0) {
-					dryRunRequests.push({
-						method: 'PUT',
-						path: `/api/v2/feature-flags/${existingFlagId}`,
-						body: {
-							data: {
-								type: 'feature-flags',
-								attributes: { tags: syncTags },
-							},
+				dryRunRequests.push({
+					method: 'PUT',
+					path: `/api/v2/feature-flags/${existingFlagId}`,
+					body: {
+						data: {
+							type: 'feature-flags',
+							attributes: { tags: syncTags },
 						},
-					});
-				}
+					},
+				});
 				const syncFilterLabel = `${syncFilterCount} targeting filter(s)`;
 				const syncRuleLabel =
 					syncRuleCount > 0 ? `, ${syncRuleCount} rule(s)` : '';
 				const tagLabel =
-					syncTags.length > 0 ? `, ${syncTags.length} tag(s)` : '';
+					syncTags.length > 0
+						? `, ${syncTags.length} tag(s)`
+						: ', tags cleared';
 				const enableLabel =
 					envsToEnable.length > 0
 						? `, would enable in ${envsToEnable.map((e) => e.name).join(', ')}`
@@ -531,16 +531,14 @@ async function confirmMigration(
 						}
 					}
 
-					// Update tags on existing flag
-					if (syncTags.length > 0) {
-						await updateFlagTags(
-							ddApiKey,
-							ddAppKey,
-							existingFlagId,
-							syncTags,
-							site,
-						);
-					}
+					// Update tags on existing flag (replace so removals propagate)
+					await updateFlagTags(
+						ddApiKey,
+						ddAppKey,
+						existingFlagId,
+						syncTags,
+						site,
+					);
 
 					// Enable the flag in each environment
 					let enabledCount = 0;
@@ -567,7 +565,9 @@ async function confirmMigration(
 					const syncedRuleLabel =
 						syncedRuleCount > 0 ? `, ${syncedRuleCount} rule(s)` : '';
 					const tagLabel =
-						syncTags.length > 0 ? `, ${syncTags.length} tag(s)` : '';
+						syncTags.length > 0
+							? `, ${syncTags.length} tag(s)`
+							: ', tags cleared';
 					const enableLabel =
 						enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
 					spinner.succeed(
