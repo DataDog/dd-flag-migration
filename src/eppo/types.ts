@@ -1,3 +1,24 @@
+// ─── Eppo Audience Types ─────────────────────────────────────────────────────
+
+export interface EppoAudienceCondition {
+	operator: string;
+	attribute: string;
+	values: string[];
+}
+
+export interface EppoAudienceTargetingRule {
+	id: number;
+	conditions: EppoAudienceCondition[];
+}
+
+export interface EppoAudience {
+	id: number;
+	name: string;
+	description: string;
+	targeting_rules: EppoAudienceTargetingRule[];
+	is_archived: boolean;
+}
+
 // ─── Eppo Types ──────────────────────────────────────────────────────────────
 
 export interface EppoFlagVariation {

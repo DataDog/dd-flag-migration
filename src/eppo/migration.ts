@@ -1,5 +1,6 @@
 import type {
 	DatadogAllocationForFlagCreation,
+	DatadogCondition,
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,
 	DatadogTargetingRule,
@@ -64,6 +65,30 @@ export function mapOperator(eppoOp: string, values?: string[]): string {
 	return mapping[op] ?? op;
 }
 
+// ─── Audience Fingerprinting ─────────────────────────────────────────────────
+
+/**
+ * Create a stable fingerprint from a set of conditions.
+ * Used to detect allocation targeting rules that came from an Eppo audience,
+ * since the API expands audience conditions inline without exposing audience_id.
+ */
+export function fingerprintConditions(
+	conditions: Array<{ operator: string; attribute: string; values?: string[] }>,
+): string {
+	const normalized = conditions
+		.map((c) => ({
+			op: c.operator.toUpperCase(),
+			attr: c.attribute,
+			vals: [...(c.values ?? [])].sort(),
+		}))
+		.sort((a, b) => {
+			const attrCmp = a.attr.localeCompare(b.attr);
+			if (attrCmp !== 0) return attrCmp;
+			return a.op.localeCompare(b.op);
+		});
+	return JSON.stringify(normalized);
+}
+
 // Returns true if any allocation contains at least one SEMVER_* condition.
 // Datadog requires distribution_channel = 'CLIENT' when SEMVER operators are present.
 export function hasSemverConditions(
@@ -77,25 +102,52 @@ export function hasSemverConditions(
 	);
 }
 
-// Convert Eppo targeting rules → Datadog targeting rules
+/**
+ * Convert Eppo targeting rules → Datadog targeting rules.
+ *
+ * When fingerprintLookup is provided, rules whose conditions match an Eppo
+ * audience are replaced with a saved_filter_id reference. Duplicate saved
+ * filter IDs within the same allocation are deduplicated (same semantics, OR).
+ */
 export function buildTargetingRules(
 	eppoAlloc: EppoAllocation,
+	fingerprintLookup?: Map<string, string>,
 ): DatadogTargetingRule[] {
-	return (eppoAlloc.targeting_rules ?? [])
-		.map((rule) => ({
-			conditions: (rule.conditions ?? []).map((cond) => ({
-				operator: mapOperator(cond.operator, cond.values),
-				attribute: cond.attribute,
-				value: cond.values ?? [],
-			})),
-		}))
-		.filter((rule) => rule.conditions.length > 0);
+	const rules: DatadogTargetingRule[] = [];
+	const usedSavedFilterIds = new Set<string>();
+
+	for (const rule of eppoAlloc.targeting_rules ?? []) {
+		const conditions = rule.conditions ?? [];
+		if (conditions.length === 0) continue;
+
+		if (fingerprintLookup) {
+			const fp = fingerprintConditions(conditions);
+			const savedFilterId = fingerprintLookup.get(fp);
+			if (savedFilterId !== undefined) {
+				if (!usedSavedFilterIds.has(savedFilterId)) {
+					usedSavedFilterIds.add(savedFilterId);
+					rules.push({ conditions: [{ saved_filter_id: savedFilterId }] });
+				}
+				continue;
+			}
+		}
+
+		const inlineConditions: DatadogCondition[] = conditions.map((cond) => ({
+			operator: mapOperator(cond.operator, cond.values),
+			attribute: cond.attribute,
+			value: cond.values ?? [],
+		}));
+		rules.push({ conditions: inlineConditions });
+	}
+
+	return rules;
 }
 
 // Build allocations from Eppo's actual allocation data for each mapped DD environment
 export function buildAllocations(
 	flag: EppoFlag,
 	mapping: Map<number, DatadogEnvironment>,
+	fingerprintLookup?: Map<string, string>,
 ): DatadogAllocationForFlagCreation[] {
 	const variations = flag.variations ?? [];
 	if (variations.length === 0) return [];
@@ -135,7 +187,7 @@ export function buildAllocations(
 			if (variantWeights.length === 0) continue;
 
 			// Map targeting rules
-			const targetingRules = buildTargetingRules(eppoAlloc);
+			const targetingRules = buildTargetingRules(eppoAlloc, fingerprintLookup);
 
 			const allocationKey =
 				eppoAlloc.key ||

@@ -1,5 +1,5 @@
 import axios, { type AxiosInstance } from 'axios';
-import type { EppoFlag, EppoFlagEnvironment } from './types.js';
+import type { EppoAudience, EppoFlag, EppoFlagEnvironment } from './types.js';
 
 const EPPO_BASE_URL = 'https://eppo.cloud';
 const EPPO_PAGE_SIZE = 100;
@@ -161,6 +161,24 @@ export function extractEnvironments(flags: EppoFlag[]): EppoFlagEnvironment[] {
 		if (a.is_production !== b.is_production) return a.is_production ? -1 : 1;
 		return a.name.localeCompare(b.name);
 	});
+}
+
+// ─── Audiences ───────────────────────────────────────────────────────────────
+
+export async function fetchEppoAudiences(
+	apiKey: string,
+): Promise<EppoAudience[]> {
+	const response = await eppoClient.get<EppoAudience[]>(
+		`${EPPO_BASE_URL}/api/v1/audiences`,
+		{
+			headers: {
+				'x-eppo-token': apiKey,
+				'Content-Type': 'application/json',
+			},
+			params: { status: 'active' },
+		},
+	);
+	return Array.isArray(response.data) ? response.data : [];
 }
 
 export async function validateEppoApiKey(apiKey: string): Promise<boolean> {

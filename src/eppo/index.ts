@@ -25,6 +25,7 @@ import {
 	fetchEppoFlags,
 	validateEppoApiKey,
 } from './api.js';
+import { migrateAudiences } from './audiences.js';
 import {
 	buildAllocations,
 	getEnvsToEnable,
@@ -282,6 +283,7 @@ type ConfirmAction = 'migrate' | 'select-more' | 'cancel';
 
 async function confirmMigration(
 	flags: EppoFlag[],
+	eppoApiKey: string,
 	ddApiKey: string,
 	ddAppKey: string,
 	envMapping: Map<number, DatadogEnvironment>,
@@ -340,6 +342,50 @@ async function confirmMigration(
 		console.log(chalk.bold.yellow('  Dry run — no flags will be created\n'));
 	}
 	console.log();
+
+	const dryRunRequests: Array<{ method: string; path: string; body: unknown }> =
+		[];
+
+	// ── Phase 1: Audience migration ──────────────────────────────────────────
+	let fingerprintLookup: Map<string, string> | undefined;
+	try {
+		console.log(
+			chalk.bold('  Phase 1: Migrating Eppo audiences as saved filters'),
+		);
+		console.log();
+		const audienceResult = await migrateAudiences({
+			eppoApiKey,
+			ddApiKey,
+			ddAppKey,
+			ddSite: site,
+			dryRun,
+		});
+		fingerprintLookup = audienceResult.fingerprintLookup;
+		dryRunRequests.push(...audienceResult.dryRunRequests);
+		if (audienceResult.stats.discovered > 0) {
+			const { created: ac, reused: ar, skipped: as_ } = audienceResult.stats;
+			const createdVerb = dryRun ? 'would be created' : 'created';
+			console.log(
+				chalk.gray(
+					`  Audiences: ${ac} ${createdVerb}, ${ar} reused, ${as_} skipped as saved filters`,
+				),
+			);
+		}
+		console.log();
+	} catch (err) {
+		const msg = axios.isAxiosError(err)
+			? ((err.response?.data as { message?: string } | undefined)?.message ??
+				err.message)
+			: String(err);
+		console.log(
+			chalk.yellow(
+				`  Audience migration failed (${msg}) — flags will use inline targeting conditions`,
+			),
+		);
+		console.log();
+	}
+
+	// ── Phase 2: Flag migration ───────────────────────────────────────────────
 	let created = 0,
 		synced = 0,
 		skipped = 0,
@@ -348,8 +394,6 @@ async function confirmMigration(
 	const failures: Array<{ key: string; error: string }> = [];
 	const enableFailures: Array<{ key: string; env: string; error: string }> = [];
 	const skippedFlags: Array<{ key: string; reason: string }> = [];
-	const dryRunRequests: Array<{ method: string; path: string; body: unknown }> =
-		[];
 
 	for (const flag of flags) {
 		let spinner = ora(`Migrating ${chalk.cyan(flag.key)}…`).start();
@@ -395,7 +439,7 @@ async function confirmMigration(
 			continue;
 		}
 
-		const allocations = buildAllocations(flag, envMapping);
+		const allocations = buildAllocations(flag, envMapping, fingerprintLookup);
 		const envsToEnable = getEnvsToEnable(flag, envMapping);
 		const existingFlagId = datadogKeys.get(flag.key);
 
@@ -867,6 +911,7 @@ export async function runEppoMigration(
 				printHeader();
 				const action = await confirmMigration(
 					prevSelectedFlags,
+					apiKey,
 					ddApiKey,
 					ddAppKey,
 					prevEnvMapping,
