@@ -1353,6 +1353,39 @@ describe('Datadog client rate-limit handling', () => {
 		expect(warnSpy).not.toHaveBeenCalled();
 	});
 
+	it('does not shorten an existing pause when a later response has a smaller reset window', async () => {
+		// First response sets a 60s pause.
+		mock
+			.onGet(`${BASE}/foo`)
+			.reply(
+				200,
+				{},
+				{ 'x-ratelimit-remaining': '1', 'x-ratelimit-reset': '60' },
+			);
+
+		await client.get(`${BASE}/foo`);
+
+		// Second response would set only a 5s pause — should be ignored (max wins).
+		mock
+			.onGet(`${BASE}/foo`)
+			.reply(
+				200,
+				{},
+				{ 'x-ratelimit-remaining': '1', 'x-ratelimit-reset': '5' },
+			);
+
+		await client.get(`${BASE}/foo`);
+
+		// The next request must still observe the original 60s pause, not the
+		// shorter 5s one that followed it.
+		const callsBefore = setTimeoutSpy.mock.calls.length;
+		await client.get(`${BASE}/foo`);
+		const newDelays = (
+			setTimeoutSpy.mock.calls.slice(callsBefore) as Array<[unknown, number]>
+		).map(([, ms]) => ms);
+		expect(newDelays.some((ms) => ms > 50_000)).toBe(true);
+	});
+
 	it('only warns once when concurrent responses extend the same pause window', async () => {
 		mock
 			.onGet(`${BASE}/foo`)

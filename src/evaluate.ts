@@ -539,6 +539,9 @@ async function fetchDDFlags(
 	const host = buildEndpointHost(site);
 	const url = `https://${host}/precompute-assignments?dd_env=${encodeURIComponent(env)}`;
 	try {
+		// Intentionally uses plain axios — precompute-assignments accepts dd-client-token
+		// (not a management API key), so it belongs to a different rate-limit bucket
+		// and is not routed through ddClient.
 		const resp = await axios.post(
 			url,
 			{

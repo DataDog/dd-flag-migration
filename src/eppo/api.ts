@@ -78,9 +78,7 @@ export function createEppoClient(): AxiosInstance {
 			if (retryCount === 0) {
 				const parsed = parseRateLimitBody(error.response?.data);
 				if (parsed) {
-					// Sleep at most one window on the first retry — keeps the wait
-					// bounded if the window is hours long.
-					delayMs = Math.min(parsed.windowSeconds * 1000, RETRY_MAX_DELAY_MS);
+					delayMs = parsed.windowSeconds * 1_000;
 				}
 			}
 

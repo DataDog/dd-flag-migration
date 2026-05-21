@@ -55,7 +55,7 @@ export function createDDClient(): AxiosInstance {
 					resetSec > 0
 				) {
 					const wasPaused = pauseUntil > Date.now();
-					pauseUntil = Date.now() + resetSec * 1_000;
+					pauseUntil = Math.max(pauseUntil, Date.now() + resetSec * 1_000);
 					// Warn only on transition into a paused window so concurrent
 					// in-flight requests don't each emit their own warning.
 					if (!wasPaused) {
@@ -96,7 +96,7 @@ export function createDDClient(): AxiosInstance {
 				`Datadog API returned 429; retrying after ${Math.ceil(delayMs / 1_000)}s (attempt ${retryCount + 1} of ${DD_MAX_RETRIES}).`,
 			);
 			configAny.__retryCount = retryCount + 1;
-			pauseUntil = Date.now() + delayMs;
+			pauseUntil = Math.max(pauseUntil, Date.now() + delayMs);
 			await sleep(delayMs);
 			return client.request(config);
 		},

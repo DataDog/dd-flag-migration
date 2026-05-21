@@ -2,7 +2,14 @@
  * Tests for Eppo API: fetching flags, extracting environments,
  * and validating API keys.
  */
-import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
+import {
+	afterEach,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	jest,
+} from '@jest/globals';
 import AxiosMockAdapter from 'axios-mock-adapter';
 import {
 	createEppoClient,
@@ -333,6 +340,34 @@ describe('Eppo client 429 handling', () => {
 			client.get('https://eppo.cloud/api/v1/feature-flags'),
 		).rejects.toThrow(/rate-limited after \d+ retries/i);
 	}, 120000);
+
+	it('uses the full rate-limit window on first retry without capping at 30s', async () => {
+		const setTimeoutSpy: ReturnType<typeof jest.spyOn> = jest
+			.spyOn(global, 'setTimeout')
+			.mockImplementation((cb: unknown) => {
+				(cb as () => void)();
+				return 0 as unknown as ReturnType<typeof setTimeout>;
+			}) as ReturnType<typeof jest.spyOn>;
+
+		mock
+			.onGet('https://eppo.cloud/api/v1/feature-flags')
+			.replyOnce(
+				429,
+				'Too many requests. Rate limit is 200 requests per 15 minute(s).',
+			)
+			.onGet('https://eppo.cloud/api/v1/feature-flags')
+			.replyOnce(200, []);
+
+		await client.get('https://eppo.cloud/api/v1/feature-flags');
+
+		const delays = (setTimeoutSpy.mock.calls as Array<[unknown, number]>).map(
+			([, ms]) => ms,
+		);
+		// 15 minutes = 900s; the old 30s cap would never produce a delay this large.
+		expect(delays.some((ms) => ms >= 900_000)).toBe(true);
+
+		setTimeoutSpy.mockRestore();
+	});
 
 	it('retries even when the 429 body cannot be parsed', async () => {
 		mock
