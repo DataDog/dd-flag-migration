@@ -914,9 +914,19 @@ async function executeMigration(
 			const syncTags = flag.tags;
 
 			if (envsToEnable.length === 0) {
-				// Apply restriction policy even when there's nothing else to sync.
-				if (editorTeamIds.length > 0) {
-					if (dryRun) {
+				// Always sync tags and restriction policy even when no new environments need enabling.
+				if (dryRun) {
+					dryRunRequests.push({
+						method: 'PUT',
+						path: `/api/v2/feature-flags/${existingFlagId}`,
+						body: {
+							data: {
+								type: 'feature-flags',
+								attributes: { tags: syncTags },
+							},
+						},
+					});
+					if (editorTeamIds.length > 0) {
 						const existingBindings = await fetchRestrictionPolicy(
 							ddApiKey,
 							ddAppKey,
@@ -930,7 +940,16 @@ async function executeMigration(
 								existingBindings,
 							),
 						);
-					} else {
+					}
+				} else {
+					await updateFlagTags(
+						ddApiKey,
+						ddAppKey,
+						existingFlagId,
+						syncTags,
+						ddSite,
+					);
+					if (editorTeamIds.length > 0) {
 						await applyRestrictionPolicyForFlag(
 							ddApiKey,
 							ddAppKey,
@@ -944,14 +963,14 @@ async function executeMigration(
 				}
 				const policyLabel =
 					editorTeamIds.length > 0 ? ' (permissions refreshed)' : '';
+				const tagLabel = `${syncTags.length} tag(s)`;
 				spinner.succeed(
-					`${chalk.cyan(flag.key)} — already in Datadog, nothing to sync${policyLabel}`,
+					dryRun
+						? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (${tagLabel}${policyLabel})`
+						: `Synced ${chalk.cyan(flag.key)} (${tagLabel}${policyLabel})`,
 				);
-				skippedFlags.push({
-					key: flag.key,
-					reason: 'Already in Datadog, no new environments to enable',
-				});
-				skipped++;
+				syncedFlagKeys.push(flag.key);
+				synced++;
 				continue;
 			}
 
@@ -983,18 +1002,16 @@ async function executeMigration(
 						body: {},
 					});
 				}
-				if (syncTags.length > 0) {
-					dryRunRequests.push({
-						method: 'PUT',
-						path: `/api/v2/feature-flags/${existingFlagId}`,
-						body: {
-							data: {
-								type: 'feature-flags',
-								attributes: { tags: syncTags },
-							},
+				dryRunRequests.push({
+					method: 'PUT',
+					path: `/api/v2/feature-flags/${existingFlagId}`,
+					body: {
+						data: {
+							type: 'feature-flags',
+							attributes: { tags: syncTags },
 						},
-					});
-				}
+					},
+				});
 				if (editorTeamIds.length > 0) {
 					const existingBindings = await fetchRestrictionPolicy(
 						ddApiKey,
@@ -1014,7 +1031,9 @@ async function executeMigration(
 				const syncRuleLabel =
 					syncRuleCount > 0 ? `, ${syncRuleCount} rule(s)` : '';
 				const tagLabel =
-					syncTags.length > 0 ? `, ${syncTags.length} tag(s)` : '';
+					syncTags.length > 0
+						? `, ${syncTags.length} tag(s)`
+						: ', tags cleared';
 				const enableLabel =
 					envsToEnable.length > 0
 						? `, would enable in ${envsToEnable.map((e) => e.name).join(', ')}`
@@ -1048,16 +1067,14 @@ async function executeMigration(
 						}
 					}
 
-					// Update tags on existing flag
-					if (syncTags.length > 0) {
-						await updateFlagTags(
-							ddApiKey,
-							ddAppKey,
-							existingFlagId,
-							syncTags,
-							ddSite,
-						);
-					}
+					// Update tags on existing flag (replace so removals propagate)
+					await updateFlagTags(
+						ddApiKey,
+						ddAppKey,
+						existingFlagId,
+						syncTags,
+						ddSite,
+					);
 
 					// Apply restriction policy for LD editor teams
 					if (editorTeamIds.length > 0) {
@@ -1096,7 +1113,9 @@ async function executeMigration(
 					const syncedRuleLabel =
 						syncedRuleCount > 0 ? `, ${syncedRuleCount} rule(s)` : '';
 					const tagLabel =
-						syncTags.length > 0 ? `, ${syncTags.length} tag(s)` : '';
+						syncTags.length > 0
+							? `, ${syncTags.length} tag(s)`
+							: ', tags cleared';
 					const enableLabel =
 						enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
 					spinner.succeed(

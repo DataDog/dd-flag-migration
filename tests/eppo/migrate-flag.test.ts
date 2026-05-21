@@ -35,6 +35,7 @@ function migrateFlag(
 
 	const allocations = buildAllocations(flag, envMapping);
 	const envsToEnable = getEnvsToEnable(flag, envMapping);
+	const tags = flag.tag_names ?? [];
 
 	const request: DatadogCreateFlagRequest = {
 		key: flag.key,
@@ -45,6 +46,7 @@ function migrateFlag(
 		...(hasSemverConditions(allocations)
 			? { distribution_channel: 'CLIENT' as const }
 			: {}),
+		...(tags.length > 0 ? { tags } : {}),
 	};
 
 	return { request, envsToEnable };
@@ -1029,5 +1031,64 @@ describe('migrate a flag with numeric (non-semver) comparison targeting', () => 
 
 	it('does not set distribution_channel', () => {
 		expect(result.request.distribution_channel).toBeUndefined();
+	});
+});
+
+describe('migrate a flag with tags', () => {
+	const flag = makeFlag({
+		id: 19,
+		key: 'tagged-flag',
+		name: 'Tagged Flag',
+		tag_names: ['checkout', 'q3-launch'],
+		environments: [
+			{ id: 100, name: 'Production', active: true, is_production: true },
+		],
+		allocations: [
+			makeAllocation({
+				id: 1,
+				environment_id: 100,
+				variation_weight: [
+					{ variation_id: 1, weight: 100 },
+					{ variation_id: 2, weight: 0 },
+				],
+			}),
+		],
+	});
+
+	const envMapping = new Map<number, DatadogEnvironment>([[100, ddProd]]);
+	const result = migrateFlag(flag, envMapping);
+
+	it('includes all source tag_names on the create request', () => {
+		expect(result.request.tags).toEqual(['checkout', 'q3-launch']);
+	});
+});
+
+describe('migrate a flag with no tags', () => {
+	const flag = makeFlag({
+		id: 20,
+		key: 'untagged-flag',
+		name: 'Untagged Flag',
+		tag_names: [],
+		environments: [
+			{ id: 100, name: 'Production', active: true, is_production: true },
+		],
+		allocations: [
+			makeAllocation({
+				id: 1,
+				environment_id: 100,
+				variation_weight: [
+					{ variation_id: 1, weight: 100 },
+					{ variation_id: 2, weight: 0 },
+				],
+			}),
+		],
+	});
+
+	const envMapping = new Map<number, DatadogEnvironment>([[100, ddProd]]);
+	const result = migrateFlag(flag, envMapping);
+
+	it('omits the tags field entirely when tag_names is empty', () => {
+		expect(result.request.tags).toBeUndefined();
+		expect('tags' in result.request).toBe(false);
 	});
 });

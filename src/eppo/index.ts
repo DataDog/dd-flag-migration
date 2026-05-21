@@ -11,6 +11,7 @@ import {
 	fetchDatadogEnvironments,
 	fetchDatadogFlagKeys,
 	syncAllocationsForEnvironment,
+	updateFlagTags,
 } from '../datadog.js';
 import { filterableCheckbox } from '../filterable-checkbox.js';
 import { toSyncRequests } from '../migration.js';
@@ -408,15 +409,36 @@ async function confirmMigration(
 
 		if (existingFlagId) {
 			// Flag already exists in Datadog — sync targeting and enable in new environments
+			const syncTags = flag.tag_names ?? [];
+
 			if (envsToEnable.length === 0) {
+				// Always sync tags (even empty array, so removals propagate).
+				if (dryRun) {
+					dryRunRequests.push({
+						method: 'PUT',
+						path: `/api/v2/feature-flags/${existingFlagId}`,
+						body: {
+							data: {
+								type: 'feature-flags',
+								attributes: { tags: syncTags },
+							},
+						},
+					});
+				} else {
+					await updateFlagTags(
+						ddApiKey,
+						ddAppKey,
+						existingFlagId,
+						syncTags,
+						site,
+					);
+				}
 				spinner.succeed(
-					`${chalk.cyan(flag.key)} — already in Datadog, nothing to sync`,
+					dryRun
+						? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (${syncTags.length} tag(s))`
+						: `Synced ${chalk.cyan(flag.key)} (${syncTags.length} tag(s))`,
 				);
-				skippedFlags.push({
-					key: flag.key,
-					reason: 'Already in Datadog, no new environments to enable',
-				});
-				skipped++;
+				synced++;
 				continue;
 			}
 
@@ -448,16 +470,30 @@ async function confirmMigration(
 						body: {},
 					});
 				}
+				dryRunRequests.push({
+					method: 'PUT',
+					path: `/api/v2/feature-flags/${existingFlagId}`,
+					body: {
+						data: {
+							type: 'feature-flags',
+							attributes: { tags: syncTags },
+						},
+					},
+				});
 				const syncFilterLabel = `${syncFilterCount} targeting filter(s)`;
 				const syncRuleLabel =
 					syncRuleCount > 0 ? `, ${syncRuleCount} rule(s)` : '';
+				const tagLabel =
+					syncTags.length > 0
+						? `, ${syncTags.length} tag(s)`
+						: ', tags cleared';
 				const enableLabel =
 					envsToEnable.length > 0
 						? `, would enable in ${envsToEnable.map((e) => e.name).join(', ')}`
 						: '';
 				spinner.succeed(
 					`${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} ` +
-						`(${syncFilterLabel}${syncRuleLabel}${enableLabel})`,
+						`(${syncFilterLabel}${syncRuleLabel}${tagLabel}${enableLabel})`,
 				);
 				synced++;
 			} else {
@@ -484,6 +520,15 @@ async function confirmMigration(
 						}
 					}
 
+					// Update tags on existing flag (replace so removals propagate)
+					await updateFlagTags(
+						ddApiKey,
+						ddAppKey,
+						existingFlagId,
+						syncTags,
+						site,
+					);
+
 					// Enable the flag in each environment
 					let enabledCount = 0;
 					for (const ddEnv of envsToEnable) {
@@ -508,10 +553,14 @@ async function confirmMigration(
 					totalEnabled += enabledCount;
 					const syncedRuleLabel =
 						syncedRuleCount > 0 ? `, ${syncedRuleCount} rule(s)` : '';
+					const tagLabel =
+						syncTags.length > 0
+							? `, ${syncTags.length} tag(s)`
+							: ', tags cleared';
 					const enableLabel =
 						enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
 					spinner.succeed(
-						`Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${enableLabel})`,
+						`Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${tagLabel}${enableLabel})`,
 					);
 					synced++;
 				} catch (err) {
@@ -524,6 +573,7 @@ async function confirmMigration(
 			}
 		} else {
 			// Flag does not exist — create it with targeting rules
+			const tags = flag.tag_names ?? [];
 			const request: DatadogCreateFlagRequest = {
 				key: flag.key,
 				name: flag.name,
@@ -533,6 +583,7 @@ async function confirmMigration(
 				...(hasSemverConditions(allocations)
 					? { distribution_channel: 'CLIENT' as const }
 					: {}),
+				...(tags.length > 0 ? { tags } : {}),
 			};
 
 			if (dryRun) {
