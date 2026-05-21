@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
-import axios from 'axios';
 import AxiosMockAdapter from 'axios-mock-adapter';
 import {
 	applyRestrictionPolicy,
 	createFeatureFlag,
+	ddClient,
 	enableFeatureFlagEnvironment,
 	fetchDatadogEnvironments,
 	fetchDatadogFlagKeys,
@@ -31,7 +31,7 @@ describe('fetchDatadogEnvironments', () => {
 	let mock: AxiosMockAdapter;
 
 	beforeEach(() => {
-		mock = new AxiosMockAdapter(axios as never);
+		mock = new AxiosMockAdapter(ddClient as never);
 	});
 
 	afterEach(() => {
@@ -135,7 +135,7 @@ describe('validateDatadogKeys', () => {
 	let mock: AxiosMockAdapter;
 
 	beforeEach(() => {
-		mock = new AxiosMockAdapter(axios as never);
+		mock = new AxiosMockAdapter(ddClient as never);
 	});
 
 	afterEach(() => {
@@ -172,7 +172,7 @@ describe('fetchDatadogFlagKeys', () => {
 	let mock: AxiosMockAdapter;
 
 	beforeEach(() => {
-		mock = new AxiosMockAdapter(axios as never);
+		mock = new AxiosMockAdapter(ddClient as never);
 	});
 
 	afterEach(() => {
@@ -261,7 +261,7 @@ describe('fetchDatadogFlags', () => {
 	let mock: AxiosMockAdapter;
 
 	beforeEach(() => {
-		mock = new AxiosMockAdapter(axios as never);
+		mock = new AxiosMockAdapter(ddClient as never);
 	});
 
 	afterEach(() => {
@@ -392,7 +392,7 @@ describe('createFeatureFlag', () => {
 	let mock: AxiosMockAdapter;
 
 	beforeEach(() => {
-		mock = new AxiosMockAdapter(axios as never);
+		mock = new AxiosMockAdapter(ddClient as never);
 	});
 
 	afterEach(() => {
@@ -514,7 +514,7 @@ describe('enableFeatureFlagEnvironment', () => {
 	let mock: AxiosMockAdapter;
 
 	beforeEach(() => {
-		mock = new AxiosMockAdapter(axios as never);
+		mock = new AxiosMockAdapter(ddClient as never);
 	});
 
 	afterEach(() => {
@@ -569,7 +569,7 @@ describe('syncAllocationsForEnvironment', () => {
 	let mock: AxiosMockAdapter;
 
 	beforeEach(() => {
-		mock = new AxiosMockAdapter(axios as never);
+		mock = new AxiosMockAdapter(ddClient as never);
 	});
 
 	afterEach(() => {
@@ -790,7 +790,7 @@ describe('fetchFlagTags', () => {
 	let mock: AxiosMockAdapter;
 
 	beforeEach(() => {
-		mock = new AxiosMockAdapter(axios as never);
+		mock = new AxiosMockAdapter(ddClient as never);
 	});
 
 	afterEach(() => {
@@ -820,7 +820,7 @@ describe('updateFlagTags', () => {
 	let mock: AxiosMockAdapter;
 
 	beforeEach(() => {
-		mock = new AxiosMockAdapter(axios as never);
+		mock = new AxiosMockAdapter(ddClient as never);
 	});
 
 	afterEach(() => {
@@ -901,7 +901,7 @@ describe('fetchDatadogTeams', () => {
 	let mock: AxiosMockAdapter;
 
 	beforeEach(() => {
-		mock = new AxiosMockAdapter(axios as never);
+		mock = new AxiosMockAdapter(ddClient as never);
 	});
 
 	afterEach(() => {
@@ -956,7 +956,7 @@ describe('fetchRestrictionPolicy', () => {
 	let mock: AxiosMockAdapter;
 
 	beforeEach(() => {
-		mock = new AxiosMockAdapter(axios as never);
+		mock = new AxiosMockAdapter(ddClient as never);
 	});
 
 	afterEach(() => {
@@ -1020,7 +1020,7 @@ describe('applyRestrictionPolicy', () => {
 	let mock: AxiosMockAdapter;
 
 	beforeEach(() => {
-		mock = new AxiosMockAdapter(axios as never);
+		mock = new AxiosMockAdapter(ddClient as never);
 	});
 
 	afterEach(() => {
