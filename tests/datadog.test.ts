@@ -1,7 +1,15 @@
-import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
+import {
+	afterEach,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	jest,
+} from '@jest/globals';
 import AxiosMockAdapter from 'axios-mock-adapter';
 import {
 	applyRestrictionPolicy,
+	createDDClient,
 	createFeatureFlag,
 	ddClient,
 	enableFeatureFlagEnvironment,
@@ -1239,5 +1247,132 @@ describe('applyRestrictionPolicy', () => {
 		expect(editorBinding?.principals).toEqual(
 			expect.arrayContaining(['team:creator-team', 'team:platform']),
 		);
+	});
+});
+
+// ─── DD client rate-limit handling ───────────────────────────────────────────
+
+describe('Datadog client rate-limit handling', () => {
+	let client: ReturnType<typeof createDDClient>;
+	let mock: AxiosMockAdapter;
+	let warnSpy: ReturnType<typeof jest.spyOn>;
+	let setTimeoutSpy: ReturnType<typeof jest.spyOn>;
+
+	beforeEach(() => {
+		// Fire timer callbacks synchronously so the retry/pause logic runs without
+		// real delays. Date.now() is left untouched — the pause-until comparison
+		// uses real time deltas, which is what we want for assertions.
+		setTimeoutSpy = jest
+			.spyOn(global, 'setTimeout')
+			.mockImplementation((cb: unknown) => {
+				(cb as () => void)();
+				return 0 as unknown as ReturnType<typeof setTimeout>;
+			}) as never;
+		client = createDDClient();
+		mock = new AxiosMockAdapter(client as never);
+		warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+	});
+
+	afterEach(() => {
+		mock.restore();
+		warnSpy.mockRestore();
+		setTimeoutSpy.mockRestore();
+	});
+
+	it('retries on 429 using x-ratelimit-reset header for delay', async () => {
+		mock
+			.onGet(`${BASE}/foo`)
+			.replyOnce(429, {}, { 'x-ratelimit-reset': '5' })
+			.onGet(`${BASE}/foo`)
+			.replyOnce(200, { ok: true });
+
+		const response = await client.get(`${BASE}/foo`);
+		expect(response.status).toBe(200);
+		expect(warnSpy).toHaveBeenCalledWith(
+			expect.stringMatching(/429.*retrying after 6s.*attempt 1 of 3/i),
+		);
+	});
+
+	it('falls back to exponential backoff when 429 has no reset header', async () => {
+		mock
+			.onGet(`${BASE}/foo`)
+			.replyOnce(429)
+			.onGet(`${BASE}/foo`)
+			.replyOnce(200, {});
+
+		const response = await client.get(`${BASE}/foo`);
+		expect(response.status).toBe(200);
+		// First-attempt backoff base is 1s.
+		expect(warnSpy).toHaveBeenCalledWith(
+			expect.stringMatching(/429.*retrying after 1s/i),
+		);
+	});
+
+	it('throws after exhausting max retries on 429', async () => {
+		mock.onGet(`${BASE}/foo`).reply(429);
+
+		await expect(client.get(`${BASE}/foo`)).rejects.toThrow(
+			/rate-limited after 3 retries/i,
+		);
+	});
+
+	it('pauses proactively when x-ratelimit-remaining drops below threshold', async () => {
+		mock
+			.onGet(`${BASE}/foo`)
+			.reply(
+				200,
+				{},
+				{ 'x-ratelimit-remaining': '2', 'x-ratelimit-reset': '10' },
+			);
+
+		await client.get(`${BASE}/foo`);
+		expect(warnSpy).toHaveBeenCalledWith(
+			expect.stringMatching(/nearly exhausted.*2 remaining.*pausing 10s/i),
+		);
+
+		// Next request must wait for the pause window — the (mocked) setTimeout
+		// fires for ~10s of virtual delay.
+		const callsBefore = setTimeoutSpy.mock.calls.length;
+		await client.get(`${BASE}/foo`);
+		const newDelays = (
+			setTimeoutSpy.mock.calls.slice(callsBefore) as Array<[unknown, number]>
+		).map(([, ms]) => ms);
+		expect(newDelays.some((ms) => ms > 5_000)).toBe(true);
+	});
+
+	it('does not pause when remaining is above threshold', async () => {
+		mock
+			.onGet(`${BASE}/foo`)
+			.reply(
+				200,
+				{},
+				{ 'x-ratelimit-remaining': '50', 'x-ratelimit-reset': '60' },
+			);
+
+		await client.get(`${BASE}/foo`);
+		expect(warnSpy).not.toHaveBeenCalled();
+	});
+
+	it('only warns once when concurrent responses extend the same pause window', async () => {
+		mock
+			.onGet(`${BASE}/foo`)
+			.reply(
+				200,
+				{},
+				{ 'x-ratelimit-remaining': '1', 'x-ratelimit-reset': '5' },
+			);
+
+		// First request opens the pause window and emits the warn.
+		await client.get(`${BASE}/foo`);
+		expect(warnSpy).toHaveBeenCalledTimes(1);
+
+		// Subsequent responses still carry low-remaining headers — they should
+		// extend the pause silently rather than re-warning.
+		await Promise.all([
+			client.get(`${BASE}/foo`),
+			client.get(`${BASE}/foo`),
+			client.get(`${BASE}/foo`),
+		]);
+		expect(warnSpy).toHaveBeenCalledTimes(1);
 	});
 });

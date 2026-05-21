@@ -27,20 +27,16 @@ function ddBackoffDelayMs(attempt: number): number {
 	return Math.min(30_000, DD_RETRY_BASE_DELAY_MS * DD_RETRY_FACTOR ** attempt);
 }
 
-// Earliest epoch-ms at which the next DD API request may be sent.
-let ddRateLimitPauseUntil = 0;
-
 export function createDDClient(): AxiosInstance {
+	// Earliest epoch-ms at which the next request may be sent. Scoped per client
+	// so tests (and any callers that build their own client) get isolated state.
+	let pauseUntil = 0;
+
 	const client = axios.create();
 
 	client.interceptors.request.use(async (config) => {
-		const wait = ddRateLimitPauseUntil - Date.now();
-		if (wait > 0) {
-			console.warn(
-				`Datadog rate limit nearly exhausted; pausing ${Math.ceil(wait / 1_000)}s before next request.`,
-			);
-			await sleep(wait);
-		}
+		const wait = pauseUntil - Date.now();
+		if (wait > 0) await sleep(wait);
 		return config;
 	});
 
@@ -58,7 +54,15 @@ export function createDDClient(): AxiosInstance {
 					rem <= DD_PROACTIVE_THRESHOLD &&
 					resetSec > 0
 				) {
-					ddRateLimitPauseUntil = Date.now() + resetSec * 1_000;
+					const wasPaused = pauseUntil > Date.now();
+					pauseUntil = Date.now() + resetSec * 1_000;
+					// Warn only on transition into a paused window so concurrent
+					// in-flight requests don't each emit their own warning.
+					if (!wasPaused) {
+						console.warn(
+							`Datadog rate limit nearly exhausted (${rem} remaining); pausing ${resetSec}s before next request.`,
+						);
+					}
 				}
 			}
 			return response;
@@ -84,7 +88,7 @@ export function createDDClient(): AxiosInstance {
 				| undefined;
 			const resetHeader = hdrs?.['x-ratelimit-reset'];
 			const delayMs =
-				resetHeader !== undefined && Number.isFinite(Number(resetHeader))
+				resetHeader !== undefined && Number(resetHeader) > 0
 					? (Number(resetHeader) + 1) * 1_000
 					: ddBackoffDelayMs(retryCount);
 
@@ -92,7 +96,7 @@ export function createDDClient(): AxiosInstance {
 				`Datadog API returned 429; retrying after ${Math.ceil(delayMs / 1_000)}s (attempt ${retryCount + 1} of ${DD_MAX_RETRIES}).`,
 			);
 			configAny.__retryCount = retryCount + 1;
-			ddRateLimitPauseUntil = Date.now() + delayMs;
+			pauseUntil = Date.now() + delayMs;
 			await sleep(delayMs);
 			return client.request(config);
 		},
