@@ -320,12 +320,13 @@ export function formatExampleTable(provider: 'launchdarkly' | 'eppo'): string {
 			: '  - Any attribute names are allowed.';
 
 	return [
-		'Example CSV layout:',
+		'Example CSV layout (header row required):',
 		'',
-		'  flagKey,subjectKey,country,plan',
-		'  my-flag,user-1,US,pro',
-		'  my-flag,user-2,GB,free',
-		'  other-flag,user-1,US,pro',
+		'  flagKey     | subjectKey | country | plan',
+		'  ------------|------------|---------|-----',
+		'  my-flag     | user-1     | US      | pro',
+		'  my-flag     | user-2     | GB      | free',
+		'  other-flag  | user-1     | US      | pro',
 		'',
 		'Columns:',
 		'  - Column 1 (flagKey):    The feature flag key to evaluate.',
