@@ -411,5 +411,129 @@ describe('migrateAudiences', () => {
 		expect(result.stats.created).toBe(0);
 		expect(result.dryRunRequests).toEqual([]);
 		expect(result.savedFilterLookup.get(42)).toBe('sf-existing');
+		// fingerprintLookup must be populated even on reuse so Phase 2 can link flags.
+		const fp = fingerprintConditions(audience.targeting_rules[0].conditions);
+		expect(result.fingerprintLookup.get(fp)).toBe('sf-existing');
+	});
+});
+
+// ─── buildTargetingRules with savedFilterLookup (audience-id path) ────────────
+
+describe('buildTargetingRules with savedFilterLookup', () => {
+	it('replaces audience reference with saved_filter_id when audiences field is present', () => {
+		const lookup = new Map([[42, 'sf-ios']]);
+		const alloc = makeAllocation({
+			id: 1,
+			targeting_rules: [],
+			audiences: [{ audience_id: 42, type: 'IS_IN' }],
+		});
+
+		const rules = buildTargetingRules(alloc, undefined, lookup);
+		expect(rules).toHaveLength(1);
+		expect(rules[0].conditions).toEqual([{ saved_filter_id: 'sf-ios' }]);
+	});
+
+	it('deduplicates when the same audience appears more than once', () => {
+		const lookup = new Map([[42, 'sf-ios']]);
+		const alloc = makeAllocation({
+			id: 1,
+			targeting_rules: [],
+			audiences: [
+				{ audience_id: 42, type: 'IS_IN' },
+				{ audience_id: 42, type: 'IS_IN' },
+			],
+		});
+
+		const rules = buildTargetingRules(alloc, undefined, lookup);
+		expect(rules).toHaveLength(1);
+	});
+
+	it('produces one rule per distinct audience', () => {
+		const lookup = new Map([
+			[10, 'sf-ios'],
+			[20, 'sf-android'],
+		]);
+		const alloc = makeAllocation({
+			id: 1,
+			targeting_rules: [],
+			audiences: [
+				{ audience_id: 10, type: 'IS_IN' },
+				{ audience_id: 20, type: 'IS_IN' },
+			],
+		});
+
+		const rules = buildTargetingRules(alloc, undefined, lookup);
+		expect(rules).toHaveLength(2);
+		expect(rules[0].conditions).toEqual([{ saved_filter_id: 'sf-ios' }]);
+		expect(rules[1].conditions).toEqual([{ saved_filter_id: 'sf-android' }]);
+	});
+
+	it('falls back gracefully when audience_id is not in savedFilterLookup', () => {
+		const lookup = new Map<number, string>(); // empty
+		const alloc = makeAllocation({
+			id: 1,
+			targeting_rules: [],
+			audiences: [{ audience_id: 99, type: 'IS_IN' }],
+		});
+
+		const rules = buildTargetingRules(alloc, undefined, lookup);
+		expect(rules).toHaveLength(0);
+	});
+
+	it('combines audience rules and inline conditions', () => {
+		const sfLookup = new Map([[42, 'sf-ios']]);
+		const alloc = makeAllocation({
+			id: 1,
+			targeting_rules: [
+				{
+					conditions: [{ operator: 'GTE', attribute: 'age', values: ['18'] }],
+				},
+			],
+			audiences: [{ audience_id: 42, type: 'IS_IN' }],
+		});
+
+		const rules = buildTargetingRules(alloc, undefined, sfLookup);
+		expect(rules).toHaveLength(2);
+		expect(rules[0].conditions).toEqual([{ saved_filter_id: 'sf-ios' }]);
+		expect(rules[1].conditions[0]).toMatchObject({
+			operator: 'GTE',
+			attribute: 'age',
+		});
+	});
+
+	it('audience-id path takes precedence over fingerprint for same condition set', () => {
+		const conditions = [
+			{ operator: 'ONE_OF', attribute: 'country', values: ['US'] },
+		];
+		const fp = fingerprintConditions(conditions);
+		const fpLookup = new Map([[fp, 'sf-from-fp']]);
+		const sfLookup = new Map([[42, 'sf-from-id']]);
+
+		const alloc = makeAllocation({
+			id: 1,
+			targeting_rules: [{ conditions }],
+			audiences: [{ audience_id: 42, type: 'IS_IN' }],
+		});
+
+		const rules = buildTargetingRules(alloc, fpLookup, sfLookup);
+		// Audience-id path runs first (sf-from-id), then fingerprint path adds sf-from-fp
+		// since it's a different ID and not yet in usedSavedFilterIds.
+		expect(rules).toHaveLength(2);
+		const ids = rules.map(
+			(r) => (r.conditions[0] as { saved_filter_id: string }).saved_filter_id,
+		);
+		expect(ids).toContain('sf-from-id');
+		expect(ids).toContain('sf-from-fp');
+	});
+
+	it('ignores audiences field when savedFilterLookup is not provided', () => {
+		const alloc = makeAllocation({
+			id: 1,
+			targeting_rules: [],
+			audiences: [{ audience_id: 42, type: 'IS_IN' }],
+		});
+
+		const rules = buildTargetingRules(alloc); // no lookups
+		expect(rules).toHaveLength(0);
 	});
 });

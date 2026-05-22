@@ -105,16 +105,39 @@ export function hasSemverConditions(
 /**
  * Convert Eppo targeting rules → Datadog targeting rules.
  *
- * When fingerprintLookup is provided, rules whose conditions match an Eppo
- * audience are replaced with a saved_filter_id reference. Duplicate saved
- * filter IDs within the same allocation are deduplicated (same semantics, OR).
+ * Two mechanisms resolve audience references:
+ * 1. savedFilterLookup (audienceId → savedFilterId): used when the Eppo API
+ *    returns explicit audience references in allocation.audiences (preferred).
+ * 2. fingerprintLookup (conditionFingerprint → savedFilterId): fallback for
+ *    older API responses that expand audience conditions inline.
+ *
+ * Duplicate saved filter IDs within the same allocation are deduplicated.
  */
 export function buildTargetingRules(
 	eppoAlloc: EppoAllocation,
 	fingerprintLookup?: Map<string, string>,
+	savedFilterLookup?: Map<number, string>,
 ): DatadogTargetingRule[] {
 	const rules: DatadogTargetingRule[] = [];
 	const usedSavedFilterIds = new Set<string>();
+
+	// Explicit audience references (preferred path — requires updated Eppo API).
+	if (
+		savedFilterLookup &&
+		eppoAlloc.audiences &&
+		eppoAlloc.audiences.length > 0
+	) {
+		for (const audienceRef of eppoAlloc.audiences) {
+			const savedFilterId = savedFilterLookup.get(audienceRef.audience_id);
+			if (
+				savedFilterId !== undefined &&
+				!usedSavedFilterIds.has(savedFilterId)
+			) {
+				usedSavedFilterIds.add(savedFilterId);
+				rules.push({ conditions: [{ saved_filter_id: savedFilterId }] });
+			}
+		}
+	}
 
 	for (const rule of eppoAlloc.targeting_rules ?? []) {
 		const conditions = rule.conditions ?? [];
@@ -148,6 +171,7 @@ export function buildAllocations(
 	flag: EppoFlag,
 	mapping: Map<number, DatadogEnvironment>,
 	fingerprintLookup?: Map<string, string>,
+	savedFilterLookup?: Map<number, string>,
 ): DatadogAllocationForFlagCreation[] {
 	const variations = flag.variations ?? [];
 	if (variations.length === 0) return [];
@@ -187,7 +211,11 @@ export function buildAllocations(
 			if (variantWeights.length === 0) continue;
 
 			// Map targeting rules
-			const targetingRules = buildTargetingRules(eppoAlloc, fingerprintLookup);
+			const targetingRules = buildTargetingRules(
+				eppoAlloc,
+				fingerprintLookup,
+				savedFilterLookup,
+			);
 
 			const allocationKey =
 				eppoAlloc.key ||

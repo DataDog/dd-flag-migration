@@ -49,6 +49,11 @@ export interface EppoVariationWeight {
 	weight: number;
 }
 
+export interface EppoAllocationAudience {
+	audience_id: number;
+	type: 'IS_IN' | 'IS_NOT_IN';
+}
+
 export interface EppoAllocation {
 	id: number;
 	key: string;
@@ -59,6 +64,7 @@ export interface EppoAllocation {
 	is_default: boolean;
 	variation_weight: EppoVariationWeight[];
 	targeting_rules: EppoTargetingRule[];
+	audiences?: EppoAllocationAudience[];
 }
 
 export interface EppoFlag {

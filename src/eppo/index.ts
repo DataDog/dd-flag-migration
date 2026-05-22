@@ -348,6 +348,7 @@ async function confirmMigration(
 
 	// ── Phase 1: Audience migration ──────────────────────────────────────────
 	let fingerprintLookup: Map<string, string> | undefined;
+	let savedFilterLookup: Map<number, string> | undefined;
 	try {
 		console.log(
 			chalk.bold('  Phase 1: Migrating Eppo audiences as saved filters'),
@@ -361,6 +362,7 @@ async function confirmMigration(
 			dryRun,
 		});
 		fingerprintLookup = audienceResult.fingerprintLookup;
+		savedFilterLookup = audienceResult.savedFilterLookup;
 		dryRunRequests.push(...audienceResult.dryRunRequests);
 		if (audienceResult.stats.discovered > 0) {
 			const { created: ac, reused: ar, skipped: as_ } = audienceResult.stats;
@@ -439,7 +441,12 @@ async function confirmMigration(
 			continue;
 		}
 
-		const allocations = buildAllocations(flag, envMapping, fingerprintLookup);
+		const allocations = buildAllocations(
+			flag,
+			envMapping,
+			fingerprintLookup,
+			savedFilterLookup,
+		);
 		const envsToEnable = getEnvsToEnable(flag, envMapping);
 		const existingFlagId = datadogKeys.get(flag.key);
 
