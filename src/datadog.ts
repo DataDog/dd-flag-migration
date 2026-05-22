@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios, { type AxiosInstance } from 'axios';
 import type {
 	CreateSavedFilterRequest,
 	DatadogAllocationSyncRequest,
@@ -10,6 +10,106 @@ import type {
 	SavedFilterMigrationMetadata,
 	SavedFilterSummary,
 } from './types.js';
+
+// ─── Rate Limiting ──────────────────────────────────────────────────────────
+
+const DD_MAX_RETRIES = 3;
+const DD_RETRY_BASE_DELAY_MS = 1_000;
+const DD_RETRY_FACTOR = 2;
+// Pause proactively when this many requests remain in the current window.
+const DD_PROACTIVE_THRESHOLD = 5;
+
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function ddBackoffDelayMs(attempt: number): number {
+	return Math.min(30_000, DD_RETRY_BASE_DELAY_MS * DD_RETRY_FACTOR ** attempt);
+}
+
+export function createDDClient(): AxiosInstance {
+	// Earliest epoch-ms at which the next request may be sent. Scoped per client
+	// so tests (and any callers that build their own client) get isolated state.
+	let pauseUntil = 0;
+
+	const client = axios.create();
+
+	client.interceptors.request.use(async (config) => {
+		const wait = pauseUntil - Date.now();
+		if (wait > 0) await sleep(wait);
+		return config;
+	});
+
+	client.interceptors.response.use(
+		(response) => {
+			const headers = response.headers as Record<string, string | undefined>;
+			const remaining = headers['x-ratelimit-remaining'];
+			const reset = headers['x-ratelimit-reset'];
+			if (remaining !== undefined && reset !== undefined) {
+				const rem = Number(remaining);
+				const resetSec = Number(reset);
+				if (
+					Number.isFinite(rem) &&
+					Number.isFinite(resetSec) &&
+					rem <= DD_PROACTIVE_THRESHOLD &&
+					resetSec > 0
+				) {
+					const wasPaused = pauseUntil > Date.now();
+					pauseUntil = Math.max(pauseUntil, Date.now() + resetSec * 1_000);
+					// Warn only on transition into a paused window so concurrent
+					// in-flight requests don't each emit their own warning.
+					if (!wasPaused) {
+						console.warn(
+							`Datadog rate limit nearly exhausted (${rem} remaining); pausing ${resetSec}s before next request.`,
+						);
+					}
+				}
+			}
+			return response;
+		},
+		async (error) => {
+			if (!axios.isAxiosError(error) || error.response?.status !== 429) {
+				throw error;
+			}
+
+			const config = error.config;
+			if (!config) throw error;
+
+			const configAny = config as unknown as Record<string, unknown>;
+			const retryCount: number = (configAny.__retryCount as number) ?? 0;
+			if (retryCount >= DD_MAX_RETRIES) {
+				throw new Error(
+					`Datadog API rate-limited after ${DD_MAX_RETRIES} retries; try again later`,
+				);
+			}
+
+			const hdrs = error.response?.headers as
+				| Record<string, string | undefined>
+				| undefined;
+			const resetHeader = hdrs?.['x-ratelimit-reset'];
+			const delayMs =
+				resetHeader !== undefined && Number(resetHeader) > 0
+					? (Number(resetHeader) + 1) * 1_000
+					: ddBackoffDelayMs(retryCount);
+
+			console.warn(
+				`Datadog API returned 429; retrying after ${Math.ceil(delayMs / 1_000)}s (attempt ${retryCount + 1} of ${DD_MAX_RETRIES}).`,
+			);
+			configAny.__retryCount = retryCount + 1;
+			pauseUntil = Math.max(pauseUntil, Date.now() + delayMs);
+			await sleep(delayMs);
+			return client.request(config);
+		},
+	);
+
+	return client;
+}
+
+// Module-level client used by all DD API functions.
+// Exported for testing so AxiosMockAdapter can be attached to this instance.
+export const ddClient = createDDClient();
+
+// ────────────────────────────────────────────────────────────────────────────
 
 function ddHeaders(apiKey: string, appKey: string) {
 	return {
@@ -35,7 +135,7 @@ export async function fetchDatadogEnvironments(
 	site = 'datadoghq.com',
 ): Promise<DatadogEnvironment[]> {
 	const baseUrl = `https://api.${site}`;
-	const response = await axios.get<{ data: JsonApiEnvironment[] }>(
+	const response = await ddClient.get<{ data: JsonApiEnvironment[] }>(
 		`${baseUrl}/api/v2/feature-flags/environments`,
 		{ headers: ddHeaders(apiKey, appKey) },
 	);
@@ -81,7 +181,7 @@ export async function fetchDatadogFlagKeys(
 	let offset = 0;
 	const limit = 200;
 	while (true) {
-		const response = await axios.get<{ data: JsonApiFlag[] }>(
+		const response = await ddClient.get<{ data: JsonApiFlag[] }>(
 			`${baseUrl}/api/v2/feature-flags`,
 			{
 				headers: ddHeaders(apiKey, appKey),
@@ -106,7 +206,7 @@ export async function fetchDatadogFlags(
 	let offset = 0;
 	const limit = 200;
 	while (true) {
-		const response = await axios.get<{ data: JsonApiFlag[] }>(
+		const response = await ddClient.get<{ data: JsonApiFlag[] }>(
 			`${baseUrl}/api/v2/feature-flags`,
 			{
 				headers: ddHeaders(apiKey, appKey),
@@ -135,7 +235,7 @@ export async function createFeatureFlag(
 ): Promise<DatadogCreatedFlag> {
 	const baseUrl = `https://api.${site}`;
 	const body = { data: { type: 'feature-flags', attributes: request } };
-	const response = await axios.post<{
+	const response = await ddClient.post<{
 		data: { id: string; attributes: { key: string } };
 	}>(`${baseUrl}/api/v2/feature-flags`, body, {
 		headers: {
@@ -153,7 +253,7 @@ export async function fetchFlagTags(
 	site = 'datadoghq.com',
 ): Promise<string[]> {
 	const baseUrl = `https://api.${site}`;
-	const response = await axios.get<{
+	const response = await ddClient.get<{
 		data: { attributes: { tags?: string[] } };
 	}>(`${baseUrl}/api/v2/feature-flags/${flagId}`, {
 		headers: ddHeaders(apiKey, appKey),
@@ -172,7 +272,7 @@ export async function updateFlagTags(
 	const body = {
 		data: { type: 'feature-flags', attributes: { tags } },
 	};
-	await axios.put(`${baseUrl}/api/v2/feature-flags/${flagId}`, body, {
+	await ddClient.put(`${baseUrl}/api/v2/feature-flags/${flagId}`, body, {
 		headers: {
 			...ddHeaders(apiKey, appKey),
 			'Content-Type': 'application/json',
@@ -196,7 +296,7 @@ export async function fetchDatadogTeams(
 	let pageNumber = 0;
 	const pageSize = 100;
 	while (true) {
-		const response = await axios.get<{
+		const response = await ddClient.get<{
 			data: Array<{
 				id: string;
 				attributes: { handle: string; name: string };
@@ -230,7 +330,7 @@ export async function enableFeatureFlagEnvironment(
 	site = 'datadoghq.com',
 ): Promise<void> {
 	const baseUrl = `https://api.${site}`;
-	await axios.post(
+	await ddClient.post(
 		`${baseUrl}/api/v2/feature-flags/${flagId}/environments/${environmentId}/enable`,
 		{},
 		{
@@ -264,7 +364,7 @@ export async function fetchFlagDetail(
 	allocationKeyToIdByEnv: Map<string, Map<string, string>>;
 }> {
 	const baseUrl = `https://api.${site}`;
-	const response = await axios.get<{ data: JsonApiFlagDetail }>(
+	const response = await ddClient.get<{ data: JsonApiFlagDetail }>(
 		`${baseUrl}/api/v2/feature-flags/${flagId}`,
 		{ headers: ddHeaders(apiKey, appKey) },
 	);
@@ -321,7 +421,7 @@ export async function syncAllocationsForEnvironment(
 			},
 		})),
 	};
-	await axios.put(
+	await ddClient.put(
 		`${baseUrl}/api/v2/feature-flags/${flagId}/environments/${environmentId}/allocations`,
 		body,
 		{
@@ -350,7 +450,7 @@ export async function fetchRestrictionPolicy(
 ): Promise<DDRestrictionBinding[]> {
 	const baseUrl = `https://api.${site}`;
 	try {
-		const response = await axios.get<{
+		const response = await ddClient.get<{
 			data: { attributes: { bindings: DDRestrictionBinding[] } };
 		}>(`${baseUrl}/api/v2/restriction_policy/feature-flag:${flagId}`, {
 			headers: ddHeaders(apiKey, appKey),
@@ -420,13 +520,17 @@ export async function applyRestrictionPolicy(
 		},
 	};
 
-	await axios.post(`${baseUrl}/api/v2/restriction_policy/${resourceId}`, body, {
-		headers: {
-			...ddHeaders(apiKey, appKey),
-			'Content-Type': 'application/json',
+	await ddClient.post(
+		`${baseUrl}/api/v2/restriction_policy/${resourceId}`,
+		body,
+		{
+			headers: {
+				...ddHeaders(apiKey, appKey),
+				'Content-Type': 'application/json',
+			},
+			params: { allow_self_lockout: true },
 		},
-		params: { allow_self_lockout: true },
-	});
+	);
 }
 
 // ─── Saved Filters ───────────────────────────────────────────────────────────
@@ -439,7 +543,7 @@ export async function createSavedFilter(
 ): Promise<{ id: string }> {
 	const baseUrl = `https://api.${site}`;
 	const body = { data: { type: 'saved-filters', attributes: request } };
-	const response = await axios.post<{ data: { id: string } }>(
+	const response = await ddClient.post<{ data: { id: string } }>(
 		`${baseUrl}/api/v2/feature-flags/saved-filters`,
 		body,
 		{
@@ -467,7 +571,7 @@ export async function listSavedFilters(
 	site = 'datadoghq.com',
 ): Promise<{ data: SavedFilterSummary[]; total: number }> {
 	const baseUrl = `https://api.${site}`;
-	const response = await axios.get<{
+	const response = await ddClient.get<{
 		data: Array<{
 			id: string;
 			attributes: {

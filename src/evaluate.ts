@@ -15,6 +15,7 @@ import {
 	saveDatadogKeys,
 	saveDatadogSite,
 } from './config.js';
+import { ddClient } from './datadog.js';
 import {
 	evaluateEppoFlag,
 	evaluateEppoFlagAdvanced,
@@ -324,7 +325,7 @@ async function fetchEnvironmentsFromApi(
 ): Promise<ApiEnvironment[]> {
 	const baseUrl = `https://api.${site}`;
 	try {
-		const resp = await axios.get<{
+		const resp = await ddClient.get<{
 			data: Array<{ id: string; attributes: { queries: string[] } }>;
 		}>(`${baseUrl}/api/v2/feature-flags/environments`, {
 			headers: { 'DD-API-KEY': apiKey, 'DD-APPLICATION-KEY': appKey },
@@ -482,7 +483,7 @@ async function fetchDDFlagData(
 	const limit = 200;
 	try {
 		while (true) {
-			const resp = await axios.get<{ data: DDFlagListItem[] }>(
+			const resp = await ddClient.get<{ data: DDFlagListItem[] }>(
 				`${baseUrl}/api/v2/feature-flags`,
 				{
 					headers: { 'DD-API-KEY': apiKey, 'DD-APPLICATION-KEY': appKey },
@@ -538,6 +539,9 @@ async function fetchDDFlags(
 	const host = buildEndpointHost(site);
 	const url = `https://${host}/precompute-assignments?dd_env=${encodeURIComponent(env)}`;
 	try {
+		// Intentionally uses plain axios — precompute-assignments accepts dd-client-token
+		// (not a management API key), so it belongs to a different rate-limit bucket
+		// and is not routed through ddClient.
 		const resp = await axios.post(
 			url,
 			{

@@ -2,10 +2,18 @@
  * Tests for Eppo API: fetching flags, extracting environments,
  * and validating API keys.
  */
-import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
-import axios from 'axios';
+import {
+	afterEach,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	jest,
+} from '@jest/globals';
 import AxiosMockAdapter from 'axios-mock-adapter';
 import {
+	createEppoClient,
+	eppoClient,
 	extractEnvironments,
 	fetchEppoFlags,
 	validateEppoApiKey,
@@ -150,18 +158,18 @@ describe('fetchEppoFlags', () => {
 	let mock: AxiosMockAdapter;
 
 	beforeEach(() => {
-		mock = new AxiosMockAdapter(axios as never);
+		mock = new AxiosMockAdapter(eppoClient as never);
 	});
 
 	afterEach(() => {
 		mock.restore();
 	});
 
-	it('returns flags from an array response', async () => {
+	it('returns flags from a single-page array response (page shorter than pageSize)', async () => {
 		const flags = [makeFlag({ id: 1, name: 'Flag A', key: 'flag-a' })];
 		mock.onGet('https://eppo.cloud/api/v1/feature-flags').reply(200, flags);
 
-		const result = await fetchEppoFlags('test-api-key');
+		const result = await fetchEppoFlags('test-api-key', { pageSize: 100 });
 		expect(result).toEqual(flags);
 	});
 
@@ -171,7 +179,7 @@ describe('fetchEppoFlags', () => {
 			.onGet('https://eppo.cloud/api/v1/feature-flags')
 			.reply(200, { data: flags, total: 1 });
 
-		const result = await fetchEppoFlags('test-api-key');
+		const result = await fetchEppoFlags('test-api-key', { pageSize: 100 });
 		expect(result).toEqual(flags);
 	});
 
@@ -180,7 +188,7 @@ describe('fetchEppoFlags', () => {
 			.onGet('https://eppo.cloud/api/v1/feature-flags')
 			.reply(200, { unexpected: true });
 
-		const result = await fetchEppoFlags('test-api-key');
+		const result = await fetchEppoFlags('test-api-key', { pageSize: 100 });
 		expect(result).toEqual([]);
 	});
 
@@ -190,23 +198,189 @@ describe('fetchEppoFlags', () => {
 			return [200, []];
 		});
 
-		await fetchEppoFlags('my-key');
+		await fetchEppoFlags('my-key', { pageSize: 100 });
 	});
 
 	it('throws on HTTP error', async () => {
 		mock.onGet('https://eppo.cloud/api/v1/feature-flags').reply(401);
-		await expect(fetchEppoFlags('bad-key')).rejects.toThrow();
+		await expect(
+			fetchEppoFlags('bad-key', { pageSize: 100 }),
+		).rejects.toThrow();
 	});
 
-	it('requests detailed allocations with limit=-1', async () => {
+	it('requests detailed allocations with offset/limit pagination params', async () => {
 		mock.onGet('https://eppo.cloud/api/v1/feature-flags').reply((config) => {
-			expect(config.params?.limit).toBe(-1);
+			expect(config.params?.offset).toBe(0);
+			expect(config.params?.limit).toBe(100);
 			expect(config.params?.include_detailed_allocations).toBe(true);
 			return [200, []];
 		});
 
-		await fetchEppoFlags('test-key');
+		await fetchEppoFlags('test-key', { pageSize: 100 });
 	});
+
+	it('pages through results, advancing offset by pageSize', async () => {
+		const page1 = [
+			makeFlag({ id: 1, name: 'Flag 1', key: 'flag-1' }),
+			makeFlag({ id: 2, name: 'Flag 2', key: 'flag-2' }),
+		];
+		const page2 = [
+			makeFlag({ id: 3, name: 'Flag 3', key: 'flag-3' }),
+			makeFlag({ id: 4, name: 'Flag 4', key: 'flag-4' }),
+		];
+		const page3 = [makeFlag({ id: 5, name: 'Flag 5', key: 'flag-5' })];
+
+		mock.onGet('https://eppo.cloud/api/v1/feature-flags').reply((config) => {
+			const offset = Number(config.params?.offset);
+			if (offset === 0) return [200, page1];
+			if (offset === 2) return [200, page2];
+			if (offset === 4) return [200, page3];
+			return [200, []];
+		});
+
+		const result = await fetchEppoFlags('k', { pageSize: 2 });
+		expect(result.map((f) => f.key)).toEqual([
+			'flag-1',
+			'flag-2',
+			'flag-3',
+			'flag-4',
+			'flag-5',
+		]);
+	});
+
+	it('detects end-of-pagination at exact pageSize boundary without infinite loop', async () => {
+		// All pages return exactly pageSize until offset reaches end-of-data,
+		// at which point the server returns an empty page.
+		const flagsAt = (start: number, count: number) =>
+			Array.from({ length: count }, (_, i) =>
+				makeFlag({
+					id: start + i,
+					name: `Flag ${start + i}`,
+					key: `flag-${start + i}`,
+				}),
+			);
+
+		mock.onGet('https://eppo.cloud/api/v1/feature-flags').reply((config) => {
+			const offset = Number(config.params?.offset);
+			if (offset === 0) return [200, flagsAt(0, 2)];
+			if (offset === 2) return [200, flagsAt(2, 2)];
+			if (offset === 4) return [200, []]; // boundary
+			throw new Error(`unexpected offset ${offset}`);
+		});
+
+		const result = await fetchEppoFlags('k', { pageSize: 2 });
+		expect(result).toHaveLength(4);
+	});
+
+	it('invokes onProgress with running total after each page', async () => {
+		mock.onGet('https://eppo.cloud/api/v1/feature-flags').reply((config) => {
+			const offset = Number(config.params?.offset);
+			if (offset === 0)
+				return [
+					200,
+					[
+						makeFlag({ id: 1, name: 'A', key: 'a' }),
+						makeFlag({ id: 2, name: 'B', key: 'b' }),
+					],
+				];
+			if (offset === 2)
+				return [200, [makeFlag({ id: 3, name: 'C', key: 'c' })]];
+			return [200, []];
+		});
+
+		const progress: number[] = [];
+		await fetchEppoFlags('k', {
+			pageSize: 2,
+			onProgress: (n) => progress.push(n),
+		});
+		expect(progress).toEqual([2, 3]);
+	});
+});
+
+// ─── 429 Retry ───────────────────────────────────────────────────────────────
+
+describe('Eppo client 429 handling', () => {
+	let client: ReturnType<typeof createEppoClient>;
+	let mock: AxiosMockAdapter;
+
+	beforeEach(() => {
+		client = createEppoClient();
+		mock = new AxiosMockAdapter(client as never);
+	});
+
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('retries on 429 and eventually succeeds', async () => {
+		mock
+			.onGet('https://eppo.cloud/api/v1/feature-flags')
+			.replyOnce(
+				429,
+				'Too many requests. Rate limit is 200 requests per 1 second(s).',
+			)
+			.onGet('https://eppo.cloud/api/v1/feature-flags')
+			.replyOnce(200, []);
+
+		const response = await client.get(
+			'https://eppo.cloud/api/v1/feature-flags',
+		);
+		expect(response.status).toBe(200);
+	}, 10000);
+
+	it('throws after exhausting retries on 429', async () => {
+		mock
+			.onGet('https://eppo.cloud/api/v1/feature-flags')
+			.reply(
+				429,
+				'Too many requests. Rate limit is 200 requests per 1 second(s).',
+			);
+
+		await expect(
+			client.get('https://eppo.cloud/api/v1/feature-flags'),
+		).rejects.toThrow(/rate-limited after \d+ retries/i);
+	}, 120000);
+
+	it('uses the full rate-limit window on first retry without capping at 30s', async () => {
+		const setTimeoutSpy: ReturnType<typeof jest.spyOn> = jest
+			.spyOn(global, 'setTimeout')
+			.mockImplementation((cb: unknown) => {
+				(cb as () => void)();
+				return 0 as unknown as ReturnType<typeof setTimeout>;
+			}) as ReturnType<typeof jest.spyOn>;
+
+		mock
+			.onGet('https://eppo.cloud/api/v1/feature-flags')
+			.replyOnce(
+				429,
+				'Too many requests. Rate limit is 200 requests per 15 minute(s).',
+			)
+			.onGet('https://eppo.cloud/api/v1/feature-flags')
+			.replyOnce(200, []);
+
+		await client.get('https://eppo.cloud/api/v1/feature-flags');
+
+		const delays = (setTimeoutSpy.mock.calls as Array<[unknown, number]>).map(
+			([, ms]) => ms,
+		);
+		// 15 minutes = 900s; the old 30s cap would never produce a delay this large.
+		expect(delays.some((ms) => ms >= 900_000)).toBe(true);
+
+		setTimeoutSpy.mockRestore();
+	});
+
+	it('retries even when the 429 body cannot be parsed', async () => {
+		mock
+			.onGet('https://eppo.cloud/api/v1/feature-flags')
+			.replyOnce(429, 'something else entirely')
+			.onGet('https://eppo.cloud/api/v1/feature-flags')
+			.replyOnce(200, []);
+
+		const response = await client.get(
+			'https://eppo.cloud/api/v1/feature-flags',
+		);
+		expect(response.status).toBe(200);
+	}, 10000);
 });
 
 // ─── validateEppoApiKey ──────────────────────────────────────────────────────
@@ -215,7 +389,7 @@ describe('validateEppoApiKey', () => {
 	let mock: AxiosMockAdapter;
 
 	beforeEach(() => {
-		mock = new AxiosMockAdapter(axios as never);
+		mock = new AxiosMockAdapter(eppoClient as never);
 	});
 
 	afterEach(() => {
