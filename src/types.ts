@@ -97,7 +97,7 @@ export interface DatadogCreatedFlag {
 	key: string;
 }
 
-export interface SavedFilterMigrationMetadata {
+export interface LDSavedFilterMigrationMetadata {
 	provider: 'launchdarkly';
 	project_key: string;
 	segment_key: string;
@@ -105,6 +105,15 @@ export interface SavedFilterMigrationMetadata {
 	negated: boolean;
 	name_prefix?: string;
 }
+
+export interface EppoSavedFilterMigrationMetadata {
+	provider: 'eppo';
+	audience_id: number;
+}
+
+export type SavedFilterMigrationMetadata =
+	| LDSavedFilterMigrationMetadata
+	| EppoSavedFilterMigrationMetadata;
 
 export interface SavedFilterSummary {
 	id: string;

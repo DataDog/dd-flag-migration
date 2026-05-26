@@ -7,7 +7,7 @@ import type {
 	DatadogCondition,
 	DatadogEnvironment,
 	DatadogTargetingRule,
-	SavedFilterMigrationMetadata,
+	LDSavedFilterMigrationMetadata,
 	SavedFilterSummary,
 } from '../types.js';
 import { fetchSegment, fetchSegments } from './api.js';
@@ -411,9 +411,9 @@ export async function migrateSegments(params: {
 	const existingByName = new Map<string, SavedFilterSummary>();
 	for (const sf of existingFilters) {
 		existingByName.set(sf.name, sf);
-		if (sf.migration_metadata) {
+		if (sf.migration_metadata?.provider === 'launchdarkly') {
 			const m = sf.migration_metadata;
-			const tupleKey = `${m.provider}:${m.project_key}:${m.segment_key}:${m.environment_key}:${m.negated}`;
+			const tupleKey = `launchdarkly:${m.project_key}:${m.segment_key}:${m.environment_key}:${m.negated}`;
 			existingByTuple.set(tupleKey, sf.id);
 		}
 	}
@@ -446,7 +446,10 @@ export async function migrateSegments(params: {
 			pendingFilters.push({
 				ref,
 				segment,
-				namePrefix: existingSf?.migration_metadata?.name_prefix,
+				namePrefix:
+					existingSf?.migration_metadata?.provider === 'launchdarkly'
+						? existingSf.migration_metadata.name_prefix
+						: undefined,
 				isReused: true,
 			});
 			continue;
@@ -473,11 +476,15 @@ export async function migrateSegments(params: {
 		// Check against existing DD filters from a different project (or no metadata)
 		const existing = existingByName.get(name);
 		if (existing) {
+			const ldMeta =
+				existing.migration_metadata?.provider === 'launchdarkly'
+					? existing.migration_metadata
+					: null;
 			const sameProject =
-				existing.migration_metadata?.provider === 'launchdarkly' &&
-				existing.migration_metadata.project_key === projectKey &&
-				existing.migration_metadata.segment_key === pending.ref.segmentKey &&
-				existing.migration_metadata.environment_key === pending.ref.envKey;
+				ldMeta !== null &&
+				ldMeta.project_key === projectKey &&
+				ldMeta.segment_key === pending.ref.segmentKey &&
+				ldMeta.environment_key === pending.ref.envKey;
 			if (!sameProject) {
 				collisionSet.add(pending);
 				continue;
@@ -509,7 +516,8 @@ export async function migrateSegments(params: {
 			const existingId = existingByTuple.get(tupleKey);
 			if (!existingId) return false;
 			const sf = existingFilters.find((f) => f.id === existingId);
-			return sf?.migration_metadata?.name_prefix !== undefined;
+			if (sf?.migration_metadata?.provider !== 'launchdarkly') return false;
+			return sf.migration_metadata.name_prefix !== undefined;
 		});
 
 		if (!allHavePrefix) {
@@ -641,7 +649,7 @@ export async function migrateSegments(params: {
 				: `Inverse of ${segment.name}`
 			: segment.description;
 
-		const metadata: SavedFilterMigrationMetadata = {
+		const metadata: LDSavedFilterMigrationMetadata = {
 			provider: 'launchdarkly',
 			project_key: projectKey,
 			segment_key: ref.segmentKey,

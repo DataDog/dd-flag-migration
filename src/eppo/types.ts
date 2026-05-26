@@ -1,3 +1,24 @@
+// ─── Eppo Audience Types ─────────────────────────────────────────────────────
+
+export interface EppoAudienceCondition {
+	operator: string;
+	attribute: string;
+	values: string[];
+}
+
+export interface EppoAudienceTargetingRule {
+	id: number;
+	conditions: EppoAudienceCondition[];
+}
+
+export interface EppoAudience {
+	id: number;
+	name: string;
+	description: string;
+	targeting_rules: EppoAudienceTargetingRule[];
+	is_archived: boolean;
+}
+
 // ─── Eppo Types ──────────────────────────────────────────────────────────────
 
 export interface EppoFlagVariation {
@@ -28,6 +49,11 @@ export interface EppoVariationWeight {
 	weight: number;
 }
 
+export interface EppoAllocationAudience {
+	audience_id: number;
+	type: 'IS_IN' | 'IS_NOT_IN';
+}
+
 export interface EppoAllocation {
 	id: number;
 	key: string;
@@ -38,6 +64,7 @@ export interface EppoAllocation {
 	is_default: boolean;
 	variation_weight: EppoVariationWeight[];
 	targeting_rules: EppoTargetingRule[];
+	audiences?: EppoAllocationAudience[];
 }
 
 export interface EppoFlag {
