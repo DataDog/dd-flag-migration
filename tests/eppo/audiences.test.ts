@@ -280,6 +280,51 @@ describe('fetchEppoAudiences', () => {
 		const result = await fetchEppoAudiences('test-key');
 		expect(result).toEqual([]);
 	});
+
+	it('pages through results when the API returns full pages', async () => {
+		const makeAudience = (id: number): EppoAudience => ({
+			id,
+			name: `Audience ${id}`,
+			description: '',
+			targeting_rules: [
+				{
+					id: id * 10,
+					conditions: [
+						{ operator: 'ONE_OF', attribute: 'x', values: [String(id)] },
+					],
+				},
+			],
+			is_archived: false,
+		});
+		// Simulate 2 full pages (100 each) + 1 partial page to verify pagination stops.
+		mock.onGet('https://eppo.cloud/api/v1/audiences').reply((config) => {
+			const offset = Number(config.params?.offset ?? 0);
+			if (offset === 0)
+				return [200, Array.from({ length: 100 }, (_, i) => makeAudience(i))];
+			if (offset === 100)
+				return [
+					200,
+					Array.from({ length: 100 }, (_, i) => makeAudience(100 + i)),
+				];
+			if (offset === 200) return [200, [makeAudience(200)]];
+			throw new Error(`unexpected offset ${offset}`);
+		});
+
+		const result = await fetchEppoAudiences('test-key');
+		expect(result).toHaveLength(201);
+		expect(result[0].id).toBe(0);
+		expect(result[200].id).toBe(200);
+	});
+
+	it('sends offset and limit params', async () => {
+		mock.onGet('https://eppo.cloud/api/v1/audiences').reply((config) => {
+			expect(config.params?.offset).toBe(0);
+			expect(config.params?.limit).toBe(100);
+			return [200, []];
+		});
+
+		await fetchEppoAudiences('test-key');
+	});
 });
 
 // ─── migrateAudiences ────────────────────────────────────────────────────────
@@ -535,5 +580,90 @@ describe('buildTargetingRules with savedFilterLookup', () => {
 
 		const rules = buildTargetingRules(alloc); // no lookups
 		expect(rules).toHaveLength(0);
+	});
+
+	it('IS_NOT_IN audience ref falls back to inline conditions instead of saved_filter_id', () => {
+		const conditions = [
+			{ operator: 'ONE_OF', attribute: 'country', values: ['US'] },
+		];
+		const sfLookup = new Map([[42, 'sf-ios']]);
+		const alloc = makeAllocation({
+			id: 1,
+			targeting_rules: [{ conditions }],
+			audiences: [{ audience_id: 42, type: 'IS_NOT_IN' }],
+		});
+
+		const rules = buildTargetingRules(alloc, undefined, sfLookup);
+		expect(rules).toHaveLength(1);
+		expect(rules[0].conditions[0]).not.toHaveProperty('saved_filter_id');
+		expect(rules[0].conditions[0]).toMatchObject({
+			operator: 'ONE_OF',
+			attribute: 'country',
+		});
+	});
+
+	it('IS_NOT_IN audience ref is not replaced via fingerprint lookup either', () => {
+		const conditions = [
+			{ operator: 'ONE_OF', attribute: 'country', values: ['US'] },
+		];
+		const fp = fingerprintConditions(conditions);
+		const fpLookup = new Map([[fp, 'sf-ios']]);
+		const sfLookup = new Map([[42, 'sf-ios']]);
+		const alloc = makeAllocation({
+			id: 1,
+			targeting_rules: [{ conditions }],
+			audiences: [{ audience_id: 42, type: 'IS_NOT_IN' }],
+		});
+
+		const rules = buildTargetingRules(alloc, fpLookup, sfLookup);
+		expect(rules).toHaveLength(1);
+		expect(rules[0].conditions[0]).not.toHaveProperty('saved_filter_id');
+		expect(rules[0].conditions[0]).toMatchObject({
+			operator: 'ONE_OF',
+			attribute: 'country',
+		});
+	});
+
+	it('IS_IN and IS_NOT_IN for different audiences in the same allocation', () => {
+		const conditions1 = [
+			{ operator: 'ONE_OF', attribute: 'plan', values: ['premium'] },
+		];
+		const conditions2 = [
+			{ operator: 'ONE_OF', attribute: 'country', values: ['US'] },
+		];
+		const fp1 = fingerprintConditions(conditions1);
+		const fp2 = fingerprintConditions(conditions2);
+		// Both fingerprints appear in the lookup (built from all migrated audiences).
+		// The IS_NOT_IN guard must prevent sf-country from replacing inline conditions.
+		const fpLookup = new Map([
+			[fp1, 'sf-plan'],
+			[fp2, 'sf-country'],
+		]);
+		const sfLookup = new Map([
+			[10, 'sf-plan'],
+			[20, 'sf-country'],
+		]);
+		const alloc = makeAllocation({
+			id: 1,
+			targeting_rules: [
+				{ conditions: conditions1 },
+				{ conditions: conditions2 },
+			],
+			audiences: [
+				{ audience_id: 10, type: 'IS_IN' },
+				{ audience_id: 20, type: 'IS_NOT_IN' },
+			],
+		});
+
+		const rules = buildTargetingRules(alloc, fpLookup, sfLookup);
+		expect(rules).toHaveLength(2);
+		// IS_IN audience → saved_filter_id (explicit path); targeting_rules deduped via fingerprint
+		expect(rules[0].conditions).toEqual([{ saved_filter_id: 'sf-plan' }]);
+		// IS_NOT_IN audience → inline conditions (fingerprint match blocked by isNotInFilterIds)
+		expect(rules[1].conditions[0]).toMatchObject({
+			operator: 'ONE_OF',
+			attribute: 'country',
+		});
+		expect(rules[1].conditions[0]).not.toHaveProperty('saved_filter_id');
 	});
 });

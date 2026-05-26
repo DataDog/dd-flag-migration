@@ -125,10 +125,12 @@ export async function migrateAudiences(params: {
 	).start();
 	const existingFilters: SavedFilterSummary[] = [];
 	let offset = 0;
-	while (true) {
+	let total = Number.POSITIVE_INFINITY;
+	while (existingFilters.length < total) {
 		const page = await listSavedFilters(ddApiKey, ddAppKey, { offset }, ddSite);
 		existingFilters.push(...page.data);
-		if (existingFilters.length >= page.total || page.data.length === 0) break;
+		total = page.total;
+		if (page.data.length === 0) break;
 		offset += page.data.length;
 	}
 
@@ -162,7 +164,9 @@ export async function migrateAudiences(params: {
 
 		const tupleKey = `eppo:${audience.id}`;
 
-		// Idempotency: already migrated
+		// Idempotency: already migrated. Only the first run creates saved filters;
+		// re-runs reuse the existing filter without updating its targeting rules.
+		// To force a refresh, delete the existing saved filter and re-run.
 		if (existingByTuple.has(tupleKey)) {
 			// biome-ignore lint/style/noNonNullAssertion: safe after .has() check above
 			const savedFilterId = existingByTuple.get(tupleKey)!;

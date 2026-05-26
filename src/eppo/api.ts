@@ -168,17 +168,25 @@ export function extractEnvironments(flags: EppoFlag[]): EppoFlagEnvironment[] {
 export async function fetchEppoAudiences(
 	apiKey: string,
 ): Promise<EppoAudience[]> {
-	const response = await eppoClient.get<EppoAudience[]>(
-		`${EPPO_BASE_URL}/api/v1/audiences`,
-		{
-			headers: {
-				'x-eppo-token': apiKey,
-				'Content-Type': 'application/json',
+	const all: EppoAudience[] = [];
+	let offset = 0;
+	while (true) {
+		const response = await eppoClient.get<EppoAudience[]>(
+			`${EPPO_BASE_URL}/api/v1/audiences`,
+			{
+				headers: {
+					'x-eppo-token': apiKey,
+					'Content-Type': 'application/json',
+				},
+				params: { status: 'active', offset, limit: EPPO_PAGE_SIZE },
 			},
-			params: { status: 'active' },
-		},
-	);
-	return Array.isArray(response.data) ? response.data : [];
+		);
+		const page = Array.isArray(response.data) ? response.data : [];
+		all.push(...page);
+		if (page.length < EPPO_PAGE_SIZE) break;
+		offset += EPPO_PAGE_SIZE;
+	}
+	return all;
 }
 
 export async function validateEppoApiKey(apiKey: string): Promise<boolean> {
