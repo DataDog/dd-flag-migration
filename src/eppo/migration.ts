@@ -121,19 +121,6 @@ export function buildTargetingRules(
 	const rules: DatadogTargetingRule[] = [];
 	const usedSavedFilterIds = new Set<string>();
 
-	// DD saved-filter refs are always IS_IN semantics. Pre-compute the filter IDs
-	// for IS_NOT_IN audience refs so both the explicit and fingerprint paths can
-	// fall back to inline conditions rather than silently inverting the targeting.
-	const isNotInFilterIds = new Set<string>();
-	if (savedFilterLookup && eppoAlloc.audiences) {
-		for (const ref of eppoAlloc.audiences) {
-			if (ref.type === 'IS_NOT_IN') {
-				const id = savedFilterLookup.get(ref.audience_id);
-				if (id !== undefined) isNotInFilterIds.add(id);
-			}
-		}
-	}
-
 	// Explicit audience references (preferred path — requires updated Eppo API).
 	if (
 		savedFilterLookup &&
@@ -141,7 +128,6 @@ export function buildTargetingRules(
 		eppoAlloc.audiences.length > 0
 	) {
 		for (const audienceRef of eppoAlloc.audiences) {
-			if (audienceRef.type === 'IS_NOT_IN') continue; // inline conditions preserved below
 			const savedFilterId = savedFilterLookup.get(audienceRef.audience_id);
 			if (
 				savedFilterId !== undefined &&
@@ -160,7 +146,7 @@ export function buildTargetingRules(
 		if (fingerprintLookup) {
 			const fp = fingerprintConditions(conditions);
 			const savedFilterId = fingerprintLookup.get(fp);
-			if (savedFilterId !== undefined && !isNotInFilterIds.has(savedFilterId)) {
+			if (savedFilterId !== undefined) {
 				if (!usedSavedFilterIds.has(savedFilterId)) {
 					usedSavedFilterIds.add(savedFilterId);
 					rules.push({ conditions: [{ saved_filter_id: savedFilterId }] });
