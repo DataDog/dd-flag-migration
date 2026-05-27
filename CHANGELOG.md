@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] — 2026-05-27
+
+### Migration — Eppo
+
+- Migrate Eppo audiences as Datadog saved filters using condition fingerprinting (#64)
+  - Audiences are discovered by hashing allocation targeting rules into stable fingerprints (the Eppo flags API inlines audience conditions without exposing audience IDs)
+  - Matching rules are replaced with `saved_filter_id` references; duplicates within one allocation are deduplicated
+  - Audience migration runs as Phase 1, before flag migration
+- Translate Eppo semver targeting conditions to `SEMVER_*` Datadog operators (#61)
+  - `LT`/`LTE`/`GT`/`GTE` conditions on valid semver values now emit `SEMVER_LT`/`SEMVER_LTE`/`SEMVER_GT`/`SEMVER_GTE` instead of numeric operators
+  - Flags with semver targeting automatically set `distribution_channel: CLIENT` as required by the Datadog API
+- Sync Eppo `tag_names` to Datadog flag tags on create and re-migration (#62)
+  - Tags are now synced on re-migration even when no targeting changes are detected
+  - Tag sync replaces rather than merges, so removed tags propagate correctly
+
+### Reliability
+
+- Rate-limit handling for Eppo and Datadog APIs (#63)
+  - Eppo flag fetch now paginates via `offset`/`limit` with progress surfaced in the loading spinner
+  - Eppo client retries `429` responses with exponential backoff
+  - Datadog client reads `x-ratelimit-remaining` and `x-ratelimit-reset` headers; proactively pauses requests when remaining drops to 5 or below, and retries `429` responses using the reset header delay
+
 ## [0.1.1] — 2026-05-19
 
 ### CLI
