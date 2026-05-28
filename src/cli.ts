@@ -1,5 +1,9 @@
 #!/usr/bin/env node
+import { createRequire } from 'node:module';
 import chalk from 'chalk';
+
+const require = createRequire(import.meta.url);
+const { version } = require('../package.json') as { version: string };
 
 function printHelp(exitCode = 0): never {
 	const purple = chalk.bold.hex('#632CA6');
@@ -18,6 +22,14 @@ function printHelp(exitCode = 0): never {
 	console.log(purple('╚══════════════════════════════════════════╝'));
 	console.log();
 	console.log(`${chalk.bold('Usage:')}  dd-flag-migration <command> [options]`);
+	console.log();
+	console.log(chalk.bold('Global options:'));
+	console.log(
+		`  ${chalk.cyan('-V, --version')}               Print version and exit`,
+	);
+	console.log(
+		`  ${chalk.cyan('-h, --help')}                  Show this help message`,
+	);
 	console.log();
 	console.log(chalk.bold('Commands:'));
 	console.log(
@@ -65,7 +77,10 @@ function printHelp(exitCode = 0): never {
 
 const subcommand = process.argv[2];
 
-if (!subcommand || subcommand === '--help' || subcommand === '-h') {
+if (subcommand === '--version' || subcommand === '-V') {
+	console.log(version);
+	process.exit(0);
+} else if (!subcommand || subcommand === '--help' || subcommand === '-h') {
 	printHelp(subcommand ? 0 : 1);
 } else if (subcommand === 'migrate') {
 	process.argv.splice(2, 1);
