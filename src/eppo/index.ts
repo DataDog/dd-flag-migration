@@ -11,6 +11,7 @@ import {
 	fetchDatadogEnvironments,
 	fetchDatadogFlagKeys,
 	syncAllocationsForEnvironment,
+	updateFlagDefaultVariantKey,
 	updateFlagTags,
 } from '../datadog.js';
 import { filterableCheckbox } from '../filterable-checkbox.js';
@@ -28,6 +29,7 @@ import {
 import { migrateAudiences } from './audiences.js';
 import {
 	buildAllocations,
+	extractDefaultVariantKey,
 	getEnvsToEnable,
 	hasSemverConditions,
 	mapVariationType,
@@ -441,11 +443,13 @@ async function confirmMigration(
 			continue;
 		}
 
+		const defaultVariantKey = extractDefaultVariantKey(flag, envMapping);
 		const allocations = buildAllocations(
 			flag,
 			envMapping,
 			fingerprintLookup,
 			savedFilterLookup,
+			defaultVariantKey !== undefined,
 		);
 		const envsToEnable = getEnvsToEnable(flag, envMapping);
 		const existingFlagId = datadogKeys.get(flag.key);
@@ -527,7 +531,12 @@ async function confirmMigration(
 					body: {
 						data: {
 							type: 'feature-flags',
-							attributes: { tags: syncTags },
+							attributes: {
+								tags: syncTags,
+								...(defaultVariantKey !== undefined
+									? { default_variant_key: defaultVariantKey }
+									: {}),
+							},
 						},
 					},
 				});
@@ -579,6 +588,16 @@ async function confirmMigration(
 						syncTags,
 						site,
 					);
+
+					if (defaultVariantKey !== undefined) {
+						await updateFlagDefaultVariantKey(
+							ddApiKey,
+							ddAppKey,
+							existingFlagId,
+							defaultVariantKey,
+							site,
+						);
+					}
 
 					// Enable the flag in each environment
 					let enabledCount = 0;
@@ -635,6 +654,9 @@ async function confirmMigration(
 					? { distribution_channel: 'CLIENT' as const }
 					: {}),
 				...(tags.length > 0 ? { tags } : {}),
+				...(defaultVariantKey !== undefined
+					? { default_variant_key: defaultVariantKey }
+					: {}),
 			};
 
 			if (dryRun) {

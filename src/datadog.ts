@@ -280,6 +280,31 @@ export async function updateFlagTags(
 	});
 }
 
+export async function updateFlagDefaultVariantKey(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	variantKey: string,
+	site = 'datadoghq.com',
+): Promise<void> {
+	const baseUrl = `https://api.${site}`;
+	await ddClient.put(
+		`${baseUrl}/api/v2/feature-flags/${flagId}`,
+		{
+			data: {
+				type: 'feature-flags',
+				attributes: { default_variant_key: variantKey },
+			},
+		},
+		{
+			headers: {
+				...ddHeaders(apiKey, appKey),
+				'Content-Type': 'application/json',
+			},
+		},
+	);
+}
+
 export interface DatadogTeam {
 	id: string;
 	handle: string;
