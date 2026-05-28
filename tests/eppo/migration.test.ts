@@ -1017,7 +1017,10 @@ describe('extractDefaultVariantKey', () => {
 				}),
 			],
 		});
-		const mapping = new Map<number, import('../../src/types.js').DatadogEnvironment>([
+		const mapping = new Map<
+			number,
+			import('../../src/types.js').DatadogEnvironment
+		>([
 			[10, ddProd],
 			[20, ddDev],
 		]);
