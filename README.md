@@ -1,7 +1,5 @@
 # Datadog Feature Flag Migration Tool
 
-> **Warning:** This tool is experimental and currently in preview. It may contain bugs, incomplete features, or breaking changes. Use at your own risk.
-
 A CLI tool for migrating feature flags from your current provider into [Datadog Feature Flags](https://docs.datadoghq.com/getting_started/feature_flags/), with side-by-side evaluation to verify the migration before you switch over.
 
 **Supported providers:** Eppo, LaunchDarkly
@@ -21,6 +19,12 @@ Install globally so the `dd-flag-migration` command is available anywhere:
 
 ```bash
 npm install -g @datadog/dd-flag-migration
+
+# migrate flags
+dd-flag-migration migrate
+
+# evaluate migrated flags
+dd-flag-migration evaluate
 ```
 
 Or run without installing using `npx`:
