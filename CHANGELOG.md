@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.1] — 2026-05-28
+
+### Migration — Eppo
+
+- Fix default variant mapping for Eppo flags whose only allocation is a pure default (`is_default: true` with no targeting rules) (#67)
+  - These allocations are now translated to `default_variant_key` on the Datadog flag instead of a "Targeting all traffic" targeting rule, matching Eppo's intended evaluation semantics
+  - Re-migration (sync) also sets `default_variant_key` and forces a PUT to clear any stale catch-all targeting rules left by previous migrations
+  - Flags with conflicting default variants across environments fall back to the previous targeting-rule behavior
+  - Extraction aborts and falls back when any environment's default cannot be unambiguously resolved (split weights or unknown variation ID)
+
+### CLI
+
+- Add `--version` / `-V` flag that prints the installed tool version and exits
+- Document global options (`-V`/`--version`, `-h`/`--help`) in help output
+
 ## [0.2.0] — 2026-05-27
 
 ### Migration — Eppo
