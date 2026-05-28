@@ -475,7 +475,12 @@ async function confirmMigration(
 						body: {
 							data: {
 								type: 'feature-flags',
-								attributes: { tags: syncTags },
+								attributes: {
+									tags: syncTags,
+									...(defaultVariantKey !== undefined
+										? { default_variant_key: defaultVariantKey }
+										: {}),
+								},
 							},
 						},
 					});
@@ -487,11 +492,24 @@ async function confirmMigration(
 						syncTags,
 						site,
 					);
+					if (defaultVariantKey !== undefined) {
+						await updateFlagDefaultVariantKey(
+							ddApiKey,
+							ddAppKey,
+							existingFlagId,
+							defaultVariantKey,
+							site,
+						);
+					}
 				}
+				const defaultLabel =
+					defaultVariantKey !== undefined
+						? `, default targeting → ${defaultVariantKey}`
+						: '';
 				spinner.succeed(
 					dryRun
-						? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (${syncTags.length} tag(s))`
-						: `Synced ${chalk.cyan(flag.key)} (${syncTags.length} tag(s))`,
+						? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (${syncTags.length} tag(s)${defaultLabel})`
+						: `Synced ${chalk.cyan(flag.key)} (${syncTags.length} tag(s)${defaultLabel})`,
 				);
 				synced++;
 				continue;

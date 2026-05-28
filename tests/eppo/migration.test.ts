@@ -989,6 +989,41 @@ describe('extractDefaultVariantKey', () => {
 		expect(extractDefaultVariantKey(flag, mapping)).toBeUndefined();
 	});
 
+	it('returns undefined when one env has a valid default and another has a split default', () => {
+		// The split env must not be silently skipped — it should abort extraction so
+		// skipPureDefaults is not set and the split env keeps its targeting rule.
+		const flag = makeFlag({
+			id: 1,
+			key: 'test',
+			variations: [
+				{ id: 100, name: 'on', variant_key: 'on' },
+				{ id: 200, name: 'off', variant_key: 'off' },
+			],
+			allocations: [
+				makeAllocation({
+					id: 1,
+					environment_id: 10,
+					is_default: true,
+					variation_weight: [{ variation_id: 100, weight: 1 }],
+				}),
+				makeAllocation({
+					id: 2,
+					environment_id: 20,
+					is_default: true,
+					variation_weight: [
+						{ variation_id: 100, weight: 1 },
+						{ variation_id: 200, weight: 1 },
+					],
+				}),
+			],
+		});
+		const mapping = new Map<number, import('../../src/types.js').DatadogEnvironment>([
+			[10, ddProd],
+			[20, ddDev],
+		]);
+		expect(extractDefaultVariantKey(flag, mapping)).toBeUndefined();
+	});
+
 	it('returns undefined when default allocation has audiences', () => {
 		const flag = makeFlag({
 			id: 1,

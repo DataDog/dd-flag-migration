@@ -204,9 +204,12 @@ export function extractDefaultVariantKey(
 		const nonZeroWeights = (defaultAlloc.variation_weight ?? []).filter(
 			(w) => w.weight > 0,
 		);
-		if (nonZeroWeights.length !== 1) continue;
+		// A split or zero-weight default can't be represented as default_variant_key.
+		// Abort entirely so skipPureDefaults is not set and this env keeps its targeting rule.
+		if (nonZeroWeights.length !== 1) return undefined;
 		const key = variationIdToKey.get(nonZeroWeights[0].variation_id);
-		if (key !== undefined) defaultKeys.add(key);
+		if (key === undefined) return undefined;
+		defaultKeys.add(key);
 	}
 
 	return defaultKeys.size === 1 ? [...defaultKeys][0] : undefined;
