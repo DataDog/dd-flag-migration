@@ -1,12 +1,13 @@
 /**
  * Unit tests for Eppo → Datadog migration functions:
  * mapVariationType, mapOperator, buildTargetingRules, buildAllocations, getEnvsToEnable,
- * hasSemverConditions.
+ * hasSemverConditions, extractDefaultVariantKey.
  */
 import { describe, expect, it } from '@jest/globals';
 import {
 	buildAllocations,
 	buildTargetingRules,
+	extractDefaultVariantKey,
 	getEnvsToEnable,
 	hasSemverConditions,
 	mapOperator,
@@ -842,5 +843,354 @@ describe('hasSemverConditions', () => {
 		expect(
 			hasSemverConditions([makeAlloc('ONE_OF'), makeAlloc('SEMVER_LT')]),
 		).toBe(true);
+	});
+});
+
+// ─── extractDefaultVariantKey ─────────────────────────────────────────────────
+
+describe('extractDefaultVariantKey', () => {
+	it('returns the variant key of a pure-default allocation', () => {
+		const flag = makeFlag({
+			id: 1,
+			key: 'test',
+			variations: [
+				{ id: 100, name: 'true', variant_key: 'true' },
+				{ id: 200, name: 'false', variant_key: 'false' },
+			],
+			allocations: [
+				makeAllocation({
+					id: 1,
+					environment_id: 10,
+					is_default: true,
+					variation_weight: [{ variation_id: 200, weight: 1 }],
+				}),
+			],
+		});
+		const mapping = new Map([[10, ddProd]]);
+		expect(extractDefaultVariantKey(flag, mapping)).toBe('false');
+	});
+
+	it('returns undefined when no mapped env has a default allocation', () => {
+		const flag = makeFlag({
+			id: 1,
+			key: 'test',
+			variations: [{ id: 100, name: 'on', variant_key: 'on' }],
+			allocations: [],
+		});
+		const mapping = new Map([[10, ddProd]]);
+		expect(extractDefaultVariantKey(flag, mapping)).toBeUndefined();
+	});
+
+	it('returns undefined when all mapped environments agree but no default allocation exists', () => {
+		const flag = makeFlag({
+			id: 1,
+			key: 'test',
+			variations: [{ id: 100, name: 'on', variant_key: 'on' }],
+			allocations: [
+				makeAllocation({
+					id: 1,
+					environment_id: 10,
+					is_default: false,
+					variation_weight: [{ variation_id: 100, weight: 1 }],
+				}),
+			],
+		});
+		const mapping = new Map([[10, ddProd]]);
+		expect(extractDefaultVariantKey(flag, mapping)).toBeUndefined();
+	});
+
+	it('returns undefined when environments disagree on the default variant', () => {
+		const flag = makeFlag({
+			id: 1,
+			key: 'test',
+			variations: [
+				{ id: 100, name: 'on', variant_key: 'on' },
+				{ id: 200, name: 'off', variant_key: 'off' },
+			],
+			allocations: [
+				makeAllocation({
+					id: 1,
+					environment_id: 10,
+					is_default: true,
+					variation_weight: [{ variation_id: 100, weight: 1 }],
+				}),
+				makeAllocation({
+					id: 2,
+					environment_id: 20,
+					is_default: true,
+					variation_weight: [{ variation_id: 200, weight: 1 }],
+				}),
+			],
+		});
+		const mapping = new Map<
+			number,
+			import('../../src/types.js').DatadogEnvironment
+		>([
+			[10, ddProd],
+			[20, ddDev],
+		]);
+		expect(extractDefaultVariantKey(flag, mapping)).toBeUndefined();
+	});
+
+	it('returns the key when all mapped environments agree on the same default variant', () => {
+		const flag = makeFlag({
+			id: 1,
+			key: 'test',
+			variations: [
+				{ id: 100, name: 'on', variant_key: 'on' },
+				{ id: 200, name: 'off', variant_key: 'off' },
+			],
+			allocations: [
+				makeAllocation({
+					id: 1,
+					environment_id: 10,
+					is_default: true,
+					variation_weight: [{ variation_id: 200, weight: 1 }],
+				}),
+				makeAllocation({
+					id: 2,
+					environment_id: 20,
+					is_default: true,
+					variation_weight: [{ variation_id: 200, weight: 1 }],
+				}),
+			],
+		});
+		const mapping = new Map<
+			number,
+			import('../../src/types.js').DatadogEnvironment
+		>([
+			[10, ddProd],
+			[20, ddDev],
+		]);
+		expect(extractDefaultVariantKey(flag, mapping)).toBe('off');
+	});
+
+	it('returns undefined when the default allocation has a split (multiple non-zero weights)', () => {
+		const flag = makeFlag({
+			id: 1,
+			key: 'test',
+			variations: [
+				{ id: 100, name: 'on', variant_key: 'on' },
+				{ id: 200, name: 'off', variant_key: 'off' },
+			],
+			allocations: [
+				makeAllocation({
+					id: 1,
+					environment_id: 10,
+					is_default: true,
+					variation_weight: [
+						{ variation_id: 100, weight: 1 },
+						{ variation_id: 200, weight: 1 },
+					],
+				}),
+			],
+		});
+		const mapping = new Map([[10, ddProd]]);
+		expect(extractDefaultVariantKey(flag, mapping)).toBeUndefined();
+	});
+
+	it('returns undefined when one env has a valid default and another has a split default', () => {
+		// The split env must not be silently skipped — it should abort extraction so
+		// skipPureDefaults is not set and the split env keeps its targeting rule.
+		const flag = makeFlag({
+			id: 1,
+			key: 'test',
+			variations: [
+				{ id: 100, name: 'on', variant_key: 'on' },
+				{ id: 200, name: 'off', variant_key: 'off' },
+			],
+			allocations: [
+				makeAllocation({
+					id: 1,
+					environment_id: 10,
+					is_default: true,
+					variation_weight: [{ variation_id: 100, weight: 1 }],
+				}),
+				makeAllocation({
+					id: 2,
+					environment_id: 20,
+					is_default: true,
+					variation_weight: [
+						{ variation_id: 100, weight: 1 },
+						{ variation_id: 200, weight: 1 },
+					],
+				}),
+			],
+		});
+		const mapping = new Map<
+			number,
+			import('../../src/types.js').DatadogEnvironment
+		>([
+			[10, ddProd],
+			[20, ddDev],
+		]);
+		expect(extractDefaultVariantKey(flag, mapping)).toBeUndefined();
+	});
+
+	it('returns undefined when default allocation has audiences', () => {
+		const flag = makeFlag({
+			id: 1,
+			key: 'test',
+			variations: [{ id: 100, name: 'on', variant_key: 'on' }],
+			allocations: [
+				{
+					...makeAllocation({
+						id: 1,
+						environment_id: 10,
+						is_default: true,
+						variation_weight: [{ variation_id: 100, weight: 1 }],
+					}),
+					audiences: [{ audience_id: 99, type: 'IS_IN' }],
+				},
+			],
+		});
+		const mapping = new Map([[10, ddProd]]);
+		expect(extractDefaultVariantKey(flag, mapping)).toBeUndefined();
+	});
+
+	it('returns undefined when default allocation has targeting rules', () => {
+		const flag = makeFlag({
+			id: 1,
+			key: 'test',
+			variations: [{ id: 100, name: 'on', variant_key: 'on' }],
+			allocations: [
+				makeAllocation({
+					id: 1,
+					environment_id: 10,
+					is_default: true,
+					variation_weight: [{ variation_id: 100, weight: 1 }],
+					targeting_rules: [
+						{
+							conditions: [
+								{ operator: 'ONE_OF', attribute: 'country', values: ['US'] },
+							],
+						},
+					],
+				}),
+			],
+		});
+		const mapping = new Map([[10, ddProd]]);
+		expect(extractDefaultVariantKey(flag, mapping)).toBeUndefined();
+	});
+});
+
+// ─── buildAllocations — skipPureDefaults ──────────────────────────────────────
+
+describe('buildAllocations with skipPureDefaults', () => {
+	it('skips is_default=true allocations with no audiences or targeting rules', () => {
+		const flag = makeFlag({
+			id: 1,
+			key: 'test',
+			variations: [
+				{ id: 100, name: 'true', variant_key: 'true' },
+				{ id: 200, name: 'false', variant_key: 'false' },
+			],
+			environments: [
+				{ id: 10, name: 'Production', active: true, is_production: true },
+			],
+			allocations: [
+				makeAllocation({
+					id: 1,
+					key: 'alloc-audience',
+					name: 'iOS',
+					environment_id: 10,
+					is_default: false,
+					variation_weight: [{ variation_id: 100, weight: 1 }],
+					audiences: [{ audience_id: 99, type: 'IS_IN' }],
+				}),
+				makeAllocation({
+					id: 2,
+					key: 'alloc-default',
+					name: 'Default',
+					environment_id: 10,
+					is_default: true,
+					variation_weight: [{ variation_id: 200, weight: 1 }],
+				}),
+			],
+		});
+
+		const mapping = new Map([[10, ddProd]]);
+		const allocations = buildAllocations(
+			flag,
+			mapping,
+			undefined,
+			undefined,
+			true,
+		);
+
+		expect(allocations).toHaveLength(1);
+		expect(allocations[0].key).toBe('alloc-audience');
+	});
+
+	it('retains is_default=true allocations when skipPureDefaults is false', () => {
+		const flag = makeFlag({
+			id: 1,
+			key: 'test',
+			variations: [
+				{ id: 100, name: 'true', variant_key: 'true' },
+				{ id: 200, name: 'false', variant_key: 'false' },
+			],
+			environments: [
+				{ id: 10, name: 'Production', active: true, is_production: true },
+			],
+			allocations: [
+				makeAllocation({
+					id: 1,
+					key: 'alloc-audience',
+					name: 'iOS',
+					environment_id: 10,
+					is_default: false,
+					variation_weight: [{ variation_id: 100, weight: 1 }],
+				}),
+				makeAllocation({
+					id: 2,
+					key: 'alloc-default',
+					name: 'Default',
+					environment_id: 10,
+					is_default: true,
+					variation_weight: [{ variation_id: 200, weight: 1 }],
+				}),
+			],
+		});
+
+		const mapping = new Map([[10, ddProd]]);
+		const allocations = buildAllocations(flag, mapping);
+
+		expect(allocations).toHaveLength(2);
+	});
+
+	it('retains is_default=true allocation that has audiences (not a pure default)', () => {
+		const flag = makeFlag({
+			id: 1,
+			key: 'test',
+			variations: [{ id: 100, name: 'on', variant_key: 'on' }],
+			environments: [
+				{ id: 10, name: 'Production', active: true, is_production: true },
+			],
+			allocations: [
+				{
+					...makeAllocation({
+						id: 1,
+						key: 'alloc-with-audience',
+						environment_id: 10,
+						is_default: true,
+						variation_weight: [{ variation_id: 100, weight: 1 }],
+					}),
+					audiences: [{ audience_id: 42, type: 'IS_IN' }],
+				},
+			],
+		});
+
+		const mapping = new Map([[10, ddProd]]);
+		const allocations = buildAllocations(
+			flag,
+			mapping,
+			undefined,
+			undefined,
+			true,
+		);
+
+		expect(allocations).toHaveLength(1);
+		expect(allocations[0].key).toBe('alloc-with-audience');
 	});
 });
