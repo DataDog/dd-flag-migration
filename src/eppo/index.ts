@@ -404,6 +404,50 @@ async function confirmMigration(
 	const progressBar =
 		flags.length > 100 ? new MigrationProgressBar(flags.length) : null;
 
+	const environmentMapping: MigrationEnvironmentMapping[] = [];
+	for (const [eppoEnvId, ddEnv] of envMapping) {
+		const eppoEnv = flags
+			.flatMap((f) => f.environments ?? [])
+			.find((e) => e.id === eppoEnvId);
+		environmentMapping.push({
+			sourceEnvId: eppoEnvId,
+			sourceEnvName: eppoEnv?.name ?? String(eppoEnvId),
+			datadogEnvId: ddEnv.id,
+			datadogEnvName: ddEnv.name,
+			datadogDdEnvNames: ddEnv.queries,
+		});
+	}
+
+	const sigintHandler = () => {
+		process.stderr.write('\n');
+		if (!dryRun && (created > 0 || synced > 0 || errored > 0)) {
+			console.log(
+				chalk.yellow('\n  Migration interrupted — saving partial results…'),
+			);
+			const timestamp = new Date().toISOString();
+			const migrationData: MigrationFile = {
+				provider,
+				migratedAt: timestamp,
+				success: false,
+				summary: { created, synced, skipped, errored, enabled: totalEnabled },
+				failures,
+				enableFailures,
+				skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
+				flags,
+				environmentMapping,
+			};
+			const filename = `migration-${timestamp}.json`;
+			if (!fs.existsSync(CONFIG_DIR))
+				fs.mkdirSync(CONFIG_DIR, { recursive: true });
+			const filepath = path.join(CONFIG_DIR, filename);
+			fs.writeFileSync(filepath, JSON.stringify(migrationData, null, 2));
+			console.log(chalk.gray(`  Partial migration saved to ${filepath}`));
+		}
+		console.log(chalk.gray('\n  Bye!'));
+		process.exit(130);
+	};
+	process.once('SIGINT', sigintHandler);
+
 	for (const flag of flags) {
 		let spinner = ora(`Migrating ${chalk.cyan(flag.key)}…`).start();
 
@@ -765,6 +809,7 @@ async function confirmMigration(
 			}
 		}
 	}
+	process.removeListener('SIGINT', sigintHandler);
 	progressBar?.finalize();
 
 	console.log();
@@ -799,19 +844,6 @@ async function confirmMigration(
 	}
 
 	const timestamp = new Date().toISOString();
-	const environmentMapping: MigrationEnvironmentMapping[] = [];
-	for (const [eppoEnvId, ddEnv] of envMapping) {
-		const eppoEnv = flags
-			.flatMap((f) => f.environments ?? [])
-			.find((e) => e.id === eppoEnvId);
-		environmentMapping.push({
-			sourceEnvId: eppoEnvId,
-			sourceEnvName: eppoEnv?.name ?? String(eppoEnvId),
-			datadogEnvId: ddEnv.id,
-			datadogEnvName: ddEnv.name,
-			datadogDdEnvNames: ddEnv.queries,
-		});
-	}
 
 	if (dryRun && dryRunRequests.length > 0) {
 		const dryRunData: DryRunFile = {

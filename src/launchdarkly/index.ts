@@ -813,6 +813,50 @@ async function executeMigration(
 			? new MigrationProgressBar(detailedFlags.length)
 			: null;
 
+	const environmentMappingArr: LDMigrationFile['environmentMapping'] = [];
+	for (const [ldEnvKey, ddEnv] of envMapping) {
+		environmentMappingArr.push({
+			sourceEnvId: ldEnvKey,
+			sourceEnvName: ldEnvKey,
+			datadogEnvId: ddEnv.id,
+			datadogEnvName: ddEnv.name,
+			datadogDdEnvNames: ddEnv.queries,
+		});
+	}
+
+	const sigintHandler = () => {
+		process.stderr.write('\n');
+		if (!dryRun && (created > 0 || synced > 0 || errored > 0)) {
+			console.log(
+				chalk.yellow('\n  Migration interrupted — saving partial results…'),
+			);
+			const timestamp = new Date().toISOString();
+			const migrationData: LDMigrationFile = {
+				provider: 'launchdarkly',
+				projectKey,
+				projectName,
+				migratedAt: timestamp,
+				success: false,
+				summary: { created, synced, skipped, errored, enabled: totalEnabled },
+				failures,
+				enableFailures,
+				skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
+				syncedFlagKeys: syncedFlagKeys.length > 0 ? syncedFlagKeys : undefined,
+				flags: detailedFlags,
+				environmentMapping: environmentMappingArr,
+			};
+			const filename = `migration-${timestamp}.json`;
+			if (!fs.existsSync(CONFIG_DIR))
+				fs.mkdirSync(CONFIG_DIR, { recursive: true });
+			const filepath = path.join(CONFIG_DIR, filename);
+			fs.writeFileSync(filepath, JSON.stringify(migrationData, null, 2));
+			console.log(chalk.gray(`  Partial migration saved to ${filepath}`));
+		}
+		console.log(chalk.gray('\n  Bye!'));
+		process.exit(130);
+	};
+	process.once('SIGINT', sigintHandler);
+
 	for (const flag of detailedFlags) {
 		let spinner = ora(`Migrating ${chalk.cyan(flag.key)}…`).start();
 
@@ -1278,6 +1322,7 @@ async function executeMigration(
 			}
 		}
 	}
+	process.removeListener('SIGINT', sigintHandler);
 	progressBar?.finalize();
 
 	// ─── Summary ───────────────────────────────────────────────────────────────
@@ -1325,16 +1370,6 @@ async function executeMigration(
 
 	// ─── Persist Results ───────────────────────────────────────────────────────
 	const timestamp = new Date().toISOString();
-	const environmentMappingArr: LDMigrationFile['environmentMapping'] = [];
-	for (const [ldEnvKey, ddEnv] of envMapping) {
-		environmentMappingArr.push({
-			sourceEnvId: ldEnvKey,
-			sourceEnvName: ldEnvKey,
-			datadogEnvId: ddEnv.id,
-			datadogEnvName: ddEnv.name,
-			datadogDdEnvNames: ddEnv.queries,
-		});
-	}
 
 	if (dryRun && dryRunRequests.length > 0) {
 		const dryRunData = {
