@@ -21,6 +21,7 @@ type Choice<T> = {
 	name: string;
 	value: T;
 	checked?: boolean;
+	migrated?: boolean;
 };
 
 type Config<T> = {
@@ -33,6 +34,7 @@ type NormalizedChoice<T> = {
 	name: string;
 	value: T;
 	checked: boolean;
+	migrated: boolean;
 };
 
 const theme = {
@@ -55,18 +57,23 @@ const _filterableCheckbox = createPrompt(
 				name: c.name,
 				value: c.value,
 				checked: c.checked ?? false,
+				migrated: c.migrated ?? false,
 			})),
 		);
 		const [active, setActive] = useState(0);
 		const [status, setStatus] = useState<'idle' | 'done' | 'escaped'>('idle');
+		const [hideMigrated, setHideMigrated] = useState(false);
 
 		const filteredItems = useMemo(() => {
 			const lower = filterText.toLowerCase();
-			if (!lower) return allItems;
-			return allItems.filter((item) =>
+			const base = hideMigrated
+				? allItems.filter((item) => !item.migrated)
+				: allItems;
+			if (!lower) return base;
+			return base.filter((item) =>
 				stripAnsi(item.name).toLowerCase().includes(lower),
 			);
-		}, [allItems, filterText]);
+		}, [allItems, filterText, hideMigrated]);
 
 		const safeActive = Math.min(active, Math.max(0, filteredItems.length - 1));
 
@@ -107,6 +114,11 @@ const _filterableCheckbox = createPrompt(
 							: item,
 					),
 				);
+			} else if (key.name === 'tab') {
+				if (allItems.some((i) => i.migrated)) {
+					setHideMigrated(!hideMigrated);
+					setActive(0);
+				}
 			} else if (key.name === 'escape') {
 				setStatus('escaped');
 				done(null as unknown as T[]);
@@ -154,11 +166,19 @@ const _filterableCheckbox = createPrompt(
 			selectedCount > 0
 				? chalk.green(`${selectedCount} selected`)
 				: chalk.dim('0 selected');
+		const migratedCount = allItems.filter((i) => i.migrated).length;
+		const migratedToggle =
+			migratedCount > 0
+				? hideMigrated
+					? chalk.yellow(`  ·  tab: show migrated (${migratedCount} hidden)`)
+					: chalk.dim(`  ·  tab: hide migrated (${migratedCount})`)
+				: '';
 		const filterLine =
 			chalk.cyan('Filter: ') +
 			(filterText ? chalk.bold(filterText) : chalk.dim('type to filter…')) +
 			'  ' +
-			countBadge;
+			countBadge +
+			migratedToggle;
 
 		const page = usePagination({
 			items: filteredItems,
@@ -176,7 +196,9 @@ const _filterableCheckbox = createPrompt(
 		});
 
 		const helpTip = chalk.dim(
-			'↑↓/pgup/pgdn navigate  ·  space select  ·  ctrl+a select all  ·  esc back  ·  ⏎ confirm',
+			'↑↓/pgup/pgdn navigate  ·  space select  ·  ctrl+a select all' +
+				(migratedCount > 0 ? '  ·  tab hide/show migrated' : '') +
+				'  ·  esc back  ·  ⏎ confirm',
 		);
 
 		const emptyMsg =
@@ -210,6 +232,7 @@ const _filterableSelect = createPrompt(
 					name: c.name,
 					value: c.value,
 					checked: false,
+					migrated: false,
 				})),
 			[],
 		);

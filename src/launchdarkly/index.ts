@@ -27,6 +27,7 @@ import {
 	filterableSelect,
 } from '../filterable-checkbox.js';
 import { toSyncRequests } from '../migration.js';
+import { MigrationProgressBar } from '../progress-bar.js';
 import type {
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,
@@ -493,11 +494,19 @@ async function selectFlags(
 
 	return filterableCheckbox<LDFlag>({
 		message: 'Select flags to migrate to Datadog:',
-		choices: sortedFlags.map((flag) => ({
-			name: flagLabel(flag, datadogFlags, projectKey, conflictResolution),
-			value: flag,
-			checked: previousKeys.has(flag.key),
-		})),
+		choices: sortedFlags.map((flag) => {
+			const conflictType = classifyConflict(
+				datadogFlags,
+				projectKey,
+				flag.key,
+			).type;
+			return {
+				name: flagLabel(flag, datadogFlags, projectKey, conflictResolution),
+				value: flag,
+				checked: previousKeys.has(flag.key),
+				migrated: conflictType === 'same_project' || conflictType === 'manual',
+			};
+		}),
 		pageSize,
 	});
 }
@@ -747,6 +756,7 @@ async function executeMigration(
 
 	// ── Phase 1: Migrate segments as saved filters ─────────────────────────────
 	let savedFilterLookup = new Map<string, string>();
+	let phase1Subheader: string | undefined;
 	if (dryRun) {
 		// Populate the lookup with placeholder IDs so buildAllocations can
 		// accurately simulate the migration for segment-backed flags.
@@ -770,6 +780,17 @@ async function executeMigration(
 				ddSite,
 			});
 			savedFilterLookup = segmentResult.savedFilterLookup;
+			if (segmentResult.stats.discovered > 0) {
+				const { created: sc, reused: sr, skipped: ss } = segmentResult.stats;
+				phase1Subheader =
+					chalk.gray('Phase 1 — Segments: ') +
+					chalk.green(String(sc)) +
+					chalk.gray(' created · ') +
+					chalk.white(String(sr)) +
+					chalk.gray(' reused · ') +
+					chalk.yellow(String(ss)) +
+					chalk.gray(' skipped as saved filters');
+			}
 		} catch (err) {
 			console.log(
 				chalk.yellow(
@@ -799,123 +820,278 @@ async function executeMigration(
 	const syncedFlagKeys: string[] = [];
 	const dryRunRequests: Array<{ method: string; path: string; body: unknown }> =
 		[];
+	const progressBar = new MigrationProgressBar(
+		detailedFlags.length,
+		phase1Subheader,
+	);
 
-	for (const flag of detailedFlags) {
-		let spinner = ora(`Migrating ${chalk.cyan(flag.key)}…`).start();
+	const environmentMappingArr: LDMigrationFile['environmentMapping'] = [];
+	for (const [ldEnvKey, ddEnv] of envMapping) {
+		environmentMappingArr.push({
+			sourceEnvId: ldEnvKey,
+			sourceEnvName: ldEnvKey,
+			datadogEnvId: ddEnv.id,
+			datadogEnvName: ddEnv.name,
+			datadogDdEnvNames: ddEnv.queries,
+		});
+	}
 
-		// Check skip conditions
-		const skipResult = shouldSkipFlag(flag, selectedEnvs);
-		if (skipResult.skip) {
-			spinner.warn(`Skipped ${chalk.cyan(flag.key)} — ${skipResult.reason}`);
-			skippedFlags.push({
-				key: flag.key,
-				reason: skipResult.reason ?? 'Unknown',
-			});
-			skipped++;
-			continue;
+	const sigintHandler = () => {
+		progressBar ? progressBar.finalize() : process.stderr.write('\n');
+		if (!dryRun && (created > 0 || synced > 0 || errored > 0)) {
+			console.log(
+				chalk.yellow('\n  Migration interrupted — saving partial results…'),
+			);
+			const timestamp = new Date().toISOString();
+			const migrationData: LDMigrationFile = {
+				provider: 'launchdarkly',
+				projectKey,
+				projectName,
+				migratedAt: timestamp,
+				success: false,
+				summary: { created, synced, skipped, errored, enabled: totalEnabled },
+				failures,
+				enableFailures,
+				skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
+				syncedFlagKeys: syncedFlagKeys.length > 0 ? syncedFlagKeys : undefined,
+				flags: detailedFlags,
+				environmentMapping: environmentMappingArr,
+			};
+			const filename = `migration-${timestamp}.json`;
+			if (!fs.existsSync(CONFIG_DIR))
+				fs.mkdirSync(CONFIG_DIR, { recursive: true });
+			const filepath = path.join(CONFIG_DIR, filename);
+			fs.writeFileSync(filepath, JSON.stringify(migrationData, null, 2));
+			console.log(chalk.gray(`  Partial migration saved to ${filepath}`));
 		}
+		console.log(chalk.gray('\n  Bye!'));
+		process.exit(130);
+	};
+	process.once('SIGINT', sigintHandler);
+	if (progressBar) clearScreen();
+	progressBar?.start();
+	try {
+		for (const flag of detailedFlags) {
+			let spinner = ora(`Migrating ${chalk.cyan(flag.key)}…`).start();
 
-		// Check progressive rollout status via releases API
-		if (skipResult.hasProgressiveRollout) {
-			try {
-				const release = await fetchFlagRelease(ldApiKey, projectKey, flag.key);
-				if (release && isReleaseInProgress(release)) {
+			// Check skip conditions
+			const skipResult = shouldSkipFlag(flag, selectedEnvs);
+			if (skipResult.skip) {
+				spinner.warn(`Skipped ${chalk.cyan(flag.key)} — ${skipResult.reason}`);
+				skippedFlags.push({
+					key: flag.key,
+					reason: skipResult.reason ?? 'Unknown',
+				});
+				skipped++;
+				progressBar?.update(flag.key, { created, skipped, failed: errored });
+				continue;
+			}
+
+			// Check progressive rollout status via releases API
+			if (skipResult.hasProgressiveRollout) {
+				try {
+					const release = await fetchFlagRelease(
+						ldApiKey,
+						projectKey,
+						flag.key,
+					);
+					if (release && isReleaseInProgress(release)) {
+						spinner.warn(
+							`Skipped ${chalk.cyan(flag.key)} — progressive rollout is in progress`,
+						);
+						skippedFlags.push({
+							key: flag.key,
+							reason: 'Progressive rollout is in progress',
+						});
+						skipped++;
+						progressBar?.update(flag.key, {
+							created,
+							skipped,
+							failed: errored,
+						});
+						continue;
+					}
+					// Release is complete or not found — safe to migrate
+				} catch (_err) {
 					spinner.warn(
-						`Skipped ${chalk.cyan(flag.key)} — progressive rollout is in progress`,
+						`Skipped ${chalk.cyan(flag.key)} — failed to check progressive rollout status`,
 					);
 					skippedFlags.push({
 						key: flag.key,
-						reason: 'Progressive rollout is in progress',
+						reason: 'Failed to check progressive rollout status',
 					});
 					skipped++;
+					progressBar?.update(flag.key, { created, skipped, failed: errored });
 					continue;
 				}
-				// Release is complete or not found — safe to migrate
-			} catch (_err) {
-				spinner.warn(
-					`Skipped ${chalk.cyan(flag.key)} — failed to check progressive rollout status`,
-				);
-				skippedFlags.push({
-					key: flag.key,
-					reason: 'Failed to check progressive rollout status',
-				});
+			}
+
+			if (skipResult.warn) {
+				console.log(chalk.yellow(`  ⚠ ${flag.key}: ${skipResult.warn}`));
+			}
+
+			if (flag.archived) {
+				spinner.warn(`Skipped ${chalk.cyan(flag.key)} — flag is archived`);
+				skippedFlags.push({ key: flag.key, reason: 'Flag is archived' });
 				skipped++;
+				progressBar?.update(flag.key, { created, skipped, failed: errored });
 				continue;
 			}
-		}
 
-		if (skipResult.warn) {
-			console.log(chalk.yellow(`  ⚠ ${flag.key}: ${skipResult.warn}`));
-		}
+			const variants = buildVariants(flag);
+			if (variants.length === 0) {
+				spinner.warn(`Skipped ${chalk.cyan(flag.key)} — no variants`);
+				skippedFlags.push({ key: flag.key, reason: 'No variants' });
+				skipped++;
+				progressBar?.update(flag.key, { created, skipped, failed: errored });
+				continue;
+			}
 
-		if (flag.archived) {
-			spinner.warn(`Skipped ${chalk.cyan(flag.key)} — flag is archived`);
-			skippedFlags.push({ key: flag.key, reason: 'Flag is archived' });
-			skipped++;
-			continue;
-		}
-
-		const variants = buildVariants(flag);
-		if (variants.length === 0) {
-			spinner.warn(`Skipped ${chalk.cyan(flag.key)} — no variants`);
-			skippedFlags.push({ key: flag.key, reason: 'No variants' });
-			skipped++;
-			continue;
-		}
-
-		const allocationsResult = buildAllocations(
-			flag,
-			envMapping,
-			savedFilterLookup,
-		);
-		if (!Array.isArray(allocationsResult)) {
-			spinner.warn(
-				`Skipped ${chalk.cyan(flag.key)} — ${allocationsResult.flagSkip}`,
+			const allocationsResult = buildAllocations(
+				flag,
+				envMapping,
+				savedFilterLookup,
 			);
-			skippedFlags.push({ key: flag.key, reason: allocationsResult.flagSkip });
-			skipped++;
-			continue;
-		}
-		const allocations = allocationsResult;
-		const envsToEnable = getEnvsToEnable(flag, envMapping);
-		const conflict = classifyConflict(datadogFlags, projectKey, flag.key);
-
-		// Cross-project conflict: skip or prefix
-		if (conflict.type === 'cross_project') {
-			if (!conflictResolution || conflictResolution.action === 'skip') {
+			if (!Array.isArray(allocationsResult)) {
 				spinner.warn(
-					`Skipped ${chalk.cyan(flag.key)} — key already used by a flag from a different LaunchDarkly project`,
+					`Skipped ${chalk.cyan(flag.key)} — ${allocationsResult.flagSkip}`,
 				);
 				skippedFlags.push({
 					key: flag.key,
-					reason:
-						'Key conflict: flag key already exists in Datadog from a different LaunchDarkly project',
+					reason: allocationsResult.flagSkip,
 				});
 				skipped++;
+				progressBar?.update(flag.key, { created, skipped, failed: errored });
 				continue;
 			}
-			// prefix case: fall through to creation below
-		}
+			const allocations = allocationsResult;
+			const envsToEnable = getEnvsToEnable(flag, envMapping);
+			const conflict = classifyConflict(datadogFlags, projectKey, flag.key);
 
-		// For same_project and manual conflicts, sync onto the existing flag
-		const existingFlagId =
-			conflict.type === 'same_project' || conflict.type === 'manual'
-				? conflict.existingFlag?.id
-				: undefined;
+			// Cross-project conflict: skip or prefix
+			if (conflict.type === 'cross_project') {
+				if (!conflictResolution || conflictResolution.action === 'skip') {
+					spinner.warn(
+						`Skipped ${chalk.cyan(flag.key)} — key already used by a flag from a different LaunchDarkly project`,
+					);
+					skippedFlags.push({
+						key: flag.key,
+						reason:
+							'Key conflict: flag key already exists in Datadog from a different LaunchDarkly project',
+					});
+					skipped++;
+					progressBar?.update(flag.key, { created, skipped, failed: errored });
+					continue;
+				}
+				// prefix case: fall through to creation below
+			}
 
-		const allRuleCount = allocations.reduce(
-			(sum, a) => sum + (a.targeting_rules?.length ?? 0),
-			0,
-		);
-		const allFilterLabel = `${allocations.length} targeting filter(s)`;
-		const allRuleLabel = allRuleCount > 0 ? `, ${allRuleCount} rule(s)` : '';
+			// For same_project and manual conflicts, sync onto the existing flag
+			const existingFlagId =
+				conflict.type === 'same_project' || conflict.type === 'manual'
+					? conflict.existingFlag?.id
+					: undefined;
 
-		if (existingFlagId) {
-			const syncTags = flag.tags;
+			const allRuleCount = allocations.reduce(
+				(sum, a) => sum + (a.targeting_rules?.length ?? 0),
+				0,
+			);
+			const allFilterLabel = `${allocations.length} targeting filter(s)`;
+			const allRuleLabel = allRuleCount > 0 ? `, ${allRuleCount} rule(s)` : '';
 
-			if (envsToEnable.length === 0) {
-				// Always sync tags and restriction policy even when no new environments need enabling.
+			if (existingFlagId) {
+				const syncTags = flag.tags;
+
+				if (envsToEnable.length === 0) {
+					// Always sync tags and restriction policy even when no new environments need enabling.
+					if (dryRun) {
+						dryRunRequests.push({
+							method: 'PUT',
+							path: `/api/v2/feature-flags/${existingFlagId}`,
+							body: {
+								data: {
+									type: 'feature-flags',
+									attributes: { tags: syncTags },
+								},
+							},
+						});
+						if (editorTeamIds.length > 0) {
+							const existingBindings = await fetchRestrictionPolicy(
+								ddApiKey,
+								ddAppKey,
+								existingFlagId,
+								ddSite,
+							);
+							dryRunRequests.push(
+								buildDryRunRestrictionPolicy(
+									existingFlagId,
+									editorTeamIds,
+									existingBindings,
+								),
+							);
+						}
+					} else {
+						await updateFlagTags(
+							ddApiKey,
+							ddAppKey,
+							existingFlagId,
+							syncTags,
+							ddSite,
+						);
+						if (editorTeamIds.length > 0) {
+							await applyRestrictionPolicyForFlag(
+								ddApiKey,
+								ddAppKey,
+								existingFlagId,
+								editorTeamIds,
+								ddSite,
+								flag.key,
+								restrictionPolicyFailures,
+							);
+						}
+					}
+					const policyLabel =
+						editorTeamIds.length > 0 ? ' (permissions refreshed)' : '';
+					const tagLabel = `${syncTags.length} tag(s)`;
+					spinner.succeed(
+						dryRun
+							? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (${tagLabel}${policyLabel})`
+							: `Synced ${chalk.cyan(flag.key)} (${tagLabel}${policyLabel})`,
+					);
+					syncedFlagKeys.push(flag.key);
+					synced++;
+					progressBar?.update(flag.key, { created, skipped, failed: errored });
+					continue;
+				}
+
+				spinner.warn(
+					`${chalk.cyan(flag.key)} exists in Datadog — targeting filters in ${envsToEnable.map((e) => e.name).join(', ')} will be overwritten`,
+				);
+				spinner = ora(`Migrating ${chalk.cyan(flag.key)}…`).start();
+
 				if (dryRun) {
+					let syncFilterCount = 0;
+					let syncRuleCount = 0;
+					for (const ddEnv of envsToEnable) {
+						const syncReqs = toSyncRequests(allocations, ddEnv.id);
+						syncFilterCount += syncReqs.length;
+						syncRuleCount += syncReqs.reduce(
+							(sum, r) => sum + (r.targeting_rules?.length ?? 0),
+							0,
+						);
+						if (syncReqs.length > 0) {
+							dryRunRequests.push({
+								method: 'PUT',
+								path: `/api/v2/feature-flags/${existingFlagId}/environments/${ddEnv.id}/allocations`,
+								body: syncReqs,
+							});
+						}
+						dryRunRequests.push({
+							method: 'POST',
+							path: `/api/v2/feature-flags/${existingFlagId}/environments/${ddEnv.id}/enable`,
+							body: {},
+						});
+					}
 					dryRunRequests.push({
 						method: 'PUT',
 						path: `/api/v2/feature-flags/${existingFlagId}`,
@@ -941,315 +1117,255 @@ async function executeMigration(
 							),
 						);
 					}
-				} else {
-					await updateFlagTags(
-						ddApiKey,
-						ddAppKey,
-						existingFlagId,
-						syncTags,
-						ddSite,
-					);
-					if (editorTeamIds.length > 0) {
-						await applyRestrictionPolicyForFlag(
-							ddApiKey,
-							ddAppKey,
-							existingFlagId,
-							editorTeamIds,
-							ddSite,
-							flag.key,
-							restrictionPolicyFailures,
-						);
-					}
-				}
-				const policyLabel =
-					editorTeamIds.length > 0 ? ' (permissions refreshed)' : '';
-				const tagLabel = `${syncTags.length} tag(s)`;
-				spinner.succeed(
-					dryRun
-						? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (${tagLabel}${policyLabel})`
-						: `Synced ${chalk.cyan(flag.key)} (${tagLabel}${policyLabel})`,
-				);
-				syncedFlagKeys.push(flag.key);
-				synced++;
-				continue;
-			}
-
-			spinner.warn(
-				`${chalk.cyan(flag.key)} exists in Datadog — targeting filters in ${envsToEnable.map((e) => e.name).join(', ')} will be overwritten`,
-			);
-			spinner = ora(`Migrating ${chalk.cyan(flag.key)}…`).start();
-
-			if (dryRun) {
-				let syncFilterCount = 0;
-				let syncRuleCount = 0;
-				for (const ddEnv of envsToEnable) {
-					const syncReqs = toSyncRequests(allocations, ddEnv.id);
-					syncFilterCount += syncReqs.length;
-					syncRuleCount += syncReqs.reduce(
-						(sum, r) => sum + (r.targeting_rules?.length ?? 0),
-						0,
-					);
-					if (syncReqs.length > 0) {
-						dryRunRequests.push({
-							method: 'PUT',
-							path: `/api/v2/feature-flags/${existingFlagId}/environments/${ddEnv.id}/allocations`,
-							body: syncReqs,
-						});
-					}
-					dryRunRequests.push({
-						method: 'POST',
-						path: `/api/v2/feature-flags/${existingFlagId}/environments/${ddEnv.id}/enable`,
-						body: {},
-					});
-				}
-				dryRunRequests.push({
-					method: 'PUT',
-					path: `/api/v2/feature-flags/${existingFlagId}`,
-					body: {
-						data: {
-							type: 'feature-flags',
-							attributes: { tags: syncTags },
-						},
-					},
-				});
-				if (editorTeamIds.length > 0) {
-					const existingBindings = await fetchRestrictionPolicy(
-						ddApiKey,
-						ddAppKey,
-						existingFlagId,
-						ddSite,
-					);
-					dryRunRequests.push(
-						buildDryRunRestrictionPolicy(
-							existingFlagId,
-							editorTeamIds,
-							existingBindings,
-						),
-					);
-				}
-				const syncFilterLabel = `${syncFilterCount} targeting filter(s)`;
-				const syncRuleLabel =
-					syncRuleCount > 0 ? `, ${syncRuleCount} rule(s)` : '';
-				const tagLabel =
-					syncTags.length > 0
-						? `, ${syncTags.length} tag(s)`
-						: ', tags cleared';
-				const enableLabel =
-					envsToEnable.length > 0
-						? `, would enable in ${envsToEnable.map((e) => e.name).join(', ')}`
-						: '';
-				spinner.succeed(
-					`${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} ` +
-						`(${syncFilterLabel}${syncRuleLabel}${tagLabel}${enableLabel})`,
-				);
-				syncedFlagKeys.push(flag.key);
-				synced++;
-			} else {
-				try {
-					let syncedAllocCount = 0;
-					let syncedRuleCount = 0;
-					for (const ddEnv of envsToEnable) {
-						const syncReqs = toSyncRequests(allocations, ddEnv.id);
-						if (syncReqs.length > 0) {
-							await syncAllocationsForEnvironment(
-								ddApiKey,
-								ddAppKey,
-								existingFlagId,
-								ddEnv.id,
-								syncReqs,
-								ddSite,
-							);
-							syncedAllocCount += syncReqs.length;
-							syncedRuleCount += syncReqs.reduce(
-								(sum, r) => sum + (r.targeting_rules?.length ?? 0),
-								0,
-							);
-						}
-					}
-
-					// Update tags on existing flag (replace so removals propagate)
-					await updateFlagTags(
-						ddApiKey,
-						ddAppKey,
-						existingFlagId,
-						syncTags,
-						ddSite,
-					);
-
-					// Apply restriction policy for LD editor teams
-					if (editorTeamIds.length > 0) {
-						await applyRestrictionPolicyForFlag(
-							ddApiKey,
-							ddAppKey,
-							existingFlagId,
-							editorTeamIds,
-							ddSite,
-							flag.key,
-							restrictionPolicyFailures,
-						);
-					}
-
-					let enabledCount = 0;
-					for (const ddEnv of envsToEnable) {
-						try {
-							await enableFeatureFlagEnvironment(
-								ddApiKey,
-								ddAppKey,
-								existingFlagId,
-								ddEnv.id,
-								ddSite,
-							);
-							enabledCount++;
-						} catch (err) {
-							enableFailures.push({
-								key: flag.key,
-								env: ddEnv.name,
-								error: formatAxiosError(err),
-							});
-						}
-					}
-
-					totalEnabled += enabledCount;
-					const syncedRuleLabel =
-						syncedRuleCount > 0 ? `, ${syncedRuleCount} rule(s)` : '';
+					const syncFilterLabel = `${syncFilterCount} targeting filter(s)`;
+					const syncRuleLabel =
+						syncRuleCount > 0 ? `, ${syncRuleCount} rule(s)` : '';
 					const tagLabel =
 						syncTags.length > 0
 							? `, ${syncTags.length} tag(s)`
 							: ', tags cleared';
 					const enableLabel =
-						enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
+						envsToEnable.length > 0
+							? `, would enable in ${envsToEnable.map((e) => e.name).join(', ')}`
+							: '';
 					spinner.succeed(
-						`Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${tagLabel}${enableLabel})`,
+						`${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} ` +
+							`(${syncFilterLabel}${syncRuleLabel}${tagLabel}${enableLabel})`,
 					);
 					syncedFlagKeys.push(flag.key);
 					synced++;
-				} catch (err) {
-					spinner.fail(
-						`Failed to sync ${chalk.cyan(flag.key)}: ${chalk.red(formatAxiosError(err))}`,
-					);
-					failures.push({ key: flag.key, error: formatAxiosError(err) });
-					errored++;
-				}
-			}
-		} else {
-			const usePrefix =
-				conflict.type === 'cross_project' &&
-				conflictResolution?.action === 'prefix';
-			const ddKey = usePrefix
-				? `${conflictResolution.prefix}-${flag.key}`
-				: flag.key;
+					progressBar?.update(flag.key, { created, skipped, failed: errored });
+				} else {
+					try {
+						let syncedAllocCount = 0;
+						let syncedRuleCount = 0;
+						for (const ddEnv of envsToEnable) {
+							const syncReqs = toSyncRequests(allocations, ddEnv.id);
+							if (syncReqs.length > 0) {
+								await syncAllocationsForEnvironment(
+									ddApiKey,
+									ddAppKey,
+									existingFlagId,
+									ddEnv.id,
+									syncReqs,
+									ddSite,
+								);
+								syncedAllocCount += syncReqs.length;
+								syncedRuleCount += syncReqs.reduce(
+									(sum, r) => sum + (r.targeting_rules?.length ?? 0),
+									0,
+								);
+							}
+						}
 
-			const tags = flag.tags;
-
-			const request: DatadogCreateFlagRequest = {
-				key: ddKey,
-				name: flag.name,
-				value_type: mapFlagType(flag),
-				variants,
-				allocations: allocations.length > 0 ? allocations : undefined,
-				migration_metadata: {
-					project_key: projectKey,
-					flag_key: flag.key,
-					...(usePrefix ? { key_prefix: conflictResolution.prefix } : {}),
-				},
-				...(tags.length > 0 ? { tags } : {}),
-				...(hasSemverConditions(allocations)
-					? { distribution_channel: 'CLIENT' }
-					: {}),
-			};
-
-			if (dryRun) {
-				dryRunRequests.push({
-					method: 'POST',
-					path: '/api/v2/feature-flags',
-					body: { data: { type: 'feature-flags', attributes: request } },
-				});
-				for (const ddEnv of envsToEnable) {
-					dryRunRequests.push({
-						method: 'POST',
-						path: `/api/v2/feature-flags/<uuid-for-${ddKey}>/environments/${ddEnv.id}/enable`,
-						body: {},
-					});
-				}
-
-				if (editorTeamIds.length > 0) {
-					dryRunRequests.push(
-						buildDryRunRestrictionPolicy(
-							`<uuid-for-${ddKey}>`,
-							editorTeamIds,
-							[],
-							'Approximate — dd-source adds a creator-team principal on flag creation before this POST runs; that principal is not reflected here.',
-						),
-					);
-				}
-
-				const enableLabel =
-					envsToEnable.length > 0
-						? `, would enable in ${envsToEnable.map((e) => e.name).join(', ')}`
-						: '';
-				spinner.succeed(
-					`${chalk.dim('[dry run]')} Would create ${chalk.cyan(ddKey)} ` +
-						`(${allFilterLabel}${allRuleLabel}${enableLabel})`,
-				);
-				created++;
-			} else {
-				try {
-					const createdFlag = await createFeatureFlag(
-						ddApiKey,
-						ddAppKey,
-						request,
-						ddSite,
-					);
-
-					// Apply restriction policy for LD editor teams
-					if (editorTeamIds.length > 0) {
-						await applyRestrictionPolicyForFlag(
+						// Update tags on existing flag (replace so removals propagate)
+						await updateFlagTags(
 							ddApiKey,
 							ddAppKey,
-							createdFlag.id,
-							editorTeamIds,
+							existingFlagId,
+							syncTags,
 							ddSite,
-							ddKey,
-							restrictionPolicyFailures,
+						);
+
+						// Apply restriction policy for LD editor teams
+						if (editorTeamIds.length > 0) {
+							await applyRestrictionPolicyForFlag(
+								ddApiKey,
+								ddAppKey,
+								existingFlagId,
+								editorTeamIds,
+								ddSite,
+								flag.key,
+								restrictionPolicyFailures,
+							);
+						}
+
+						let enabledCount = 0;
+						for (const ddEnv of envsToEnable) {
+							try {
+								await enableFeatureFlagEnvironment(
+									ddApiKey,
+									ddAppKey,
+									existingFlagId,
+									ddEnv.id,
+									ddSite,
+								);
+								enabledCount++;
+							} catch (err) {
+								enableFailures.push({
+									key: flag.key,
+									env: ddEnv.name,
+									error: formatAxiosError(err),
+								});
+							}
+						}
+
+						totalEnabled += enabledCount;
+						const syncedRuleLabel =
+							syncedRuleCount > 0 ? `, ${syncedRuleCount} rule(s)` : '';
+						const tagLabel =
+							syncTags.length > 0
+								? `, ${syncTags.length} tag(s)`
+								: ', tags cleared';
+						const enableLabel =
+							enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
+						spinner.succeed(
+							`Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${tagLabel}${enableLabel})`,
+						);
+						syncedFlagKeys.push(flag.key);
+						synced++;
+						progressBar?.update(flag.key, {
+							created,
+							skipped,
+							failed: errored,
+						});
+					} catch (err) {
+						spinner.fail(
+							`Failed to sync ${chalk.cyan(flag.key)}: ${chalk.red(formatAxiosError(err))}`,
+						);
+						failures.push({ key: flag.key, error: formatAxiosError(err) });
+						errored++;
+						progressBar?.update(flag.key, {
+							created,
+							skipped,
+							failed: errored,
+						});
+					}
+				}
+			} else {
+				const usePrefix =
+					conflict.type === 'cross_project' &&
+					conflictResolution?.action === 'prefix';
+				const ddKey = usePrefix
+					? `${conflictResolution.prefix}-${flag.key}`
+					: flag.key;
+
+				const tags = flag.tags;
+
+				const request: DatadogCreateFlagRequest = {
+					key: ddKey,
+					name: flag.name,
+					value_type: mapFlagType(flag),
+					variants,
+					allocations: allocations.length > 0 ? allocations : undefined,
+					migration_metadata: {
+						project_key: projectKey,
+						flag_key: flag.key,
+						...(usePrefix ? { key_prefix: conflictResolution.prefix } : {}),
+					},
+					...(tags.length > 0 ? { tags } : {}),
+					...(hasSemverConditions(allocations)
+						? { distribution_channel: 'CLIENT' }
+						: {}),
+				};
+
+				if (dryRun) {
+					dryRunRequests.push({
+						method: 'POST',
+						path: '/api/v2/feature-flags',
+						body: { data: { type: 'feature-flags', attributes: request } },
+					});
+					for (const ddEnv of envsToEnable) {
+						dryRunRequests.push({
+							method: 'POST',
+							path: `/api/v2/feature-flags/<uuid-for-${ddKey}>/environments/${ddEnv.id}/enable`,
+							body: {},
+						});
+					}
+
+					if (editorTeamIds.length > 0) {
+						dryRunRequests.push(
+							buildDryRunRestrictionPolicy(
+								`<uuid-for-${ddKey}>`,
+								editorTeamIds,
+								[],
+								'Approximate — dd-source adds a creator-team principal on flag creation before this POST runs; that principal is not reflected here.',
+							),
 						);
 					}
 
-					let enabledCount = 0;
-					for (const ddEnv of envsToEnable) {
-						try {
-							await enableFeatureFlagEnvironment(
+					const enableLabel =
+						envsToEnable.length > 0
+							? `, would enable in ${envsToEnable.map((e) => e.name).join(', ')}`
+							: '';
+					spinner.succeed(
+						`${chalk.dim('[dry run]')} Would create ${chalk.cyan(ddKey)} ` +
+							`(${allFilterLabel}${allRuleLabel}${enableLabel})`,
+					);
+					created++;
+					progressBar?.update(flag.key, { created, skipped, failed: errored });
+				} else {
+					try {
+						const createdFlag = await createFeatureFlag(
+							ddApiKey,
+							ddAppKey,
+							request,
+							ddSite,
+						);
+
+						// Apply restriction policy for LD editor teams
+						if (editorTeamIds.length > 0) {
+							await applyRestrictionPolicyForFlag(
 								ddApiKey,
 								ddAppKey,
 								createdFlag.id,
-								ddEnv.id,
+								editorTeamIds,
 								ddSite,
+								ddKey,
+								restrictionPolicyFailures,
 							);
-							enabledCount++;
-						} catch (err) {
-							enableFailures.push({
-								key: ddKey,
-								env: ddEnv.name,
-								error: formatAxiosError(err),
-							});
 						}
-					}
 
-					totalEnabled += enabledCount;
-					const enableLabel =
-						enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
-					spinner.succeed(
-						`Created ${chalk.cyan(ddKey)} (${allFilterLabel}${allRuleLabel}${enableLabel})`,
-					);
-					created++;
-				} catch (err) {
-					spinner.fail(
-						`Failed ${chalk.cyan(ddKey)}: ${chalk.red(formatAxiosError(err))}`,
-					);
-					failures.push({ key: ddKey, error: formatAxiosError(err) });
-					errored++;
+						let enabledCount = 0;
+						for (const ddEnv of envsToEnable) {
+							try {
+								await enableFeatureFlagEnvironment(
+									ddApiKey,
+									ddAppKey,
+									createdFlag.id,
+									ddEnv.id,
+									ddSite,
+								);
+								enabledCount++;
+							} catch (err) {
+								enableFailures.push({
+									key: ddKey,
+									env: ddEnv.name,
+									error: formatAxiosError(err),
+								});
+							}
+						}
+
+						totalEnabled += enabledCount;
+						const enableLabel =
+							enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
+						spinner.succeed(
+							`Created ${chalk.cyan(ddKey)} (${allFilterLabel}${allRuleLabel}${enableLabel})`,
+						);
+						created++;
+						progressBar?.update(flag.key, {
+							created,
+							skipped,
+							failed: errored,
+						});
+					} catch (err) {
+						spinner.fail(
+							`Failed ${chalk.cyan(ddKey)}: ${chalk.red(formatAxiosError(err))}`,
+						);
+						failures.push({ key: ddKey, error: formatAxiosError(err) });
+						errored++;
+						progressBar?.update(flag.key, {
+							created,
+							skipped,
+							failed: errored,
+						});
+					}
 				}
 			}
 		}
+	} finally {
+		process.removeListener('SIGINT', sigintHandler);
+		progressBar?.finalize();
 	}
 
 	// ─── Summary ───────────────────────────────────────────────────────────────
@@ -1297,16 +1413,6 @@ async function executeMigration(
 
 	// ─── Persist Results ───────────────────────────────────────────────────────
 	const timestamp = new Date().toISOString();
-	const environmentMappingArr: LDMigrationFile['environmentMapping'] = [];
-	for (const [ldEnvKey, ddEnv] of envMapping) {
-		environmentMappingArr.push({
-			sourceEnvId: ldEnvKey,
-			sourceEnvName: ldEnvKey,
-			datadogEnvId: ddEnv.id,
-			datadogEnvName: ddEnv.name,
-			datadogDdEnvNames: ddEnv.queries,
-		});
-	}
 
 	if (dryRun && dryRunRequests.length > 0) {
 		const dryRunData = {

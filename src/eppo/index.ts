@@ -16,6 +16,7 @@ import {
 } from '../datadog.js';
 import { filterableCheckbox } from '../filterable-checkbox.js';
 import { toSyncRequests } from '../migration.js';
+import { MigrationProgressBar } from '../progress-bar.js';
 import type {
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,
@@ -33,7 +34,6 @@ import {
 	getEnvsToEnable,
 	hasSemverConditions,
 	mapVariationType,
-	slugify,
 } from './migration.js';
 import type {
 	DryRunFile,
@@ -277,6 +277,7 @@ async function selectFlags(
 			name: flagLabel(flag, datadogKeys.has(flag.key)),
 			value: flag,
 			checked: previousKeys.has(flag.key),
+			migrated: datadogKeys.has(flag.key),
 		})),
 		pageSize,
 	});
@@ -352,6 +353,7 @@ async function confirmMigration(
 	// ── Phase 1: Audience migration ──────────────────────────────────────────
 	let fingerprintLookup: Map<string, string> | undefined;
 	let savedFilterLookup: Map<number, string> | undefined;
+	let phase1Subheader: string | undefined;
 	try {
 		console.log(
 			chalk.bold('  Phase 1: Migrating Eppo audiences as saved filters'),
@@ -375,6 +377,14 @@ async function confirmMigration(
 					`  Audiences: ${ac} ${createdVerb}, ${ar} reused, ${as_} skipped as saved filters`,
 				),
 			);
+			phase1Subheader =
+				chalk.gray('Phase 1 — Audiences: ') +
+				chalk.green(String(ac)) +
+				chalk.gray(` ${createdVerb} · `) +
+				chalk.white(String(ar)) +
+				chalk.gray(' reused · ') +
+				chalk.yellow(String(as_)) +
+				chalk.gray(' skipped as saved filters');
 		}
 		console.log();
 	} catch (err) {
@@ -399,77 +409,206 @@ async function confirmMigration(
 	const failures: Array<{ key: string; error: string }> = [];
 	const enableFailures: Array<{ key: string; env: string; error: string }> = [];
 	const skippedFlags: Array<{ key: string; reason: string }> = [];
+	const progressBar = new MigrationProgressBar(flags.length, phase1Subheader);
 
-	for (const flag of flags) {
-		let spinner = ora(`Migrating ${chalk.cyan(flag.key)}…`).start();
+	const environmentMapping: MigrationEnvironmentMapping[] = [];
+	for (const [eppoEnvId, ddEnv] of envMapping) {
+		const eppoEnv = flags
+			.flatMap((f) => f.environments ?? [])
+			.find((e) => e.id === eppoEnvId);
+		environmentMapping.push({
+			sourceEnvId: eppoEnvId,
+			sourceEnvName: eppoEnv?.name ?? String(eppoEnvId),
+			datadogEnvId: ddEnv.id,
+			datadogEnvName: ddEnv.name,
+			datadogDdEnvNames: ddEnv.queries,
+		});
+	}
 
-		if (flag.type === 'BANDIT') {
-			spinner.warn(
-				`Skipped ${chalk.cyan(flag.key)} — BANDIT type not supported`,
+	const sigintHandler = () => {
+		progressBar ? progressBar.finalize() : process.stderr.write('\n');
+		if (!dryRun && (created > 0 || synced > 0 || errored > 0)) {
+			console.log(
+				chalk.yellow('\n  Migration interrupted — saving partial results…'),
 			);
-			skippedFlags.push({
-				key: flag.key,
-				reason: 'BANDIT flags not supported',
-			});
-			skipped++;
-			continue;
+			const timestamp = new Date().toISOString();
+			const migrationData: MigrationFile = {
+				provider,
+				migratedAt: timestamp,
+				success: false,
+				summary: { created, synced, skipped, errored, enabled: totalEnabled },
+				failures,
+				enableFailures,
+				skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
+				flags,
+				environmentMapping,
+			};
+			const filename = `migration-${timestamp}.json`;
+			if (!fs.existsSync(CONFIG_DIR))
+				fs.mkdirSync(CONFIG_DIR, { recursive: true });
+			const filepath = path.join(CONFIG_DIR, filename);
+			fs.writeFileSync(filepath, JSON.stringify(migrationData, null, 2));
+			console.log(chalk.gray(`  Partial migration saved to ${filepath}`));
 		}
-		if (flag.type === 'LAYER') {
-			spinner.warn(
-				`Skipped ${chalk.cyan(flag.key)} — LAYER type not supported`,
+		console.log(chalk.gray('\n  Bye!'));
+		process.exit(130);
+	};
+	process.once('SIGINT', sigintHandler);
+	if (progressBar) clearScreen();
+	progressBar?.start();
+	try {
+		for (const flag of flags) {
+			let spinner = ora(`Migrating ${chalk.cyan(flag.key)}…`).start();
+
+			if (flag.type === 'BANDIT') {
+				spinner.warn(
+					`Skipped ${chalk.cyan(flag.key)} — BANDIT type not supported`,
+				);
+				skippedFlags.push({
+					key: flag.key,
+					reason: 'BANDIT flags not supported',
+				});
+				skipped++;
+				progressBar?.update(flag.key, { created, skipped, failed: errored });
+				continue;
+			}
+			if (flag.type === 'LAYER') {
+				spinner.warn(
+					`Skipped ${chalk.cyan(flag.key)} — LAYER type not supported`,
+				);
+				skippedFlags.push({
+					key: flag.key,
+					reason: 'LAYER flags not supported',
+				});
+				skipped++;
+				progressBar?.update(flag.key, { created, skipped, failed: errored });
+				continue;
+			}
+			if ((flag.allocations ?? []).some((a) => a.type === 'SWITCHBACK')) {
+				spinner.warn(
+					`Skipped ${chalk.cyan(flag.key)} — SWITCHBACK targeting not supported`,
+				);
+				skippedFlags.push({
+					key: flag.key,
+					reason: 'SWITCHBACK targeting not supported',
+				});
+				skipped++;
+				progressBar?.update(flag.key, { created, skipped, failed: errored });
+				continue;
+			}
+			const variants = (flag.variations ?? []).map((v) => ({
+				key: v.variant_key,
+				name: v.name,
+				value: v.variant_key,
+			}));
+			if (variants.length === 0) {
+				spinner.warn(`Skipped ${chalk.cyan(flag.key)} — no variants`);
+				skipped++;
+				progressBar?.update(flag.key, { created, skipped, failed: errored });
+				continue;
+			}
+
+			const defaultVariantKey = extractDefaultVariantKey(flag, envMapping);
+			const allocations = buildAllocations(
+				flag,
+				envMapping,
+				fingerprintLookup,
+				savedFilterLookup,
+				defaultVariantKey !== undefined,
 			);
-			skippedFlags.push({ key: flag.key, reason: 'LAYER flags not supported' });
-			skipped++;
-			continue;
-		}
-		if ((flag.allocations ?? []).some((a) => a.type === 'SWITCHBACK')) {
-			spinner.warn(
-				`Skipped ${chalk.cyan(flag.key)} — SWITCHBACK targeting not supported`,
+			const envsToEnable = getEnvsToEnable(flag, envMapping);
+			const existingFlagId = datadogKeys.get(flag.key);
+
+			// Count targeting rules for reporting (all environments — used for new-flag path)
+			const allRuleCount = allocations.reduce(
+				(sum, a) => sum + (a.targeting_rules?.length ?? 0),
+				0,
 			);
-			skippedFlags.push({
-				key: flag.key,
-				reason: 'SWITCHBACK targeting not supported',
-			});
-			skipped++;
-			continue;
-		}
-		const variants = (flag.variations ?? []).map((v) => ({
-			key: slugify(v.name),
-			name: v.name,
-			value: v.variant_key,
-		}));
-		if (variants.length === 0) {
-			spinner.warn(`Skipped ${chalk.cyan(flag.key)} — no variants`);
-			skipped++;
-			continue;
-		}
+			const allFilterLabel = `${allocations.length} targeting filter(s)`;
+			const allRuleLabel = allRuleCount > 0 ? `, ${allRuleCount} rule(s)` : '';
 
-		const defaultVariantKey = extractDefaultVariantKey(flag, envMapping);
-		const allocations = buildAllocations(
-			flag,
-			envMapping,
-			fingerprintLookup,
-			savedFilterLookup,
-			defaultVariantKey !== undefined,
-		);
-		const envsToEnable = getEnvsToEnable(flag, envMapping);
-		const existingFlagId = datadogKeys.get(flag.key);
+			if (existingFlagId) {
+				// Flag already exists in Datadog — sync targeting and enable in new environments
+				const syncTags = flag.tag_names ?? [];
 
-		// Count targeting rules for reporting (all environments — used for new-flag path)
-		const allRuleCount = allocations.reduce(
-			(sum, a) => sum + (a.targeting_rules?.length ?? 0),
-			0,
-		);
-		const allFilterLabel = `${allocations.length} targeting filter(s)`;
-		const allRuleLabel = allRuleCount > 0 ? `, ${allRuleCount} rule(s)` : '';
+				if (envsToEnable.length === 0) {
+					// Always sync tags (even empty array, so removals propagate).
+					if (dryRun) {
+						dryRunRequests.push({
+							method: 'PUT',
+							path: `/api/v2/feature-flags/${existingFlagId}`,
+							body: {
+								data: {
+									type: 'feature-flags',
+									attributes: {
+										tags: syncTags,
+										...(defaultVariantKey !== undefined
+											? { default_variant_key: defaultVariantKey }
+											: {}),
+									},
+								},
+							},
+						});
+					} else {
+						await updateFlagTags(
+							ddApiKey,
+							ddAppKey,
+							existingFlagId,
+							syncTags,
+							site,
+						);
+						if (defaultVariantKey !== undefined) {
+							await updateFlagDefaultVariantKey(
+								ddApiKey,
+								ddAppKey,
+								existingFlagId,
+								defaultVariantKey,
+								site,
+							);
+						}
+					}
+					const defaultLabel =
+						defaultVariantKey !== undefined
+							? `, default targeting → ${defaultVariantKey}`
+							: '';
+					spinner.succeed(
+						dryRun
+							? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (${syncTags.length} tag(s)${defaultLabel})`
+							: `Synced ${chalk.cyan(flag.key)} (${syncTags.length} tag(s)${defaultLabel})`,
+					);
+					synced++;
+					progressBar?.update(flag.key, { created, skipped, failed: errored });
+					continue;
+				}
 
-		if (existingFlagId) {
-			// Flag already exists in Datadog — sync targeting and enable in new environments
-			const syncTags = flag.tag_names ?? [];
+				spinner.warn(
+					`${chalk.cyan(flag.key)} exists in Datadog — targeting filters in ${envsToEnable.map((e) => e.name).join(', ')} will be overwritten`,
+				);
+				spinner = ora(`Migrating ${chalk.cyan(flag.key)}…`).start();
 
-			if (envsToEnable.length === 0) {
-				// Always sync tags (even empty array, so removals propagate).
 				if (dryRun) {
+					let syncFilterCount = 0;
+					let syncRuleCount = 0;
+					for (const ddEnv of envsToEnable) {
+						const syncReqs = toSyncRequests(allocations, ddEnv.id);
+						syncFilterCount += syncReqs.length;
+						syncRuleCount += syncReqs.reduce(
+							(sum, r) => sum + (r.targeting_rules?.length ?? 0),
+							0,
+						);
+						if (syncReqs.length > 0 || defaultVariantKey !== undefined) {
+							dryRunRequests.push({
+								method: 'PUT',
+								path: `/api/v2/feature-flags/${existingFlagId}/environments/${ddEnv.id}/allocations`,
+								body: syncReqs,
+							});
+						}
+						dryRunRequests.push({
+							method: 'POST',
+							path: `/api/v2/feature-flags/${existingFlagId}/environments/${ddEnv.id}/enable`,
+							body: {},
+						});
+					}
 					dryRunRequests.push({
 						method: 'PUT',
 						path: `/api/v2/feature-flags/${existingFlagId}`,
@@ -485,270 +624,222 @@ async function confirmMigration(
 							},
 						},
 					});
-				} else {
-					await updateFlagTags(
-						ddApiKey,
-						ddAppKey,
-						existingFlagId,
-						syncTags,
-						site,
-					);
-					if (defaultVariantKey !== undefined) {
-						await updateFlagDefaultVariantKey(
-							ddApiKey,
-							ddAppKey,
-							existingFlagId,
-							defaultVariantKey,
-							site,
-						);
-					}
-				}
-				const defaultLabel =
-					defaultVariantKey !== undefined
-						? `, default targeting → ${defaultVariantKey}`
-						: '';
-				spinner.succeed(
-					dryRun
-						? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (${syncTags.length} tag(s)${defaultLabel})`
-						: `Synced ${chalk.cyan(flag.key)} (${syncTags.length} tag(s)${defaultLabel})`,
-				);
-				synced++;
-				continue;
-			}
-
-			spinner.warn(
-				`${chalk.cyan(flag.key)} exists in Datadog — targeting filters in ${envsToEnable.map((e) => e.name).join(', ')} will be overwritten`,
-			);
-			spinner = ora(`Migrating ${chalk.cyan(flag.key)}…`).start();
-
-			if (dryRun) {
-				let syncFilterCount = 0;
-				let syncRuleCount = 0;
-				for (const ddEnv of envsToEnable) {
-					const syncReqs = toSyncRequests(allocations, ddEnv.id);
-					syncFilterCount += syncReqs.length;
-					syncRuleCount += syncReqs.reduce(
-						(sum, r) => sum + (r.targeting_rules?.length ?? 0),
-						0,
-					);
-					if (syncReqs.length > 0 || defaultVariantKey !== undefined) {
-						dryRunRequests.push({
-							method: 'PUT',
-							path: `/api/v2/feature-flags/${existingFlagId}/environments/${ddEnv.id}/allocations`,
-							body: syncReqs,
-						});
-					}
-					dryRunRequests.push({
-						method: 'POST',
-						path: `/api/v2/feature-flags/${existingFlagId}/environments/${ddEnv.id}/enable`,
-						body: {},
-					});
-				}
-				dryRunRequests.push({
-					method: 'PUT',
-					path: `/api/v2/feature-flags/${existingFlagId}`,
-					body: {
-						data: {
-							type: 'feature-flags',
-							attributes: {
-								tags: syncTags,
-								...(defaultVariantKey !== undefined
-									? { default_variant_key: defaultVariantKey }
-									: {}),
-							},
-						},
-					},
-				});
-				const syncFilterLabel = `${syncFilterCount} targeting filter(s)`;
-				const syncRuleLabel =
-					syncRuleCount > 0 ? `, ${syncRuleCount} rule(s)` : '';
-				const tagLabel =
-					syncTags.length > 0
-						? `, ${syncTags.length} tag(s)`
-						: ', tags cleared';
-				const enableLabel =
-					envsToEnable.length > 0
-						? `, would enable in ${envsToEnable.map((e) => e.name).join(', ')}`
-						: '';
-				spinner.succeed(
-					`${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} ` +
-						`(${syncFilterLabel}${syncRuleLabel}${tagLabel}${enableLabel})`,
-				);
-				synced++;
-			} else {
-				try {
-					// Sync targeting for each target environment
-					let syncedAllocCount = 0;
-					let syncedRuleCount = 0;
-					for (const ddEnv of envsToEnable) {
-						const syncReqs = toSyncRequests(allocations, ddEnv.id);
-						if (syncReqs.length > 0 || defaultVariantKey !== undefined) {
-							await syncAllocationsForEnvironment(
-								ddApiKey,
-								ddAppKey,
-								existingFlagId,
-								ddEnv.id,
-								syncReqs,
-								site,
-							);
-							syncedAllocCount += syncReqs.length;
-							syncedRuleCount += syncReqs.reduce(
-								(sum, r) => sum + (r.targeting_rules?.length ?? 0),
-								0,
-							);
-						}
-					}
-
-					// Update tags on existing flag (replace so removals propagate)
-					await updateFlagTags(
-						ddApiKey,
-						ddAppKey,
-						existingFlagId,
-						syncTags,
-						site,
-					);
-
-					if (defaultVariantKey !== undefined) {
-						await updateFlagDefaultVariantKey(
-							ddApiKey,
-							ddAppKey,
-							existingFlagId,
-							defaultVariantKey,
-							site,
-						);
-					}
-
-					// Enable the flag in each environment
-					let enabledCount = 0;
-					for (const ddEnv of envsToEnable) {
-						try {
-							await enableFeatureFlagEnvironment(
-								ddApiKey,
-								ddAppKey,
-								existingFlagId,
-								ddEnv.id,
-								site,
-							);
-							enabledCount++;
-						} catch (err) {
-							enableFailures.push({
-								key: flag.key,
-								env: ddEnv.name,
-								error: formatAxiosError(err),
-							});
-						}
-					}
-
-					totalEnabled += enabledCount;
-					const syncedRuleLabel =
-						syncedRuleCount > 0 ? `, ${syncedRuleCount} rule(s)` : '';
+					const syncFilterLabel = `${syncFilterCount} targeting filter(s)`;
+					const syncRuleLabel =
+						syncRuleCount > 0 ? `, ${syncRuleCount} rule(s)` : '';
 					const tagLabel =
 						syncTags.length > 0
 							? `, ${syncTags.length} tag(s)`
 							: ', tags cleared';
 					const enableLabel =
-						enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
+						envsToEnable.length > 0
+							? `, would enable in ${envsToEnable.map((e) => e.name).join(', ')}`
+							: '';
 					spinner.succeed(
-						`Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${tagLabel}${enableLabel})`,
+						`${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} ` +
+							`(${syncFilterLabel}${syncRuleLabel}${tagLabel}${enableLabel})`,
 					);
 					synced++;
-				} catch (err) {
-					spinner.fail(
-						`Failed to sync ${chalk.cyan(flag.key)}: ${chalk.red(formatAxiosError(err))}`,
-					);
-					failures.push({ key: flag.key, error: formatAxiosError(err) });
-					errored++;
-				}
-			}
-		} else {
-			// Flag does not exist — create it with targeting rules
-			const tags = flag.tag_names ?? [];
-			const request: DatadogCreateFlagRequest = {
-				key: flag.key,
-				name: flag.name,
-				value_type: mapVariationType(flag.variation_type),
-				variants,
-				allocations: allocations.length > 0 ? allocations : undefined,
-				...(hasSemverConditions(allocations)
-					? { distribution_channel: 'CLIENT' as const }
-					: {}),
-				...(tags.length > 0 ? { tags } : {}),
-				...(defaultVariantKey !== undefined
-					? { default_variant_key: defaultVariantKey }
-					: {}),
-			};
+					progressBar?.update(flag.key, { created, skipped, failed: errored });
+				} else {
+					try {
+						// Sync targeting for each target environment
+						let syncedAllocCount = 0;
+						let syncedRuleCount = 0;
+						for (const ddEnv of envsToEnable) {
+							const syncReqs = toSyncRequests(allocations, ddEnv.id);
+							if (syncReqs.length > 0 || defaultVariantKey !== undefined) {
+								await syncAllocationsForEnvironment(
+									ddApiKey,
+									ddAppKey,
+									existingFlagId,
+									ddEnv.id,
+									syncReqs,
+									site,
+								);
+								syncedAllocCount += syncReqs.length;
+								syncedRuleCount += syncReqs.reduce(
+									(sum, r) => sum + (r.targeting_rules?.length ?? 0),
+									0,
+								);
+							}
+						}
 
-			if (dryRun) {
-				dryRunRequests.push({
-					method: 'POST',
-					path: '/api/v2/feature-flags',
-					body: { data: { type: 'feature-flags', attributes: request } },
-				});
-				for (const ddEnv of envsToEnable) {
-					// flag.key used as placeholder — real ID assigned on creation
-					dryRunRequests.push({
-						method: 'POST',
-						path: `/api/v2/feature-flags/${flag.key}/environments/${ddEnv.id}/enable`,
-						body: {},
-					});
-				}
+						// Update tags on existing flag (replace so removals propagate)
+						await updateFlagTags(
+							ddApiKey,
+							ddAppKey,
+							existingFlagId,
+							syncTags,
+							site,
+						);
 
-				const enableLabel =
-					envsToEnable.length > 0
-						? `, would enable in ${envsToEnable.map((e) => e.name).join(', ')}`
-						: '';
-				spinner.succeed(
-					`${chalk.dim('[dry run]')} Would create ${chalk.cyan(flag.key)} ` +
-						`(${allFilterLabel}${allRuleLabel}${enableLabel})`,
-				);
-				created++;
-			} else {
-				try {
-					const createdFlag = await createFeatureFlag(
-						ddApiKey,
-						ddAppKey,
-						request,
-						site,
-					);
-
-					// Enable the flag in each DD environment where it was active in Eppo
-					let enabledCount = 0;
-					for (const ddEnv of envsToEnable) {
-						try {
-							await enableFeatureFlagEnvironment(
+						if (defaultVariantKey !== undefined) {
+							await updateFlagDefaultVariantKey(
 								ddApiKey,
 								ddAppKey,
-								createdFlag.id,
-								ddEnv.id,
+								existingFlagId,
+								defaultVariantKey,
 								site,
 							);
-							enabledCount++;
-						} catch (err) {
-							enableFailures.push({
-								key: flag.key,
-								env: ddEnv.name,
-								error: formatAxiosError(err),
-							});
 						}
+
+						// Enable the flag in each environment
+						let enabledCount = 0;
+						for (const ddEnv of envsToEnable) {
+							try {
+								await enableFeatureFlagEnvironment(
+									ddApiKey,
+									ddAppKey,
+									existingFlagId,
+									ddEnv.id,
+									site,
+								);
+								enabledCount++;
+							} catch (err) {
+								enableFailures.push({
+									key: flag.key,
+									env: ddEnv.name,
+									error: formatAxiosError(err),
+								});
+							}
+						}
+
+						totalEnabled += enabledCount;
+						const syncedRuleLabel =
+							syncedRuleCount > 0 ? `, ${syncedRuleCount} rule(s)` : '';
+						const tagLabel =
+							syncTags.length > 0
+								? `, ${syncTags.length} tag(s)`
+								: ', tags cleared';
+						const enableLabel =
+							enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
+						spinner.succeed(
+							`Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${tagLabel}${enableLabel})`,
+						);
+						synced++;
+						progressBar?.update(flag.key, {
+							created,
+							skipped,
+							failed: errored,
+						});
+					} catch (err) {
+						spinner.fail(
+							`Failed to sync ${chalk.cyan(flag.key)}: ${chalk.red(formatAxiosError(err))}`,
+						);
+						failures.push({ key: flag.key, error: formatAxiosError(err) });
+						errored++;
+						progressBar?.update(flag.key, {
+							created,
+							skipped,
+							failed: errored,
+						});
+					}
+				}
+			} else {
+				// Flag does not exist — create it with targeting rules
+				const tags = flag.tag_names ?? [];
+				const request: DatadogCreateFlagRequest = {
+					key: flag.key,
+					name: flag.name,
+					value_type: mapVariationType(flag.variation_type),
+					variants,
+					allocations: allocations.length > 0 ? allocations : undefined,
+					...(hasSemverConditions(allocations)
+						? { distribution_channel: 'CLIENT' as const }
+						: {}),
+					...(tags.length > 0 ? { tags } : {}),
+					...(defaultVariantKey !== undefined
+						? { default_variant_key: defaultVariantKey }
+						: {}),
+				};
+
+				if (dryRun) {
+					dryRunRequests.push({
+						method: 'POST',
+						path: '/api/v2/feature-flags',
+						body: { data: { type: 'feature-flags', attributes: request } },
+					});
+					for (const ddEnv of envsToEnable) {
+						// flag.key used as placeholder — real ID assigned on creation
+						dryRunRequests.push({
+							method: 'POST',
+							path: `/api/v2/feature-flags/${flag.key}/environments/${ddEnv.id}/enable`,
+							body: {},
+						});
 					}
 
-					totalEnabled += enabledCount;
 					const enableLabel =
-						enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
+						envsToEnable.length > 0
+							? `, would enable in ${envsToEnable.map((e) => e.name).join(', ')}`
+							: '';
 					spinner.succeed(
-						`Created ${chalk.cyan(flag.key)} (${allFilterLabel}${allRuleLabel}${enableLabel})`,
+						`${chalk.dim('[dry run]')} Would create ${chalk.cyan(flag.key)} ` +
+							`(${allFilterLabel}${allRuleLabel}${enableLabel})`,
 					);
-
 					created++;
-				} catch (err) {
-					spinner.fail(
-						`Failed ${chalk.cyan(flag.key)}: ${chalk.red(formatAxiosError(err))}`,
-					);
-					failures.push({ key: flag.key, error: formatAxiosError(err) });
-					errored++;
+					progressBar?.update(flag.key, { created, skipped, failed: errored });
+				} else {
+					try {
+						const createdFlag = await createFeatureFlag(
+							ddApiKey,
+							ddAppKey,
+							request,
+							site,
+						);
+
+						// Enable the flag in each DD environment where it was active in Eppo
+						let enabledCount = 0;
+						for (const ddEnv of envsToEnable) {
+							try {
+								await enableFeatureFlagEnvironment(
+									ddApiKey,
+									ddAppKey,
+									createdFlag.id,
+									ddEnv.id,
+									site,
+								);
+								enabledCount++;
+							} catch (err) {
+								enableFailures.push({
+									key: flag.key,
+									env: ddEnv.name,
+									error: formatAxiosError(err),
+								});
+							}
+						}
+
+						totalEnabled += enabledCount;
+						const enableLabel =
+							enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
+						spinner.succeed(
+							`Created ${chalk.cyan(flag.key)} (${allFilterLabel}${allRuleLabel}${enableLabel})`,
+						);
+
+						created++;
+						progressBar?.update(flag.key, {
+							created,
+							skipped,
+							failed: errored,
+						});
+					} catch (err) {
+						spinner.fail(
+							`Failed ${chalk.cyan(flag.key)}: ${chalk.red(formatAxiosError(err))}`,
+						);
+						failures.push({ key: flag.key, error: formatAxiosError(err) });
+						errored++;
+						progressBar?.update(flag.key, {
+							created,
+							skipped,
+							failed: errored,
+						});
+					}
 				}
 			}
 		}
+	} finally {
+		process.removeListener('SIGINT', sigintHandler);
+		progressBar?.finalize();
 	}
 
 	console.log();
@@ -783,19 +874,6 @@ async function confirmMigration(
 	}
 
 	const timestamp = new Date().toISOString();
-	const environmentMapping: MigrationEnvironmentMapping[] = [];
-	for (const [eppoEnvId, ddEnv] of envMapping) {
-		const eppoEnv = flags
-			.flatMap((f) => f.environments ?? [])
-			.find((e) => e.id === eppoEnvId);
-		environmentMapping.push({
-			sourceEnvId: eppoEnvId,
-			sourceEnvName: eppoEnv?.name ?? String(eppoEnvId),
-			datadogEnvId: ddEnv.id,
-			datadogEnvName: ddEnv.name,
-			datadogDdEnvNames: ddEnv.queries,
-		});
-	}
 
 	if (dryRun && dryRunRequests.length > 0) {
 		const dryRunData: DryRunFile = {
