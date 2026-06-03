@@ -16,6 +16,7 @@ import {
 } from '../datadog.js';
 import { filterableCheckbox } from '../filterable-checkbox.js';
 import { toSyncRequests } from '../migration.js';
+import { MigrationProgressBar } from '../progress-bar.js';
 import type {
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,
@@ -399,6 +400,8 @@ async function confirmMigration(
 	const failures: Array<{ key: string; error: string }> = [];
 	const enableFailures: Array<{ key: string; env: string; error: string }> = [];
 	const skippedFlags: Array<{ key: string; reason: string }> = [];
+	const progressBar =
+		flags.length > 100 ? new MigrationProgressBar(flags.length) : null;
 
 	for (const flag of flags) {
 		let spinner = ora(`Migrating ${chalk.cyan(flag.key)}…`).start();
@@ -412,6 +415,7 @@ async function confirmMigration(
 				reason: 'BANDIT flags not supported',
 			});
 			skipped++;
+			progressBar?.update(flag.key, { created, skipped, failed: errored });
 			continue;
 		}
 		if (flag.type === 'LAYER') {
@@ -420,6 +424,7 @@ async function confirmMigration(
 			);
 			skippedFlags.push({ key: flag.key, reason: 'LAYER flags not supported' });
 			skipped++;
+			progressBar?.update(flag.key, { created, skipped, failed: errored });
 			continue;
 		}
 		if ((flag.allocations ?? []).some((a) => a.type === 'SWITCHBACK')) {
@@ -431,6 +436,7 @@ async function confirmMigration(
 				reason: 'SWITCHBACK targeting not supported',
 			});
 			skipped++;
+			progressBar?.update(flag.key, { created, skipped, failed: errored });
 			continue;
 		}
 		const variants = (flag.variations ?? []).map((v) => ({
@@ -441,6 +447,7 @@ async function confirmMigration(
 		if (variants.length === 0) {
 			spinner.warn(`Skipped ${chalk.cyan(flag.key)} — no variants`);
 			skipped++;
+			progressBar?.update(flag.key, { created, skipped, failed: errored });
 			continue;
 		}
 
@@ -513,6 +520,7 @@ async function confirmMigration(
 						: `Synced ${chalk.cyan(flag.key)} (${syncTags.length} tag(s)${defaultLabel})`,
 				);
 				synced++;
+				progressBar?.update(flag.key, { created, skipped, failed: errored });
 				continue;
 			}
 
@@ -575,6 +583,7 @@ async function confirmMigration(
 						`(${syncFilterLabel}${syncRuleLabel}${tagLabel}${enableLabel})`,
 				);
 				synced++;
+				progressBar?.update(flag.key, { created, skipped, failed: errored });
 			} else {
 				try {
 					// Sync targeting for each target environment
@@ -652,12 +661,14 @@ async function confirmMigration(
 						`Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${tagLabel}${enableLabel})`,
 					);
 					synced++;
+					progressBar?.update(flag.key, { created, skipped, failed: errored });
 				} catch (err) {
 					spinner.fail(
 						`Failed to sync ${chalk.cyan(flag.key)}: ${chalk.red(formatAxiosError(err))}`,
 					);
 					failures.push({ key: flag.key, error: formatAxiosError(err) });
 					errored++;
+					progressBar?.update(flag.key, { created, skipped, failed: errored });
 				}
 			}
 		} else {
@@ -702,6 +713,7 @@ async function confirmMigration(
 						`(${allFilterLabel}${allRuleLabel}${enableLabel})`,
 				);
 				created++;
+				progressBar?.update(flag.key, { created, skipped, failed: errored });
 			} else {
 				try {
 					const createdFlag = await createFeatureFlag(
@@ -740,16 +752,19 @@ async function confirmMigration(
 					);
 
 					created++;
+					progressBar?.update(flag.key, { created, skipped, failed: errored });
 				} catch (err) {
 					spinner.fail(
 						`Failed ${chalk.cyan(flag.key)}: ${chalk.red(formatAxiosError(err))}`,
 					);
 					failures.push({ key: flag.key, error: formatAxiosError(err) });
 					errored++;
+					progressBar?.update(flag.key, { created, skipped, failed: errored });
 				}
 			}
 		}
 	}
+	progressBar?.finalize();
 
 	console.log();
 	console.log(chalk.bold(dryRun ? 'Dry run complete!' : 'Migration complete!'));

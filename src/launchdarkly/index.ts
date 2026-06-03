@@ -27,6 +27,7 @@ import {
 	filterableSelect,
 } from '../filterable-checkbox.js';
 import { toSyncRequests } from '../migration.js';
+import { MigrationProgressBar } from '../progress-bar.js';
 import type {
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,
@@ -799,6 +800,10 @@ async function executeMigration(
 	const syncedFlagKeys: string[] = [];
 	const dryRunRequests: Array<{ method: string; path: string; body: unknown }> =
 		[];
+	const progressBar =
+		detailedFlags.length > 100
+			? new MigrationProgressBar(detailedFlags.length)
+			: null;
 
 	for (const flag of detailedFlags) {
 		let spinner = ora(`Migrating ${chalk.cyan(flag.key)}…`).start();
@@ -812,6 +817,7 @@ async function executeMigration(
 				reason: skipResult.reason ?? 'Unknown',
 			});
 			skipped++;
+			progressBar?.update(flag.key, { created, skipped, failed: errored });
 			continue;
 		}
 
@@ -828,6 +834,7 @@ async function executeMigration(
 						reason: 'Progressive rollout is in progress',
 					});
 					skipped++;
+					progressBar?.update(flag.key, { created, skipped, failed: errored });
 					continue;
 				}
 				// Release is complete or not found — safe to migrate
@@ -840,6 +847,7 @@ async function executeMigration(
 					reason: 'Failed to check progressive rollout status',
 				});
 				skipped++;
+				progressBar?.update(flag.key, { created, skipped, failed: errored });
 				continue;
 			}
 		}
@@ -852,6 +860,7 @@ async function executeMigration(
 			spinner.warn(`Skipped ${chalk.cyan(flag.key)} — flag is archived`);
 			skippedFlags.push({ key: flag.key, reason: 'Flag is archived' });
 			skipped++;
+			progressBar?.update(flag.key, { created, skipped, failed: errored });
 			continue;
 		}
 
@@ -860,6 +869,7 @@ async function executeMigration(
 			spinner.warn(`Skipped ${chalk.cyan(flag.key)} — no variants`);
 			skippedFlags.push({ key: flag.key, reason: 'No variants' });
 			skipped++;
+			progressBar?.update(flag.key, { created, skipped, failed: errored });
 			continue;
 		}
 
@@ -874,6 +884,7 @@ async function executeMigration(
 			);
 			skippedFlags.push({ key: flag.key, reason: allocationsResult.flagSkip });
 			skipped++;
+			progressBar?.update(flag.key, { created, skipped, failed: errored });
 			continue;
 		}
 		const allocations = allocationsResult;
@@ -892,6 +903,7 @@ async function executeMigration(
 						'Key conflict: flag key already exists in Datadog from a different LaunchDarkly project',
 				});
 				skipped++;
+				progressBar?.update(flag.key, { created, skipped, failed: errored });
 				continue;
 			}
 			// prefix case: fall through to creation below
@@ -971,6 +983,7 @@ async function executeMigration(
 				);
 				syncedFlagKeys.push(flag.key);
 				synced++;
+				progressBar?.update(flag.key, { created, skipped, failed: errored });
 				continue;
 			}
 
@@ -1044,6 +1057,7 @@ async function executeMigration(
 				);
 				syncedFlagKeys.push(flag.key);
 				synced++;
+				progressBar?.update(flag.key, { created, skipped, failed: errored });
 			} else {
 				try {
 					let syncedAllocCount = 0;
@@ -1123,12 +1137,14 @@ async function executeMigration(
 					);
 					syncedFlagKeys.push(flag.key);
 					synced++;
+					progressBar?.update(flag.key, { created, skipped, failed: errored });
 				} catch (err) {
 					spinner.fail(
 						`Failed to sync ${chalk.cyan(flag.key)}: ${chalk.red(formatAxiosError(err))}`,
 					);
 					failures.push({ key: flag.key, error: formatAxiosError(err) });
 					errored++;
+					progressBar?.update(flag.key, { created, skipped, failed: errored });
 				}
 			}
 		} else {
@@ -1192,6 +1208,7 @@ async function executeMigration(
 						`(${allFilterLabel}${allRuleLabel}${enableLabel})`,
 				);
 				created++;
+				progressBar?.update(flag.key, { created, skipped, failed: errored });
 			} else {
 				try {
 					const createdFlag = await createFeatureFlag(
@@ -1241,16 +1258,19 @@ async function executeMigration(
 						`Created ${chalk.cyan(ddKey)} (${allFilterLabel}${allRuleLabel}${enableLabel})`,
 					);
 					created++;
+					progressBar?.update(flag.key, { created, skipped, failed: errored });
 				} catch (err) {
 					spinner.fail(
 						`Failed ${chalk.cyan(ddKey)}: ${chalk.red(formatAxiosError(err))}`,
 					);
 					failures.push({ key: ddKey, error: formatAxiosError(err) });
 					errored++;
+					progressBar?.update(flag.key, { created, skipped, failed: errored });
 				}
 			}
 		}
 	}
+	progressBar?.finalize();
 
 	// ─── Summary ───────────────────────────────────────────────────────────────
 	console.log();
