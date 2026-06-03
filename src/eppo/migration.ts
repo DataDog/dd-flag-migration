@@ -16,6 +16,18 @@ export function slugify(s: string): string {
 	);
 }
 
+// Datadog requires JSON variant values to be objects. Eppo sometimes stores JSON
+// arrays as variant_key values, so wrap them.
+export function normalizeJsonVariantValue(raw: string): string {
+	try {
+		const parsed = JSON.parse(raw);
+		if (Array.isArray(parsed)) return JSON.stringify({ value: parsed });
+	} catch {
+		// not valid JSON — pass through as-is
+	}
+	return raw;
+}
+
 // MAJOR.MINOR.PATCH with optional pre-release and build metadata; no leading zeros
 const SEMVER_RE =
 	/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([\w.-]+))?(?:\+([\w.-]+))?$/;

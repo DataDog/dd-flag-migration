@@ -10,6 +10,8 @@ import {
 	getEnvsToEnable,
 	hasSemverConditions,
 	mapVariationType,
+	normalizeJsonVariantValue,
+	slugify,
 } from '../../src/eppo/migration.js';
 import type { EppoFlag } from '../../src/eppo/types.js';
 import type {
@@ -27,10 +29,13 @@ function migrateFlag(
 	envsToEnable: DatadogEnvironment[];
 } {
 	const variations = flag.variations ?? [];
+	const isJsonFlag = flag.variation_type === 'JSON';
 	const variants = variations.map((v) => ({
-		key: v.variant_key,
+		key: slugify(v.name),
 		name: v.name,
-		value: v.variant_key,
+		value: isJsonFlag
+			? normalizeJsonVariantValue(v.variant_key)
+			: v.variant_key,
 	}));
 
 	const allocations = buildAllocations(flag, envMapping);
@@ -1090,5 +1095,59 @@ describe('migrate a flag with no tags', () => {
 	it('omits the tags field entirely when tag_names is empty', () => {
 		expect(result.request.tags).toBeUndefined();
 		expect('tags' in result.request).toBe(false);
+	});
+});
+
+describe('migrate a JSON flag whose variant_key is a JSON array', () => {
+	const flag = makeFlag({
+		id: 20,
+		key: 'primer-queries',
+		name: 'Primer Queries',
+		variation_type: 'JSON',
+		variations: [
+			{
+				id: 10,
+				name: 'Production',
+				variant_key: '[{"category":"Health"},{"category":"Law"}]',
+			},
+			{ id: 20, name: 'Control', variant_key: '{}' },
+		],
+		environments: [
+			{ id: 100, name: 'Production', active: true, is_production: true },
+		],
+		allocations: [
+			makeAllocation({
+				id: 1,
+				environment_id: 100,
+				variation_weight: [
+					{ variation_id: 10, weight: 100 },
+					{ variation_id: 20, weight: 0 },
+				],
+			}),
+		],
+	});
+
+	const envMapping = new Map<number, DatadogEnvironment>([[100, ddProd]]);
+	const result = migrateFlag(flag, envMapping);
+
+	it('wraps the array value in an object', () => {
+		const production = result.request.variants.find(
+			(v) => v.key === 'production',
+		);
+		expect(production?.value).toBe(
+			'{"value":[{"category":"Health"},{"category":"Law"}]}',
+		);
+	});
+
+	it('leaves an object value unchanged', () => {
+		const control = result.request.variants.find((v) => v.key === 'control');
+		expect(control?.value).toBe('{}');
+	});
+
+	it('uses slugified name as variant key', () => {
+		expect(result.request.variants.map((v) => v.key)).toEqual([
+			'production',
+			'control',
+		]);
 	});
 });

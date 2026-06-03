@@ -224,10 +224,15 @@ export function buildVariants(
 	return flag.variations.map((v, i) => {
 		const key = slugify(v.name ?? `variation-${i}`);
 		const name = v.name ?? `Variation ${i}`;
-		const value =
+		const rawValue =
 			typeof v.value === 'object' && v.value !== null
-				? JSON.stringify(v.value)
+				? v.value
 				: String(v.value);
+		const value = Array.isArray(rawValue)
+			? JSON.stringify({ value: rawValue })
+			: typeof rawValue === 'object'
+				? JSON.stringify(rawValue)
+				: rawValue;
 		return { key, name, value };
 	});
 }
