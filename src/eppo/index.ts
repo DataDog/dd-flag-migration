@@ -34,6 +34,8 @@ import {
 	getEnvsToEnable,
 	hasSemverConditions,
 	mapVariationType,
+	normalizeJsonVariantValue,
+	slugify,
 } from './migration.js';
 import type {
 	DryRunFile,
@@ -496,10 +498,13 @@ async function confirmMigration(
 				progressBar?.update(flag.key, { created, skipped, failed: errored });
 				continue;
 			}
+			const isJsonFlag = flag.variation_type === 'JSON';
 			const variants = (flag.variations ?? []).map((v) => ({
-				key: v.variant_key,
+				key: slugify(v.name),
 				name: v.name,
-				value: v.variant_key,
+				value: isJsonFlag
+					? normalizeJsonVariantValue(v.variant_key)
+					: v.variant_key,
 			}));
 			if (variants.length === 0) {
 				spinner.warn(`Skipped ${chalk.cyan(flag.key)} — no variants`);

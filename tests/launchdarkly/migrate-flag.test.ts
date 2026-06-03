@@ -370,6 +370,44 @@ describe('migrate a multivariate JSON flag', () => {
 	});
 });
 
+describe('migrate a JSON flag whose variation value is an array', () => {
+	const flag: LDFlag = {
+		name: 'Primer Queries',
+		kind: 'multivariate',
+		key: 'primer-queries',
+		variations: [
+			{
+				_id: 'v0',
+				value: [{ category: 'Health' }, { category: 'Law' }],
+				name: 'Production',
+			},
+			{ _id: 'v1', value: [], name: 'Empty' },
+		],
+		defaults: { onVariation: 0, offVariation: 1 },
+		environments: {},
+		tags: [],
+		archived: false,
+		deprecated: false,
+		temporary: false,
+	};
+
+	const variants = buildVariants(flag);
+
+	it('wraps array values in an object', () => {
+		expect(variants[0].value).toBe(
+			'{"value":[{"category":"Health"},{"category":"Law"}]}',
+		);
+	});
+
+	it('wraps empty array values in an object', () => {
+		expect(variants[1].value).toBe('{"value":[]}');
+	});
+
+	it('uses slugified name as variant key', () => {
+		expect(variants.map((v) => v.key)).toEqual(['production', 'empty']);
+	});
+});
+
 describe('migrate a multivariate numeric flag', () => {
 	const flag: LDFlag = {
 		name: 'Retry Count',
