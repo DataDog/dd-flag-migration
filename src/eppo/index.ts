@@ -33,6 +33,7 @@ import {
 	getEnvsToEnable,
 	hasSemverConditions,
 	mapVariationType,
+	slugify,
 } from './migration.js';
 import type {
 	DryRunFile,
@@ -433,7 +434,7 @@ async function confirmMigration(
 			continue;
 		}
 		const variants = (flag.variations ?? []).map((v) => ({
-			key: v.variant_key,
+			key: slugify(v.name),
 			name: v.name,
 			value: v.variant_key,
 		}));

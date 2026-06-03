@@ -364,9 +364,9 @@ describe('migrate a numeric flag', () => {
 	it('100% goes to the 3-retries variant', () => {
 		const alloc = result.request.allocations?.[0];
 		expect(alloc?.variant_weights).toEqual([
-			{ variant_key: '1', value: 0 },
-			{ variant_key: '3', value: 100 },
-			{ variant_key: '5', value: 0 },
+			{ variant_key: '1-retry', value: 0 },
+			{ variant_key: '3-retries', value: 100 },
+			{ variant_key: '5-retries', value: 0 },
 		]);
 	});
 });
@@ -892,9 +892,9 @@ describe('migrate a flag with integer variation type', () => {
 	it('normalizes weights to percentages', () => {
 		const alloc = result.request.allocations?.[0];
 		expect(alloc?.variant_weights).toEqual([
-			{ variant_key: '10', value: 50 },
-			{ variant_key: '50', value: 30 },
-			{ variant_key: '100', value: 20 },
+			{ variant_key: '10-items', value: 50 },
+			{ variant_key: '50-items', value: 30 },
+			{ variant_key: '100-items', value: 20 },
 		]);
 	});
 });
