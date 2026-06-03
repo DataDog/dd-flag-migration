@@ -134,7 +134,8 @@ export class MigrationProgressBar {
 	private renderLine(current: string): string {
 		const columns = process.stderr.columns ?? 100;
 		const { created, skipped, failed, retrying } = this.stats;
-		const pct = Math.round((this.value / this.total) * 100);
+		const pct =
+			this.total === 0 ? 0 : Math.round((this.value / this.total) * 100);
 		const eta = this.cachedETA;
 
 		// Plain-text suffix for width calculation (no ANSI codes)
@@ -143,10 +144,10 @@ export class MigrationProgressBar {
 			5,
 			Math.min(30, columns - suffixPlain.length - 4), // -4 for " [" + "] " padding
 		);
-		const filled = Math.min(
-			barWidth,
-			Math.round((this.value / this.total) * barWidth),
-		);
+		const filled =
+			this.total === 0
+				? 0
+				: Math.min(barWidth, Math.round((this.value / this.total) * barWidth));
 		const empty = barWidth - filled;
 
 		const coloredBar =
