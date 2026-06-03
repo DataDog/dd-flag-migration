@@ -278,6 +278,7 @@ async function selectFlags(
 			name: flagLabel(flag, datadogKeys.has(flag.key)),
 			value: flag,
 			checked: previousKeys.has(flag.key),
+			migrated: datadogKeys.has(flag.key),
 		})),
 		pageSize,
 	});

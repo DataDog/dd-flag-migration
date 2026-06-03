@@ -494,11 +494,19 @@ async function selectFlags(
 
 	return filterableCheckbox<LDFlag>({
 		message: 'Select flags to migrate to Datadog:',
-		choices: sortedFlags.map((flag) => ({
-			name: flagLabel(flag, datadogFlags, projectKey, conflictResolution),
-			value: flag,
-			checked: previousKeys.has(flag.key),
-		})),
+		choices: sortedFlags.map((flag) => {
+			const conflictType = classifyConflict(
+				datadogFlags,
+				projectKey,
+				flag.key,
+			).type;
+			return {
+				name: flagLabel(flag, datadogFlags, projectKey, conflictResolution),
+				value: flag,
+				checked: previousKeys.has(flag.key),
+				migrated: conflictType === 'same_project' || conflictType === 'manual',
+			};
+		}),
 		pageSize,
 	});
 }
