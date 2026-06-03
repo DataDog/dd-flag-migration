@@ -354,6 +354,7 @@ async function confirmMigration(
 	// ── Phase 1: Audience migration ──────────────────────────────────────────
 	let fingerprintLookup: Map<string, string> | undefined;
 	let savedFilterLookup: Map<number, string> | undefined;
+	let phase1Subheader: string | undefined;
 	try {
 		console.log(
 			chalk.bold('  Phase 1: Migrating Eppo audiences as saved filters'),
@@ -377,6 +378,14 @@ async function confirmMigration(
 					`  Audiences: ${ac} ${createdVerb}, ${ar} reused, ${as_} skipped as saved filters`,
 				),
 			);
+			phase1Subheader =
+				chalk.gray('Phase 1 — Audiences: ') +
+				chalk.green(String(ac)) +
+				chalk.gray(` ${createdVerb} · `) +
+				chalk.white(String(ar)) +
+				chalk.gray(' reused · ') +
+				chalk.yellow(String(as_)) +
+				chalk.gray(' skipped as saved filters');
 		}
 		console.log();
 	} catch (err) {
@@ -401,8 +410,7 @@ async function confirmMigration(
 	const failures: Array<{ key: string; error: string }> = [];
 	const enableFailures: Array<{ key: string; env: string; error: string }> = [];
 	const skippedFlags: Array<{ key: string; reason: string }> = [];
-	const progressBar =
-		flags.length > 100 ? new MigrationProgressBar(flags.length) : null;
+	const progressBar = new MigrationProgressBar(flags.length, phase1Subheader);
 
 	const environmentMapping: MigrationEnvironmentMapping[] = [];
 	for (const [eppoEnvId, ddEnv] of envMapping) {
@@ -419,7 +427,7 @@ async function confirmMigration(
 	}
 
 	const sigintHandler = () => {
-		process.stderr.write('\n');
+		progressBar ? progressBar.finalize() : process.stderr.write('\n');
 		if (!dryRun && (created > 0 || synced > 0 || errored > 0)) {
 			console.log(
 				chalk.yellow('\n  Migration interrupted — saving partial results…'),
@@ -447,6 +455,8 @@ async function confirmMigration(
 		process.exit(130);
 	};
 	process.once('SIGINT', sigintHandler);
+	if (progressBar) clearScreen();
+	progressBar?.start();
 
 	for (const flag of flags) {
 		let spinner = ora(`Migrating ${chalk.cyan(flag.key)}…`).start();

@@ -756,6 +756,7 @@ async function executeMigration(
 
 	// ── Phase 1: Migrate segments as saved filters ─────────────────────────────
 	let savedFilterLookup = new Map<string, string>();
+	let phase1Subheader: string | undefined;
 	if (dryRun) {
 		// Populate the lookup with placeholder IDs so buildAllocations can
 		// accurately simulate the migration for segment-backed flags.
@@ -779,6 +780,17 @@ async function executeMigration(
 				ddSite,
 			});
 			savedFilterLookup = segmentResult.savedFilterLookup;
+			if (segmentResult.stats.discovered > 0) {
+				const { created: sc, reused: sr, skipped: ss } = segmentResult.stats;
+				phase1Subheader =
+					chalk.gray('Phase 1 — Segments: ') +
+					chalk.green(String(sc)) +
+					chalk.gray(' created · ') +
+					chalk.white(String(sr)) +
+					chalk.gray(' reused · ') +
+					chalk.yellow(String(ss)) +
+					chalk.gray(' skipped as saved filters');
+			}
 		} catch (err) {
 			console.log(
 				chalk.yellow(
@@ -808,10 +820,10 @@ async function executeMigration(
 	const syncedFlagKeys: string[] = [];
 	const dryRunRequests: Array<{ method: string; path: string; body: unknown }> =
 		[];
-	const progressBar =
-		detailedFlags.length > 100
-			? new MigrationProgressBar(detailedFlags.length)
-			: null;
+	const progressBar = new MigrationProgressBar(
+		detailedFlags.length,
+		phase1Subheader,
+	);
 
 	const environmentMappingArr: LDMigrationFile['environmentMapping'] = [];
 	for (const [ldEnvKey, ddEnv] of envMapping) {
@@ -825,7 +837,7 @@ async function executeMigration(
 	}
 
 	const sigintHandler = () => {
-		process.stderr.write('\n');
+		progressBar ? progressBar.finalize() : process.stderr.write('\n');
 		if (!dryRun && (created > 0 || synced > 0 || errored > 0)) {
 			console.log(
 				chalk.yellow('\n  Migration interrupted — saving partial results…'),
@@ -856,6 +868,8 @@ async function executeMigration(
 		process.exit(130);
 	};
 	process.once('SIGINT', sigintHandler);
+	if (progressBar) clearScreen();
+	progressBar?.start();
 
 	for (const flag of detailedFlags) {
 		let spinner = ora(`Migrating ${chalk.cyan(flag.key)}…`).start();
