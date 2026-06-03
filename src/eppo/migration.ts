@@ -7,6 +7,15 @@ import type {
 } from '../types.js';
 import type { EppoAllocation, EppoFlag } from './types.js';
 
+export function slugify(s: string): string {
+	return (
+		s
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, '-')
+			.replace(/^-|-$/g, '') || 'default'
+	);
+}
+
 // MAJOR.MINOR.PATCH with optional pre-release and build metadata; no leading zeros
 const SEMVER_RE =
 	/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([\w.-]+))?(?:\+([\w.-]+))?$/;
@@ -192,7 +201,7 @@ export function extractDefaultVariantKey(
 ): string | undefined {
 	const variationIdToKey = new Map<number, string>();
 	for (const v of flag.variations ?? [])
-		variationIdToKey.set(v.id, v.variant_key);
+		variationIdToKey.set(v.id, slugify(v.name));
 
 	const defaultKeys = new Set<string>();
 	for (const [eppoEnvId] of mapping) {
@@ -230,7 +239,7 @@ export function buildAllocations(
 
 	// Build variation_id → variant_key lookup
 	const variationIdToKey = new Map<number, string>();
-	for (const v of variations) variationIdToKey.set(v.id, v.variant_key);
+	for (const v of variations) variationIdToKey.set(v.id, slugify(v.name));
 
 	const eppoAllocations = flag.allocations ?? [];
 	const _activeEnvIds = new Set(
