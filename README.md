@@ -103,10 +103,18 @@ The tool will walk you through:
 2. **Enter your provider API key** — used to fetch your flags
 3. **Enter your Datadog API and Application keys** — used to create flags in Datadog
 4. **Map environments** — link each source environment (e.g. `production`) to the corresponding Datadog environment
-5. **Select flags** — choose which flags to migrate; flags already in Datadog are marked and skipped automatically
-6. **Confirm and migrate** — flags are created in Datadog and enabled in the mapped environments
+5. **Select flags** — choose which flags to migrate; flags already in Datadog are marked. Press **Tab** to toggle visibility of already-migrated flags, then **Ctrl+A** to select all remaining flags
+6. **Confirm and migrate** — flags are created in Datadog and enabled in the mapped environments. A progress bar tracks migration status in real time
 
 When the migration completes, a record is saved to `~/.dd-flag-migration/migration-<timestamp>.json`. You can optionally export results to an `.xlsx` file.
+
+### Large migrations
+
+For large flag sets, the tool supports splitting work across multiple runs:
+
+- **Progress bar** — a sticky progress bar shows how many flags have been migrated so far, updating in real time
+- **Tab to filter** — during flag selection, press **Tab** to hide flags that have already been migrated. Combined with **Ctrl+A**, this makes it easy to select only the remaining flags for the next run
+- **Ctrl+C to save progress** — pressing **Ctrl+C** during migration saves a partial migration file (`~/.dd-flag-migration/migration-<timestamp>.json`) with all flags that completed successfully before the interruption. You can resume later by filtering out already-migrated flags with **Tab**
 
 ### LaunchDarkly-specific workflow
 
