@@ -90,7 +90,6 @@ export interface DatadogCreateFlagRequest {
 	migration_metadata?: MigrationMetadata;
 	tags?: string[];
 	distribution_channel?: 'CLIENT' | 'SERVER' | 'BOTH';
-	default_variant_key?: string;
 }
 
 export interface DatadogCreatedFlag {

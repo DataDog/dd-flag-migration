@@ -198,25 +198,24 @@ function isPureDefaultAllocation(alloc: EppoAllocation): boolean {
 }
 
 /**
- * Extract the default variant key from a flag's default allocations.
+ * Build a per-environment map of default variant keys.
  *
- * Returns the variant key if every mapped Eppo environment with a pure-default
- * allocation agrees on the same single-winner variant. Returns undefined when:
- * - No mapped environment has a pure-default allocation
- * - Environments disagree (different default variants), so each environment's
- *   default allocation is kept as a targeting rule instead
- * - The default allocation has a split (multiple non-zero variant weights)
+ * For each mapped Eppo environment with a resolvable pure-default allocation
+ * (is_default=true, no audiences, no targeting rules, exactly one non-zero
+ * variant weight), adds ddEnvId → variantKey to the result. Environments with
+ * unresolvable defaults (split weights or unknown variation_id) are omitted —
+ * their pure-default allocation is kept as a targeting rule by buildAllocations.
  */
-export function extractDefaultVariantKey(
+export function buildDefaultVariantKeyPerEnv(
 	flag: EppoFlag,
 	mapping: Map<number, DatadogEnvironment>,
-): string | undefined {
+): Map<string, string> {
 	const variationIdToKey = new Map<number, string>();
 	for (const v of flag.variations ?? [])
 		variationIdToKey.set(v.id, slugify(v.name));
 
-	const defaultKeys = new Set<string>();
-	for (const [eppoEnvId] of mapping) {
+	const result = new Map<string, string>();
+	for (const [eppoEnvId, ddEnv] of mapping) {
 		const defaultAlloc = (flag.allocations ?? []).find(
 			(a) => a.environment_id === eppoEnvId && isPureDefaultAllocation(a),
 		);
@@ -225,26 +224,24 @@ export function extractDefaultVariantKey(
 		const nonZeroWeights = (defaultAlloc.variation_weight ?? []).filter(
 			(w) => w.weight > 0,
 		);
-		// A split or zero-weight default can't be represented as default_variant_key.
-		// Abort entirely so skipPureDefaults is not set and this env keeps its targeting rule.
-		if (nonZeroWeights.length !== 1) return undefined;
+		if (nonZeroWeights.length !== 1) continue;
 		const key = variationIdToKey.get(nonZeroWeights[0].variation_id);
-		if (key === undefined) return undefined;
-		defaultKeys.add(key);
+		if (key === undefined) continue;
+		result.set(ddEnv.id, key);
 	}
-
-	return defaultKeys.size === 1 ? [...defaultKeys][0] : undefined;
+	return result;
 }
 
 // Build allocations from Eppo's actual allocation data for each mapped DD environment.
-// When skipPureDefaults is true, pure-default allocations (is_default=true with no
-// audiences/targeting) are omitted because the caller will use default_variant_key instead.
+// Pure-default allocations (is_default=true with no audiences/targeting) are omitted
+// for environments present in defaultVariantKeyPerEnv — those are handled via
+// default_variant_key on the allocations-sync endpoint instead.
 export function buildAllocations(
 	flag: EppoFlag,
 	mapping: Map<number, DatadogEnvironment>,
 	fingerprintLookup?: Map<string, string>,
 	savedFilterLookup?: Map<number, string>,
-	skipPureDefaults?: boolean,
+	defaultVariantKeyPerEnv?: Map<string, string>,
 ): DatadogAllocationForFlagCreation[] {
 	const variations = flag.variations ?? [];
 	if (variations.length === 0) return [];
@@ -270,7 +267,11 @@ export function buildAllocations(
 		}
 
 		for (const eppoAlloc of envAllocs) {
-			if (skipPureDefaults && isPureDefaultAllocation(eppoAlloc)) continue;
+			if (
+				defaultVariantKeyPerEnv?.has(ddEnv.id) &&
+				isPureDefaultAllocation(eppoAlloc)
+			)
+				continue;
 
 			// A zero-exposure allocation is a pure passthrough in Eppo — no users are
 			// ever served from it. Datadog has no passthrough concept, so skip it.
