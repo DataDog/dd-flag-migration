@@ -272,6 +272,10 @@ export function buildAllocations(
 		for (const eppoAlloc of envAllocs) {
 			if (skipPureDefaults && isPureDefaultAllocation(eppoAlloc)) continue;
 
+			// A zero-exposure allocation is a pure passthrough in Eppo — no users are
+			// ever served from it. Datadog has no passthrough concept, so skip it.
+			if (eppoAlloc.percent_exposure === 0) continue;
+
 			// Map variant weights: Eppo variation_id → DD variant_key
 			const rawWeights = eppoAlloc.variation_weight ?? [];
 			const totalWeight = rawWeights.reduce((sum, w) => sum + w.weight, 0);
