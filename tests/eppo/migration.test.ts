@@ -658,6 +658,38 @@ describe('buildAllocations', () => {
 		expect(allocations[0].name).toBe('Production');
 	});
 
+	it('skips allocations with percent_exposure of 0 (Eppo passthrough)', () => {
+		// A 0% serve / 100% passthrough allocation must be dropped entirely.
+		// Without this guard, Datadog receives a catch-all allocation at 100% enabled.
+		const flag = makeFlag({
+			id: 1,
+			key: 'test-flag',
+			variations: [
+				{ id: 100, name: 'enabled', variant_key: 'enabled' },
+				{ id: 200, name: 'disabled', variant_key: 'disabled' },
+			],
+			environments: [
+				{ id: 10, name: 'Production', active: true, is_production: true },
+			],
+			allocations: [
+				makeAllocation({
+					id: 1,
+					key: 'alloc-passthrough',
+					name: 'prod rollout',
+					environment_id: 10,
+					percent_exposure: 0,
+					variation_weight: [{ variation_id: 100, weight: 100 }],
+					targeting_rules: [],
+				}),
+			],
+		});
+
+		const mapping = new Map<number, DatadogEnvironment>([[10, ddProd]]);
+		const allocations = buildAllocations(flag, mapping);
+
+		expect(allocations).toHaveLength(0);
+	});
+
 	it('handles multiple allocations per environment', () => {
 		const flag = makeFlag({
 			id: 1,

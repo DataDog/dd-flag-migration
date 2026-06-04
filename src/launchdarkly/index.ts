@@ -1079,13 +1079,11 @@ async function executeMigration(
 							(sum, r) => sum + (r.targeting_rules?.length ?? 0),
 							0,
 						);
-						if (syncReqs.length > 0) {
-							dryRunRequests.push({
-								method: 'PUT',
-								path: `/api/v2/feature-flags/${existingFlagId}/environments/${ddEnv.id}/allocations`,
-								body: syncReqs,
-							});
-						}
+						dryRunRequests.push({
+							method: 'PUT',
+							path: `/api/v2/feature-flags/${existingFlagId}/environments/${ddEnv.id}/allocations`,
+							body: syncReqs,
+						});
 						dryRunRequests.push({
 							method: 'POST',
 							path: `/api/v2/feature-flags/${existingFlagId}/environments/${ddEnv.id}/enable`,
@@ -1141,21 +1139,19 @@ async function executeMigration(
 						let syncedRuleCount = 0;
 						for (const ddEnv of envsToEnable) {
 							const syncReqs = toSyncRequests(allocations, ddEnv.id);
-							if (syncReqs.length > 0) {
-								await syncAllocationsForEnvironment(
-									ddApiKey,
-									ddAppKey,
-									existingFlagId,
-									ddEnv.id,
-									syncReqs,
-									ddSite,
-								);
-								syncedAllocCount += syncReqs.length;
-								syncedRuleCount += syncReqs.reduce(
-									(sum, r) => sum + (r.targeting_rules?.length ?? 0),
-									0,
-								);
-							}
+							await syncAllocationsForEnvironment(
+								ddApiKey,
+								ddAppKey,
+								existingFlagId,
+								ddEnv.id,
+								syncReqs,
+								ddSite,
+							);
+							syncedAllocCount += syncReqs.length;
+							syncedRuleCount += syncReqs.reduce(
+								(sum, r) => sum + (r.targeting_rules?.length ?? 0),
+								0,
+							);
 						}
 
 						// Update tags on existing flag (replace so removals propagate)
