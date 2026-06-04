@@ -209,6 +209,7 @@ export async function initializeEppo(eppoSdkKey: string): Promise<EppoClient> {
 			numInitialRequestRetries: 0,
 			pollAfterSuccessfulInitialization: false,
 			pollAfterFailedInitialization: false,
+			requestTimeoutMs: 30000,
 		});
 		return sdk.getInstance();
 	} catch (err) {
