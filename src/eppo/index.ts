@@ -733,14 +733,16 @@ async function confirmMigration(
 					});
 					for (const ddEnv of envsToEnable) {
 						const dvk = defaultVariantKeyPerEnv.get(ddEnv.id);
-						// flag.key used as placeholder — real ID assigned on creation
-						dryRunRequests.push({
-							method: 'PUT',
-							path:
-								`/api/v2/feature-flags/${flag.key}/environments/${ddEnv.id}/allocations` +
-								(dvk !== undefined ? `?default_variant_key=${dvk}` : ''),
-							body: toSyncRequests(allocations, ddEnv.id),
-						});
+						// Only sync allocations when there's a default_variant_key to set —
+						// allocations are already embedded in the create request body above.
+						if (dvk !== undefined) {
+							// flag.key used as placeholder — real ID assigned on creation
+							dryRunRequests.push({
+								method: 'PUT',
+								path: `/api/v2/feature-flags/${flag.key}/environments/${ddEnv.id}/allocations?default_variant_key=${dvk}`,
+								body: toSyncRequests(allocations, ddEnv.id),
+							});
+						}
 						dryRunRequests.push({
 							method: 'POST',
 							path: `/api/v2/feature-flags/${flag.key}/environments/${ddEnv.id}/enable`,
