@@ -280,31 +280,6 @@ export async function updateFlagTags(
 	});
 }
 
-export async function updateFlagDefaultVariantKey(
-	apiKey: string,
-	appKey: string,
-	flagId: string,
-	variantKey: string,
-	site = 'datadoghq.com',
-): Promise<void> {
-	const baseUrl = `https://api.${site}`;
-	await ddClient.put(
-		`${baseUrl}/api/v2/feature-flags/${flagId}`,
-		{
-			data: {
-				type: 'feature-flags',
-				attributes: { default_variant_key: variantKey },
-			},
-		},
-		{
-			headers: {
-				...ddHeaders(apiKey, appKey),
-				'Content-Type': 'application/json',
-			},
-		},
-	);
-}
-
 export interface DatadogTeam {
 	id: string;
 	handle: string;
@@ -419,6 +394,7 @@ export async function syncAllocationsForEnvironment(
 	environmentId: string,
 	allocations: DatadogAllocationSyncRequest[],
 	site = 'datadoghq.com',
+	defaultVariantKey?: string,
 ): Promise<void> {
 	const baseUrl = `https://api.${site}`;
 
@@ -454,6 +430,9 @@ export async function syncAllocationsForEnvironment(
 				...ddHeaders(apiKey, appKey),
 				'Content-Type': 'application/vnd.api+json',
 			},
+			...(defaultVariantKey !== undefined
+				? { params: { default_variant_key: defaultVariantKey } }
+				: {}),
 		},
 	);
 }

@@ -11,7 +11,6 @@ import {
 	fetchDatadogEnvironments,
 	fetchDatadogFlagKeys,
 	syncAllocationsForEnvironment,
-	updateFlagDefaultVariantKey,
 	updateFlagTags,
 } from '../datadog.js';
 import { filterableCheckbox } from '../filterable-checkbox.js';
@@ -30,7 +29,7 @@ import {
 import { migrateAudiences } from './audiences.js';
 import {
 	buildAllocations,
-	extractDefaultVariantKey,
+	buildDefaultVariantKeyPerEnv,
 	getEnvsToEnable,
 	hasSemverConditions,
 	mapVariationType,
@@ -513,13 +512,16 @@ async function confirmMigration(
 				continue;
 			}
 
-			const defaultVariantKey = extractDefaultVariantKey(flag, envMapping);
+			const defaultVariantKeyPerEnv = buildDefaultVariantKeyPerEnv(
+				flag,
+				envMapping,
+			);
 			const allocations = buildAllocations(
 				flag,
 				envMapping,
 				fingerprintLookup,
 				savedFilterLookup,
-				defaultVariantKey !== undefined,
+				defaultVariantKeyPerEnv,
 			);
 			const envsToEnable = getEnvsToEnable(flag, envMapping);
 			const existingFlagId = datadogKeys.get(flag.key);
@@ -545,12 +547,7 @@ async function confirmMigration(
 							body: {
 								data: {
 									type: 'feature-flags',
-									attributes: {
-										tags: syncTags,
-										...(defaultVariantKey !== undefined
-											? { default_variant_key: defaultVariantKey }
-											: {}),
-									},
+									attributes: { tags: syncTags },
 								},
 							},
 						});
@@ -562,24 +559,11 @@ async function confirmMigration(
 							syncTags,
 							site,
 						);
-						if (defaultVariantKey !== undefined) {
-							await updateFlagDefaultVariantKey(
-								ddApiKey,
-								ddAppKey,
-								existingFlagId,
-								defaultVariantKey,
-								site,
-							);
-						}
 					}
-					const defaultLabel =
-						defaultVariantKey !== undefined
-							? `, default targeting → ${defaultVariantKey}`
-							: '';
 					spinner.succeed(
 						dryRun
-							? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (${syncTags.length} tag(s)${defaultLabel})`
-							: `Synced ${chalk.cyan(flag.key)} (${syncTags.length} tag(s)${defaultLabel})`,
+							? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (${syncTags.length} tag(s))`
+							: `Synced ${chalk.cyan(flag.key)} (${syncTags.length} tag(s))`,
 					);
 					synced++;
 					progressBar?.update(flag.key, { created, skipped, failed: errored });
@@ -601,9 +585,12 @@ async function confirmMigration(
 							(sum, r) => sum + (r.targeting_rules?.length ?? 0),
 							0,
 						);
+						const dvk = defaultVariantKeyPerEnv.get(ddEnv.id);
 						dryRunRequests.push({
 							method: 'PUT',
-							path: `/api/v2/feature-flags/${existingFlagId}/environments/${ddEnv.id}/allocations`,
+							path:
+								`/api/v2/feature-flags/${existingFlagId}/environments/${ddEnv.id}/allocations` +
+								(dvk !== undefined ? `?default_variant_key=${dvk}` : ''),
 							body: syncReqs,
 						});
 						dryRunRequests.push({
@@ -618,12 +605,7 @@ async function confirmMigration(
 						body: {
 							data: {
 								type: 'feature-flags',
-								attributes: {
-									tags: syncTags,
-									...(defaultVariantKey !== undefined
-										? { default_variant_key: defaultVariantKey }
-										: {}),
-								},
+								attributes: { tags: syncTags },
 							},
 						},
 					});
@@ -658,6 +640,7 @@ async function confirmMigration(
 								ddEnv.id,
 								syncReqs,
 								site,
+								defaultVariantKeyPerEnv.get(ddEnv.id),
 							);
 							syncedAllocCount += syncReqs.length;
 							syncedRuleCount += syncReqs.reduce(
@@ -674,16 +657,6 @@ async function confirmMigration(
 							syncTags,
 							site,
 						);
-
-						if (defaultVariantKey !== undefined) {
-							await updateFlagDefaultVariantKey(
-								ddApiKey,
-								ddAppKey,
-								existingFlagId,
-								defaultVariantKey,
-								site,
-							);
-						}
 
 						// Enable the flag in each environment
 						let enabledCount = 0;
@@ -750,9 +723,6 @@ async function confirmMigration(
 						? { distribution_channel: 'CLIENT' as const }
 						: {}),
 					...(tags.length > 0 ? { tags } : {}),
-					...(defaultVariantKey !== undefined
-						? { default_variant_key: defaultVariantKey }
-						: {}),
 				};
 
 				if (dryRun) {
@@ -762,7 +732,17 @@ async function confirmMigration(
 						body: { data: { type: 'feature-flags', attributes: request } },
 					});
 					for (const ddEnv of envsToEnable) {
-						// flag.key used as placeholder — real ID assigned on creation
+						const dvk = defaultVariantKeyPerEnv.get(ddEnv.id);
+						// Only sync allocations when there's a default_variant_key to set —
+						// allocations are already embedded in the create request body above.
+						if (dvk !== undefined) {
+							// flag.key used as placeholder — real ID assigned on creation
+							dryRunRequests.push({
+								method: 'PUT',
+								path: `/api/v2/feature-flags/${flag.key}/environments/${ddEnv.id}/allocations?default_variant_key=${dvk}`,
+								body: toSyncRequests(allocations, ddEnv.id),
+							});
+						}
 						dryRunRequests.push({
 							method: 'POST',
 							path: `/api/v2/feature-flags/${flag.key}/environments/${ddEnv.id}/enable`,
@@ -789,9 +769,21 @@ async function confirmMigration(
 							site,
 						);
 
-						// Enable the flag in each DD environment where it was active in Eppo
+						// Set per-environment default_variant_key and enable each active environment
 						let enabledCount = 0;
 						for (const ddEnv of envsToEnable) {
+							const dvk = defaultVariantKeyPerEnv.get(ddEnv.id);
+							if (dvk !== undefined) {
+								await syncAllocationsForEnvironment(
+									ddApiKey,
+									ddAppKey,
+									createdFlag.id,
+									ddEnv.id,
+									toSyncRequests(allocations, ddEnv.id),
+									site,
+									dvk,
+								);
+							}
 							try {
 								await enableFeatureFlagEnvironment(
 									ddApiKey,

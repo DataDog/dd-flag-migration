@@ -1,13 +1,13 @@
 /**
  * Unit tests for Eppo → Datadog migration functions:
  * mapVariationType, mapOperator, buildTargetingRules, buildAllocations, getEnvsToEnable,
- * hasSemverConditions, extractDefaultVariantKey.
+ * hasSemverConditions, buildDefaultVariantKeyPerEnv.
  */
 import { describe, expect, it } from '@jest/globals';
 import {
 	buildAllocations,
+	buildDefaultVariantKeyPerEnv,
 	buildTargetingRules,
-	extractDefaultVariantKey,
 	getEnvsToEnable,
 	hasSemverConditions,
 	mapOperator,
@@ -878,10 +878,10 @@ describe('hasSemverConditions', () => {
 	});
 });
 
-// ─── extractDefaultVariantKey ─────────────────────────────────────────────────
+// ─── buildDefaultVariantKeyPerEnv ────────────────────────────────────────────
 
-describe('extractDefaultVariantKey', () => {
-	it('returns the variant key of a pure-default allocation', () => {
+describe('buildDefaultVariantKeyPerEnv', () => {
+	it('returns a map with the variant key for a single pure-default allocation', () => {
 		const flag = makeFlag({
 			id: 1,
 			key: 'test',
@@ -899,10 +899,12 @@ describe('extractDefaultVariantKey', () => {
 			],
 		});
 		const mapping = new Map([[10, ddProd]]);
-		expect(extractDefaultVariantKey(flag, mapping)).toBe('false');
+		expect(buildDefaultVariantKeyPerEnv(flag, mapping)).toEqual(
+			new Map([['dd-prod', 'false']]),
+		);
 	});
 
-	it('returns undefined when no mapped env has a default allocation', () => {
+	it('returns an empty map when no mapped env has a default allocation', () => {
 		const flag = makeFlag({
 			id: 1,
 			key: 'test',
@@ -910,10 +912,10 @@ describe('extractDefaultVariantKey', () => {
 			allocations: [],
 		});
 		const mapping = new Map([[10, ddProd]]);
-		expect(extractDefaultVariantKey(flag, mapping)).toBeUndefined();
+		expect(buildDefaultVariantKeyPerEnv(flag, mapping).size).toBe(0);
 	});
 
-	it('returns undefined when all mapped environments agree but no default allocation exists', () => {
+	it('returns an empty map when the default allocation is not a pure default (is_default=false)', () => {
 		const flag = makeFlag({
 			id: 1,
 			key: 'test',
@@ -928,10 +930,10 @@ describe('extractDefaultVariantKey', () => {
 			],
 		});
 		const mapping = new Map([[10, ddProd]]);
-		expect(extractDefaultVariantKey(flag, mapping)).toBeUndefined();
+		expect(buildDefaultVariantKeyPerEnv(flag, mapping).size).toBe(0);
 	});
 
-	it('returns undefined when environments disagree on the default variant', () => {
+	it('returns per-env keys when environments disagree on the default variant', () => {
 		const flag = makeFlag({
 			id: 1,
 			key: 'test',
@@ -954,17 +956,19 @@ describe('extractDefaultVariantKey', () => {
 				}),
 			],
 		});
-		const mapping = new Map<
-			number,
-			import('../../src/types.js').DatadogEnvironment
-		>([
+		const mapping = new Map<number, DatadogEnvironment>([
 			[10, ddProd],
 			[20, ddDev],
 		]);
-		expect(extractDefaultVariantKey(flag, mapping)).toBeUndefined();
+		expect(buildDefaultVariantKeyPerEnv(flag, mapping)).toEqual(
+			new Map([
+				['dd-prod', 'on'],
+				['dd-dev', 'off'],
+			]),
+		);
 	});
 
-	it('returns the key when all mapped environments agree on the same default variant', () => {
+	it('returns entries for all envs when they agree on the same default variant', () => {
 		const flag = makeFlag({
 			id: 1,
 			key: 'test',
@@ -987,17 +991,19 @@ describe('extractDefaultVariantKey', () => {
 				}),
 			],
 		});
-		const mapping = new Map<
-			number,
-			import('../../src/types.js').DatadogEnvironment
-		>([
+		const mapping = new Map<number, DatadogEnvironment>([
 			[10, ddProd],
 			[20, ddDev],
 		]);
-		expect(extractDefaultVariantKey(flag, mapping)).toBe('off');
+		expect(buildDefaultVariantKeyPerEnv(flag, mapping)).toEqual(
+			new Map([
+				['dd-prod', 'off'],
+				['dd-dev', 'off'],
+			]),
+		);
 	});
 
-	it('returns undefined when the default allocation has a split (multiple non-zero weights)', () => {
+	it('omits an env whose default allocation has a split (multiple non-zero weights)', () => {
 		const flag = makeFlag({
 			id: 1,
 			key: 'test',
@@ -1018,12 +1024,10 @@ describe('extractDefaultVariantKey', () => {
 			],
 		});
 		const mapping = new Map([[10, ddProd]]);
-		expect(extractDefaultVariantKey(flag, mapping)).toBeUndefined();
+		expect(buildDefaultVariantKeyPerEnv(flag, mapping).size).toBe(0);
 	});
 
-	it('returns undefined when one env has a valid default and another has a split default', () => {
-		// The split env must not be silently skipped — it should abort extraction so
-		// skipPureDefaults is not set and the split env keeps its targeting rule.
+	it('includes resolvable envs and omits the split env', () => {
 		const flag = makeFlag({
 			id: 1,
 			key: 'test',
@@ -1049,17 +1053,17 @@ describe('extractDefaultVariantKey', () => {
 				}),
 			],
 		});
-		const mapping = new Map<
-			number,
-			import('../../src/types.js').DatadogEnvironment
-		>([
+		const mapping = new Map<number, DatadogEnvironment>([
 			[10, ddProd],
 			[20, ddDev],
 		]);
-		expect(extractDefaultVariantKey(flag, mapping)).toBeUndefined();
+		// ddDev (env 20) has a split default — omitted so it keeps its targeting rule
+		expect(buildDefaultVariantKeyPerEnv(flag, mapping)).toEqual(
+			new Map([['dd-prod', 'on']]),
+		);
 	});
 
-	it('returns undefined when default allocation has audiences', () => {
+	it('returns empty map when default allocation has audiences (not a pure default)', () => {
 		const flag = makeFlag({
 			id: 1,
 			key: 'test',
@@ -1077,10 +1081,10 @@ describe('extractDefaultVariantKey', () => {
 			],
 		});
 		const mapping = new Map([[10, ddProd]]);
-		expect(extractDefaultVariantKey(flag, mapping)).toBeUndefined();
+		expect(buildDefaultVariantKeyPerEnv(flag, mapping).size).toBe(0);
 	});
 
-	it('returns undefined when default allocation has targeting rules', () => {
+	it('returns empty map when default allocation has targeting rules (not a pure default)', () => {
 		const flag = makeFlag({
 			id: 1,
 			key: 'test',
@@ -1102,14 +1106,14 @@ describe('extractDefaultVariantKey', () => {
 			],
 		});
 		const mapping = new Map([[10, ddProd]]);
-		expect(extractDefaultVariantKey(flag, mapping)).toBeUndefined();
+		expect(buildDefaultVariantKeyPerEnv(flag, mapping).size).toBe(0);
 	});
 });
 
-// ─── buildAllocations — skipPureDefaults ──────────────────────────────────────
+// ─── buildAllocations — defaultVariantKeyPerEnv ───────────────────────────────
 
-describe('buildAllocations with skipPureDefaults', () => {
-	it('skips is_default=true allocations with no audiences or targeting rules', () => {
+describe('buildAllocations with defaultVariantKeyPerEnv', () => {
+	it('skips pure-default allocations for envs in the map', () => {
 		const flag = makeFlag({
 			id: 1,
 			key: 'test',
@@ -1147,14 +1151,14 @@ describe('buildAllocations with skipPureDefaults', () => {
 			mapping,
 			undefined,
 			undefined,
-			true,
+			new Map([['dd-prod', 'false']]),
 		);
 
 		expect(allocations).toHaveLength(1);
 		expect(allocations[0].key).toBe('alloc-audience');
 	});
 
-	it('retains is_default=true allocations when skipPureDefaults is false', () => {
+	it('retains pure-default allocations when env is not in the map', () => {
 		const flag = makeFlag({
 			id: 1,
 			key: 'test',
@@ -1219,7 +1223,7 @@ describe('buildAllocations with skipPureDefaults', () => {
 			mapping,
 			undefined,
 			undefined,
-			true,
+			new Map([['dd-prod', 'on']]),
 		);
 
 		expect(allocations).toHaveLength(1);
