@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] — 2026-06-08
+
+### UX — Large migrations
+
+- Show a real-time progress bar during migrations (#70)
+  - ETA is calculated from a 20-flag sliding window and displayed as whole minutes or "< 1 min"
+- Save a partial migration file when the user interrupts a migration with Ctrl+C (#70)
+  - The file is written before exit if at least one flag was already processed; `success` is set to `false` to distinguish interrupted files from complete ones
+- Add a tab toggle in the flag selection screen to hide flags already migrated to Datadog (#70)
+  - The filter line shows how many flags are hidden; the toggle only appears when previously-migrated flags are present
+
+### Migration — Eppo
+
+- Fix: skip allocations with `percent_exposure: 0` (passthrough allocations) (#73)
+  - Zero-exposure allocations are never served to users in Eppo; the migration now omits them instead of emitting a "Targeting all traffic" targeting rule with the raw variant weights
+- Fix: correctly set `default_variant_key` per environment on sync (#74)
+  - `default_variant_key` is now resolved independently per Datadog environment and written via the allocations-sync endpoint; environments with split or unresolvable defaults retain their targeting rule
+  - Removes the spurious "Default / Targeting all traffic" targeting rule that appeared in the Datadog flag UI after re-migration
+- Fix: use slugified variant name as the Datadog variant key for Eppo JSON flags (#71)
+  - Eppo JSON flags can store the full JSON payload as `variant_key`, which exceeds Datadog's 200-byte limit; the migration now uses a lowercase slugified form of the variation name as the key
+- Fix: wrap JSON array variant values in `{"value": [...]}` before submission (#72)
+  - Datadog requires JSON variant values to be objects; array-typed JSON variants from Eppo are now wrapped automatically
+
+### Migration — LaunchDarkly
+
+- Fix: wrap JSON array variant values in `{"value": [...]}` before submission (#72)
+
 ## [0.2.1] — 2026-05-28
 
 ### Migration — Eppo
