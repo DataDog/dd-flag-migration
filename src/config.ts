@@ -10,7 +10,10 @@ function loadConfig(): Config {
 	try {
 		if (!fs.existsSync(CONFIG_FILE)) return {};
 		const raw = fs.readFileSync(CONFIG_FILE, 'utf-8');
-		return JSON.parse(raw) as Config;
+		const parsed = JSON.parse(raw) as { datadogSite?: unknown };
+		return typeof parsed.datadogSite === 'string'
+			? { datadogSite: parsed.datadogSite }
+			: {};
 	} catch {
 		return {};
 	}
@@ -30,7 +33,5 @@ export function getDatadogSite(): string | undefined {
 }
 
 export function saveDatadogSite(site: string): void {
-	const config = loadConfig();
-	config.datadogSite = site;
-	saveConfig(config);
+	saveConfig({ datadogSite: site });
 }
