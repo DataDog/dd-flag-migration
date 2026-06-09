@@ -46,6 +46,28 @@ function printHelp(exitCode = 0): never {
 	console.log(
 		'  --datadog-site=<site>        Set the Datadog site non-interactively',
 	);
+	console.log(
+		'  --interactive=<bool>         Set to false to run without prompts (default: true)',
+	);
+	console.log(
+		'  --no-export                  Skip xlsx export (non-interactive mode only)',
+	);
+	console.log();
+	console.log(
+		`${chalk.bold('Required when')} ${chalk.cyan('--interactive=false')}:`,
+	);
+	console.log(
+		'  --provider <Eppo|LaunchDarkly>   Source feature flag provider (case-insensitive)',
+	);
+	console.log(
+		'  --env-map <source,target>        Map a source env to a Datadog env (repeatable; ≥1)',
+	);
+	console.log(
+		'  --feature-flag <key>             Flag key to migrate (repeatable; ≥1)',
+	);
+	console.log(
+		'  --project <key>                  LaunchDarkly project key (LaunchDarkly only)',
+	);
 	console.log();
 	console.log(`${chalk.bold('Options for')} ${chalk.cyan('evaluate')}:`);
 	console.log(
@@ -70,6 +92,13 @@ function printHelp(exitCode = 0): never {
 	console.log(chalk.bold('Examples:'));
 	console.log(`  ${chalk.gray('$')} dd-flag-migration migrate`);
 	console.log(`  ${chalk.gray('$')} dd-flag-migration migrate --dry-run`);
+	console.log(
+		`  ${chalk.gray('$')} dd-flag-migration migrate --interactive=false \\\n` +
+			`      --provider LaunchDarkly --project my-ld-project \\\n` +
+			`      --datadog-site datadoghq.com \\\n` +
+			`      --env-map Production,Production --env-map Staging,QA \\\n` +
+			`      --feature-flag flag-one --feature-flag flag-two`,
+	);
 	console.log(`  ${chalk.gray('$')} dd-flag-migration evaluate`);
 	console.log(
 		`  ${chalk.gray('$')} dd-flag-migration evaluate --use-latest-migration --datadog-site=datadoghq.com`,
