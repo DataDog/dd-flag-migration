@@ -1,13 +1,8 @@
 #!/usr/bin/env node
 import { select } from '@inquirer/prompts';
 import chalk from 'chalk';
-import {
-	getDatadogKeys,
-	getDatadogSite,
-	saveDatadogKeys,
-	saveDatadogSite,
-} from './config.js';
-import { validateDatadogKeys } from './datadog.js';
+import { getDatadogSite, saveDatadogSite } from './config.js';
+import { requireEnvVars } from './env.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -82,66 +77,18 @@ async function promptForDatadogSite(): Promise<string> {
 	return trimmed;
 }
 
-async function promptForDatadogKeys(): Promise<{
-	apiKey: string;
-	appKey: string;
-}> {
-	const { confirm, password } = await import('@inquirer/prompts');
-	const ora = (await import('ora')).default;
-	const stored = getDatadogKeys();
-
-	if (stored.apiKey && stored.appKey) {
-		const useStored = await confirm({
-			message: 'Use your saved Datadog keys?',
-			default: true,
-		});
-		if (useStored) return { apiKey: stored.apiKey, appKey: stored.appKey };
-	}
-
-	// eslint-disable-next-line no-constant-condition
-	while (true) {
-		console.log(
-			chalk.gray(
-				'  Your Application key needs these scopes: feature_flag_config_read,\n' +
-					'  feature_flag_config_write, feature_flag_environment_config_read,\n' +
-					'  feature_flag_environment_config_write, restriction_policies_read,\n' +
-					'  restriction_policies_write, teams_read',
-			),
-		);
-		const appKey = await password({
-			message: 'Enter your Datadog Application key:',
-			validate: (input) =>
-				input.trim().length > 0 ? true : 'Application key cannot be empty',
-		});
-		const apiKey = await password({
-			message: 'Enter your Datadog API key:',
-			validate: (input) =>
-				input.trim().length > 0 ? true : 'API key cannot be empty',
-		});
-
-		const spinner = ora('Validating Datadog keys…').start();
-		const valid = await validateDatadogKeys(
-			apiKey.trim(),
-			appKey.trim(),
-			getDatadogSite() ?? 'datadoghq.com',
-		);
-
-		if (valid) {
-			spinner.succeed('Datadog keys validated!');
-			saveDatadogKeys(apiKey.trim(), appKey.trim());
-			console.log(chalk.gray('  Keys saved for future sessions.\n'));
-			return { apiKey: apiKey.trim(), appKey: appKey.trim() };
-		} else {
-			spinner.fail(chalk.red('Invalid Datadog API keys. Please try again.'));
-		}
-	}
-}
-
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 const dryRun = process.argv.includes('--dry-run');
 
 async function main(): Promise<void> {
+	// Validate Datadog env vars up front. Provider-specific env vars are
+	// validated after the user picks a provider so that, e.g., a LaunchDarkly
+	// migration doesn't require EPPO_API_KEY to be set.
+	const ddEnv = requireEnvVars(['DD_API_KEY', 'DD_APP_KEY']);
+	const ddApiKey = ddEnv.DD_API_KEY;
+	const ddAppKey = ddEnv.DD_APP_KEY;
+
 	clearScreen();
 	printHeader();
 	if (dryRun) {
@@ -159,8 +106,13 @@ async function main(): Promise<void> {
 	);
 	console.log();
 
+	if (provider === 'eppo') {
+		requireEnvVars(['EPPO_API_KEY']);
+	} else {
+		requireEnvVars(['LAUNCHDARKLY_API_KEY']);
+	}
+
 	const ddSite = await promptForDatadogSite();
-	const { apiKey: ddApiKey, appKey: ddAppKey } = await promptForDatadogKeys();
 
 	if (provider === 'launchdarkly') {
 		const { runLaunchDarklyMigration } = await import(

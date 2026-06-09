@@ -1,14 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { confirm, input, password, select } from '@inquirer/prompts';
+import { confirm, input, select } from '@inquirer/prompts';
 import axios from 'axios';
 import chalk from 'chalk';
 import ora from 'ora';
-import {
-	CONFIG_DIR,
-	getLaunchDarklyApiKey,
-	saveLaunchDarklyApiKey,
-} from '../config.js';
+import { CONFIG_DIR } from '../config.js';
 import {
 	applyRestrictionPolicy,
 	createFeatureFlag,
@@ -43,7 +39,6 @@ import {
 	fetchTeamsWithRoles,
 	isReleaseInProgress,
 	type LDProject,
-	validateLDApiKey,
 } from './api.js';
 import {
 	buildAllocations,
@@ -278,38 +273,6 @@ function flagLabel(
 }
 
 // ─── Prompt Steps ────────────────────────────────────────────────────────────
-
-async function promptForLDApiKey(): Promise<string> {
-	const storedKey = getLaunchDarklyApiKey();
-
-	if (storedKey) {
-		const useStored = await confirm({
-			message: 'Use your saved LaunchDarkly API key?',
-			default: true,
-		});
-		if (useStored) return storedKey;
-	}
-
-	// eslint-disable-next-line no-constant-condition
-	while (true) {
-		const apiKey = await password({
-			message: 'Enter your LaunchDarkly API key:',
-			validate: (input) =>
-				input.trim().length > 0 ? true : 'API key cannot be empty',
-		});
-
-		const spinner = ora('Validating API key…').start();
-		const valid = await validateLDApiKey(apiKey.trim());
-
-		if (valid) {
-			spinner.succeed('API key validated!');
-			saveLaunchDarklyApiKey(apiKey.trim());
-			console.log(chalk.gray('  Key saved for future sessions.\n'));
-			return apiKey.trim();
-		}
-		spinner.fail(chalk.red('Invalid API key. Please try again.'));
-	}
-}
 
 async function selectProject(projects: LDProject[]): Promise<LDProject | null> {
 	console.log();
@@ -1477,8 +1440,9 @@ export async function runLaunchDarklyMigration(
 	ddSite: string,
 	dryRun: boolean,
 ): Promise<void> {
-	// Prompt for LD API key
-	const ldApiKey = await promptForLDApiKey();
+	// LAUNCHDARKLY_API_KEY presence was validated in src/index.ts before this runs.
+	// biome-ignore lint/style/noNonNullAssertion: validated upstream
+	const ldApiKey = process.env.LAUNCHDARKLY_API_KEY!.trim();
 
 	// Fetch projects from LD API
 	clearScreen();

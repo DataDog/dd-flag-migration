@@ -2,25 +2,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { getInstance as getEppoInstance } from '@eppo/node-server-sdk';
-import { confirm, input, password, select } from '@inquirer/prompts';
+import { confirm, input, select } from '@inquirer/prompts';
 import axios from 'axios';
 import chalk from 'chalk';
 import ora from 'ora';
-import {
-	CONFIG_DIR,
-	getDatadogClientToken,
-	getDatadogKeys,
-	getDatadogSite,
-	saveDatadogClientToken,
-	saveDatadogKeys,
-	saveDatadogSite,
-} from './config.js';
+import { CONFIG_DIR, getDatadogSite, saveDatadogSite } from './config.js';
 import { ddClient } from './datadog.js';
+import { requireEnvVars } from './env.js';
 import {
 	evaluateEppoFlag,
 	evaluateEppoFlagAdvanced,
 	initializeEppo,
-	promptForEppoSdkKey,
 } from './eppo/evaluate.js';
 import {
 	formatExampleTable,
@@ -40,7 +32,6 @@ import {
 	evaluateLDFlagAdvanced,
 	initializeLaunchDarkly,
 	type LDClient,
-	promptForLDSdkKey,
 } from './launchdarkly/evaluate.js';
 import { mapFlagType } from './launchdarkly/migration.js';
 import type { LDFlag, LDMigrationFile } from './launchdarkly/types.js';
@@ -80,7 +71,6 @@ function printHeader(): void {
 // ─── Arg Parsing ──────────────────────────────────────────────────────────────
 
 function parseArgs(): {
-	useSavedKeys: boolean;
 	testSubjectId: string | undefined;
 	useLatestMigration: boolean;
 	flagEnvironment: string | undefined;
@@ -88,7 +78,6 @@ function parseArgs(): {
 	forceShowTable: boolean;
 } {
 	const args = process.argv.slice(2);
-	const useSavedKeys = args.includes('--use-saved-keys');
 	const useLatestMigration = args.includes('--use-latest-migration');
 	const forceShowTable = args.includes('--show-table');
 	const subjectArg = args.find((a) => a.startsWith('--test-subject-id='));
@@ -102,7 +91,6 @@ function parseArgs(): {
 	const csvArg = args.find((a) => a.startsWith('--csv='));
 	const csvPath = csvArg ? csvArg.slice('--csv='.length) : undefined;
 	return {
-		useSavedKeys,
 		testSubjectId,
 		useLatestMigration,
 		flagEnvironment,
@@ -219,44 +207,10 @@ async function pickCsvFile(csvPathArg: string | undefined): Promise<string> {
 	return path.resolve(entered.trim());
 }
 
-// ─── Datadog Credential Prompts ──────────────────────────────────────────────
+// ─── Datadog Site Prompt ─────────────────────────────────────────────────────
 
-async function promptForDatadogClientToken(
-	useSavedKeys = false,
-): Promise<string> {
-	const stored = getDatadogClientToken();
-
-	if (stored && useSavedKeys) {
-		console.log(chalk.gray('  Using saved Datadog client token.\n'));
-		return stored;
-	}
-
-	if (stored) {
-		const useStored = await confirm({
-			message: 'Use your saved Datadog client token?',
-			default: true,
-		});
-		if (useStored) return stored;
-	}
-
-	const token = await password({
-		message: 'Enter your Datadog client token:',
-		validate: (v) =>
-			v.trim().length > 0 ? true : 'Client token cannot be empty',
-	});
-
-	saveDatadogClientToken(token.trim());
-	console.log(chalk.gray('  Token saved for future sessions.\n'));
-	return token.trim();
-}
-
-async function promptForDatadogSite(useSaved = false): Promise<string> {
+async function promptForDatadogSite(): Promise<string> {
 	const stored = getDatadogSite();
-
-	if (stored && useSaved) {
-		console.log(chalk.gray(`  Using saved Datadog site: ${stored}\n`));
-		return stored;
-	}
 
 	if (stored) {
 		const useStored = await confirm({
@@ -279,39 +233,6 @@ async function promptForDatadogSite(useSaved = false): Promise<string> {
 	saveDatadogSite(trimmed);
 	console.log(chalk.gray('  Site saved for future sessions.\n'));
 	return trimmed;
-}
-
-async function promptForDatadogKeys(
-	useSavedKeys = false,
-): Promise<{ apiKey: string; appKey: string }> {
-	const stored = getDatadogKeys();
-
-	if (stored.apiKey && stored.appKey && useSavedKeys) {
-		console.log(chalk.gray('  Using saved Datadog keys.\n'));
-		return { apiKey: stored.apiKey, appKey: stored.appKey };
-	}
-
-	if (stored.apiKey && stored.appKey) {
-		const useStored = await confirm({
-			message: 'Use your saved Datadog keys?',
-			default: true,
-		});
-		if (useStored) return { apiKey: stored.apiKey, appKey: stored.appKey };
-	}
-
-	const appKey = await password({
-		message: 'Enter your Datadog Application key:',
-		validate: (v) =>
-			v.trim().length > 0 ? true : 'Application key cannot be empty',
-	});
-	const apiKey = await password({
-		message: 'Enter your Datadog API key:',
-		validate: (v) => (v.trim().length > 0 ? true : 'API key cannot be empty'),
-	});
-
-	saveDatadogKeys(apiKey.trim(), appKey.trim());
-	console.log(chalk.gray('  Keys saved for future sessions.\n'));
-	return { apiKey: apiKey.trim(), appKey: appKey.trim() };
 }
 
 // ─── Datadog Environment Selection ───────────────────────────────────────────
@@ -835,13 +756,25 @@ function printSummary(rows: TableRow[]): void {
 
 async function main(): Promise<void> {
 	const {
-		useSavedKeys,
 		testSubjectId,
 		useLatestMigration,
 		flagEnvironment,
 		csvPath,
 		forceShowTable,
 	} = parseArgs();
+
+	// Validate Datadog env vars up front. Provider-specific SDK env vars are
+	// validated after the migration file is loaded so we know which provider
+	// was used.
+	const ddEnvVars = requireEnvVars([
+		'DD_API_KEY',
+		'DD_APP_KEY',
+		'DD_CLIENT_TOKEN',
+	]);
+	const ddApiKey = ddEnvVars.DD_API_KEY;
+	const ddAppKey = ddEnvVars.DD_APP_KEY;
+	const ddClientToken = ddEnvVars.DD_CLIENT_TOKEN;
+
 	printHeader();
 
 	// 1. Select migration file
@@ -907,14 +840,17 @@ async function main(): Promise<void> {
 		console.log();
 	}
 
-	// 2. Collect Datadog credentials
-	const ddSite = await promptForDatadogSite(useSavedKeys);
-	const { apiKey: ddApiKey, appKey: ddAppKey } =
-		await promptForDatadogKeys(useSavedKeys);
-	const ddClientToken = await promptForDatadogClientToken(useSavedKeys);
+	// 2. Collect Datadog site (the only remaining interactive credential prompt)
+	const ddSite = await promptForDatadogSite();
 
 	// 3. Select Datadog environment (resolved via API)
 	const isLD = migration.provider === 'launchdarkly';
+
+	// Validate provider SDK env var now that we know which provider the
+	// migration came from.
+	const providerSdkEnvVar = isLD ? 'LAUNCHDARKLY_SDK_KEY' : 'EPPO_SDK_KEY';
+	const providerEnv = requireEnvVars([providerSdkEnvVar]);
+	const providerSdkKey = providerEnv[providerSdkEnvVar];
 	const {
 		ddEnvName: ddEnv,
 		envId: ddEnvId,
@@ -928,14 +864,7 @@ async function main(): Promise<void> {
 	);
 	console.log();
 
-	// 4a. Collect provider SDK key for this specific environment
-	let providerSdkKey: string;
-	if (isLD) {
-		providerSdkKey = await promptForLDSdkKey(sourceEnvName, useSavedKeys);
-	} else {
-		providerSdkKey = await promptForEppoSdkKey(sourceEnvName, useSavedKeys);
-	}
-	console.log();
+	// 4a. Provider SDK key already loaded from env var (see above).
 
 	// 4b. Prompt for test subject ID (only in Basic mode)
 	let subjectId: string;
@@ -1297,6 +1226,26 @@ async function main(): Promise<void> {
 	if (showTable) {
 		renderTable(rows, providerLabel);
 		printSummary(rows);
+	}
+
+	// SDK keys are scoped to a specific provider environment, so a mismatch can
+	// easily mean the SDK key is for the wrong environment rather than a real
+	// migration bug. Surface this whenever we see at least one differing result.
+	const hasDiffer = rows.some((r) =>
+		r.testResults.some(
+			(t) => !t.match && !t.error && t.ddStatus === 'assigned',
+		),
+	);
+	if (hasDiffer) {
+		const envVarName = isLD ? 'LAUNCHDARKLY_SDK_KEY' : 'EPPO_SDK_KEY';
+		const tail = providerSdkKey.slice(-4);
+		console.log(
+			chalk.yellow(
+				`  Reminder: SDK keys are scoped to your environment. Be sure that your ` +
+					`${envVarName} ending in "${tail}" belongs to your "${sourceEnvName}" environment.`,
+			),
+		);
+		console.log();
 	}
 
 	// 9. Build export rows

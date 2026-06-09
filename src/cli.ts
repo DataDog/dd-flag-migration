@@ -46,9 +46,6 @@ function printHelp(exitCode = 0): never {
 	console.log();
 	console.log(`${chalk.bold('Options for')} ${chalk.cyan('evaluate')}:`);
 	console.log(
-		'  --use-saved-keys             Skip credential prompts; use saved keys',
-	);
-	console.log(
 		'  --use-latest-migration       Skip migration file selector; use most recent',
 	);
 	console.log(
@@ -69,7 +66,7 @@ function printHelp(exitCode = 0): never {
 	console.log(`  ${chalk.gray('$')} dd-flag-migration migrate --dry-run`);
 	console.log(`  ${chalk.gray('$')} dd-flag-migration evaluate`);
 	console.log(
-		`  ${chalk.gray('$')} dd-flag-migration evaluate --use-saved-keys --use-latest-migration`,
+		`  ${chalk.gray('$')} dd-flag-migration evaluate --use-latest-migration`,
 	);
 	console.log();
 	process.exit(exitCode);
