@@ -13,6 +13,24 @@ const PROVIDERS = [
 
 type ProviderValue = (typeof PROVIDERS)[number]['value'];
 
+// ─── Arg Parsing ──────────────────────────────────────────────────────────────
+
+function parseArgs(): { dryRun: boolean; datadogSite: string | undefined } {
+	const args = process.argv.slice(2);
+	const siteArg = args.find((a) => a.startsWith('--datadog-site='));
+	const datadogSite = siteArg
+		? siteArg.slice('--datadog-site='.length).trim()
+		: undefined;
+	if (datadogSite !== undefined && datadogSite.length === 0) {
+		process.stderr.write(chalk.red('\n--datadog-site must not be empty.\n\n'));
+		process.exit(1);
+	}
+	return {
+		dryRun: args.includes('--dry-run'),
+		datadogSite,
+	};
+}
+
 // ─── UI Helpers ───────────────────────────────────────────────────────────────
 
 function printHeader(): void {
@@ -50,8 +68,18 @@ async function selectProvider(): Promise<ProviderValue> {
 	});
 }
 
-async function promptForDatadogSite(): Promise<string> {
+async function promptForDatadogSite(
+	datadogSiteArg: string | undefined,
+): Promise<string> {
 	const { confirm, input } = await import('@inquirer/prompts');
+
+	if (datadogSiteArg !== undefined) {
+		console.log(
+			chalk.gray(`  Using Datadog site: ${chalk.cyan(datadogSiteArg)}\n`),
+		);
+		return datadogSiteArg;
+	}
+
 	const stored = getDatadogSite();
 
 	if (stored) {
@@ -79,9 +107,9 @@ async function promptForDatadogSite(): Promise<string> {
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
-const dryRun = process.argv.includes('--dry-run');
-
 async function main(): Promise<void> {
+	const { dryRun, datadogSite } = parseArgs();
+
 	// Validate Datadog env vars up front. Provider-specific env vars are
 	// validated after the user picks a provider so that, e.g., a LaunchDarkly
 	// migration doesn't require EPPO_API_KEY to be set.
@@ -112,7 +140,7 @@ async function main(): Promise<void> {
 		requireEnvVars(['LAUNCHDARKLY_API_KEY']);
 	}
 
-	const ddSite = await promptForDatadogSite();
+	const ddSite = await promptForDatadogSite(datadogSite);
 
 	if (provider === 'launchdarkly') {
 		const { runLaunchDarklyMigration } = await import(

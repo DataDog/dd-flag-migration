@@ -74,6 +74,7 @@ function parseArgs(): {
 	testSubjectId: string | undefined;
 	useLatestMigration: boolean;
 	flagEnvironment: string | undefined;
+	datadogSite: string | undefined;
 	csvPath: string | undefined;
 	forceShowTable: boolean;
 } {
@@ -88,12 +89,21 @@ function parseArgs(): {
 	const flagEnvironment = envArg
 		? envArg.slice('--flag-environment='.length)
 		: undefined;
+	const siteArg = args.find((a) => a.startsWith('--datadog-site='));
+	const datadogSite = siteArg
+		? siteArg.slice('--datadog-site='.length).trim()
+		: undefined;
+	if (datadogSite !== undefined && datadogSite.length === 0) {
+		process.stderr.write(chalk.red('\n--datadog-site must not be empty.\n\n'));
+		process.exit(1);
+	}
 	const csvArg = args.find((a) => a.startsWith('--csv='));
 	const csvPath = csvArg ? csvArg.slice('--csv='.length) : undefined;
 	return {
 		testSubjectId,
 		useLatestMigration,
 		flagEnvironment,
+		datadogSite,
 		csvPath,
 		forceShowTable,
 	};
@@ -209,7 +219,16 @@ async function pickCsvFile(csvPathArg: string | undefined): Promise<string> {
 
 // ─── Datadog Site Prompt ─────────────────────────────────────────────────────
 
-async function promptForDatadogSite(): Promise<string> {
+async function promptForDatadogSite(
+	datadogSiteArg: string | undefined,
+): Promise<string> {
+	if (datadogSiteArg !== undefined) {
+		console.log(
+			chalk.gray(`  Using Datadog site: ${chalk.cyan(datadogSiteArg)}\n`),
+		);
+		return datadogSiteArg;
+	}
+
 	const stored = getDatadogSite();
 
 	if (stored) {
@@ -759,6 +778,7 @@ async function main(): Promise<void> {
 		testSubjectId,
 		useLatestMigration,
 		flagEnvironment,
+		datadogSite,
 		csvPath,
 		forceShowTable,
 	} = parseArgs();
@@ -840,8 +860,8 @@ async function main(): Promise<void> {
 		console.log();
 	}
 
-	// 2. Collect Datadog site (the only remaining interactive credential prompt)
-	const ddSite = await promptForDatadogSite();
+	// 2. Resolve Datadog site
+	const ddSite = await promptForDatadogSite(datadogSite);
 
 	// 3. Select Datadog environment (resolved via API)
 	const isLD = migration.provider === 'launchdarkly';

@@ -136,6 +136,7 @@ The tool will walk you through:
 4. **Confirm and migrate** — flags are created in Datadog and enabled in the mapped environments. A progress bar tracks migration status in real time
 
 API keys are read from environment variables (see [Credentials](#credentials-youll-need)).
+For scripted runs or non-US sites, pass `--datadog-site=<site>` to set the Datadog site without using the prompt.
 
 When the migration completes, a record is saved to `~/.dd-flag-migration/migration-<timestamp>.json`. You can optionally export results to an `.xlsx` file.
 
@@ -206,6 +207,7 @@ You can optionally export the full results to an `.xlsx` file.
 | `--use-latest-migration` | Skip the migration file selector and use the most recent |
 | `--test-subject-id=<id>` | Set the subject ID non-interactively |
 | `--flag-environment=<name>` | Set the Datadog environment name non-interactively |
+| `--datadog-site=<site>` | Set the Datadog site non-interactively |
 
 Example for scripted use:
 
@@ -213,7 +215,8 @@ Example for scripted use:
 npx @datadog/dd-flag-migration evaluate \
   --use-latest-migration \
   --test-subject-id=user-123 \
-  --flag-environment=production
+  --flag-environment=production \
+  --datadog-site=datadoghq.com
 ```
 
 ---
@@ -224,7 +227,13 @@ The only setting persisted to `~/.dd-flag-migration/config.json` is your Datadog
 
 ### Non-US Datadog sites
 
-If your Datadog organization is on a regional site (EU, US3, US5, etc.), add the site to your config before running either command:
+If your Datadog organization is on a regional site (EU, US3, US5, etc.), pass the site for a single run:
+
+```bash
+npx @datadog/dd-flag-migration evaluate --datadog-site=datadoghq.eu
+```
+
+To save a default site for interactive runs, add the site to your config:
 
 ```json
 {
