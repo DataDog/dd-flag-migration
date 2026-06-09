@@ -1,7 +1,4 @@
 import type * as EppoSdk from '@eppo/node-server-sdk';
-import { confirm, password } from '@inquirer/prompts';
-import chalk from 'chalk';
-import { getEppoSdkKeyForEnv, saveEppoSdkKeyForEnv } from '../config.js';
 import type {
 	DDFlagValue,
 	DDStatus,
@@ -154,41 +151,6 @@ export function generateEppoTestCases(flag: EppoFlag): TestCase[] {
 		seen.add(k);
 		return true;
 	});
-}
-
-// ─── Credential Prompt ───────────────────────────────────────────────────────
-
-export async function promptForEppoSdkKey(
-	eppoEnvName: string,
-	useSavedKeys = false,
-): Promise<string> {
-	const stored = getEppoSdkKeyForEnv(eppoEnvName);
-
-	if (stored && useSavedKeys) {
-		console.log(
-			chalk.gray(
-				`  Using saved Eppo SDK key for ${chalk.cyan(eppoEnvName)}.\n`,
-			),
-		);
-		return stored;
-	}
-
-	if (stored) {
-		const useStored = await confirm({
-			message: `Use your saved Eppo SDK key for ${chalk.cyan(eppoEnvName)}?`,
-			default: true,
-		});
-		if (useStored) return stored;
-	}
-
-	const key = await password({
-		message: `Enter your Eppo SDK key for ${chalk.cyan(eppoEnvName)} (server SDK key, not the Admin API key):`,
-		validate: (v) => (v.trim().length > 0 ? true : 'SDK key cannot be empty'),
-	});
-
-	saveEppoSdkKeyForEnv(eppoEnvName, key.trim());
-	console.log(chalk.gray('  Key saved for future sessions.\n'));
-	return key.trim();
 }
 
 // ─── SDK Initialization ───────────────────────────────────────────────────────

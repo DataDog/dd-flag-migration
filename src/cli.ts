@@ -43,11 +43,11 @@ function printHelp(exitCode = 0): never {
 	console.log(
 		'  --dry-run                    Preview changes without creating flags',
 	);
+	console.log(
+		'  --datadog-site=<site>        Set the Datadog site non-interactively',
+	);
 	console.log();
 	console.log(`${chalk.bold('Options for')} ${chalk.cyan('evaluate')}:`);
-	console.log(
-		'  --use-saved-keys             Skip credential prompts; use saved keys',
-	);
 	console.log(
 		'  --use-latest-migration       Skip migration file selector; use most recent',
 	);
@@ -56,6 +56,9 @@ function printHelp(exitCode = 0): never {
 	);
 	console.log(
 		'  --flag-environment=<name>    Set the Datadog environment non-interactively',
+	);
+	console.log(
+		'  --datadog-site=<site>        Set the Datadog site non-interactively',
 	);
 	console.log(
 		'  --csv=<path>                 Path to a CSV file for advanced evaluation',
@@ -69,7 +72,7 @@ function printHelp(exitCode = 0): never {
 	console.log(`  ${chalk.gray('$')} dd-flag-migration migrate --dry-run`);
 	console.log(`  ${chalk.gray('$')} dd-flag-migration evaluate`);
 	console.log(
-		`  ${chalk.gray('$')} dd-flag-migration evaluate --use-saved-keys --use-latest-migration`,
+		`  ${chalk.gray('$')} dd-flag-migration evaluate --use-latest-migration --datadog-site=datadoghq.com`,
 	);
 	console.log();
 	process.exit(exitCode);

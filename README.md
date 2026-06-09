@@ -15,22 +15,13 @@ A CLI tool for migrating feature flags from your current provider into [Datadog 
 
 ## Installation
 
-Install globally so the `dd-flag-migration` command is available anywhere:
+Run without installing using `npx`:
 
 ```bash
-npm install -g @datadog/dd-flag-migration
-
 # migrate flags
-dd-flag-migration migrate
+npx @datadog/dd-flag-migration migrate
 
 # evaluate migrated flags
-dd-flag-migration evaluate
-```
-
-Or run without installing using `npx`:
-
-```bash
-npx @datadog/dd-flag-migration migrate
 npx @datadog/dd-flag-migration evaluate
 ```
 
@@ -42,27 +33,34 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Credentials you'll need
 
-### For migration
+Credentials are read from environment variables. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running `migrate` or `evaluate`. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1.
 
-#### Eppo
+### Required for `migrate`
 
-| Credential | Where to find it |
-|---|---|
-| **Eppo Admin API key** | Eppo → Configuration → API Keys |
-| **Datadog API key** | Datadog → Organization Settings → API Keys |
-| **Datadog Application key** | Datadog → Organization Settings → Application Keys |
-
-#### LaunchDarkly
-
-| Credential | Where to find it |
-|---|---|
-| **LaunchDarkly API access token** | LaunchDarkly → Account settings → Authorization → Access tokens |
-| **Datadog API key** | Datadog → Organization Settings → API Keys |
-| **Datadog Application key** | Datadog → Organization Settings → Application Keys |
+| Variable | Required when | Where to find it |
+|---|---|---|
+| `DD_API_KEY` | always | Datadog → Organization Settings → API Keys |
+| `DD_APP_KEY` | always | Datadog → Organization Settings → Application Keys |
+| `EPPO_API_KEY` | provider = Eppo | Eppo → Configuration → API Keys |
+| `LAUNCHDARKLY_API_KEY` | provider = LaunchDarkly | LaunchDarkly → Account settings → Authorization → Access tokens |
 
 Your LaunchDarkly access token needs **Reader** role permissions (or a custom role with `viewProject` access) to read projects, environments, and flag configurations.
 
-#### Datadog Application Key permissions
+`EPPO_*` variables are checked only when you select Eppo as the source provider. `LAUNCHDARKLY_*` variables are checked only when you select LaunchDarkly. You don't need to set both.
+
+### Required for `evaluate`
+
+Everything above, plus the SDK key for the source environment you're evaluating against and a Datadog client token:
+
+| Variable | Required when | Where to find it |
+|---|---|---|
+| `DD_CLIENT_TOKEN` | always | Datadog → Organization Settings → Client Tokens |
+| `EPPO_SDK_KEY` | migration was from Eppo | Eppo → SDK Keys (server SDK key, one per environment) |
+| `LAUNCHDARKLY_SDK_KEY` | migration was from LaunchDarkly | LaunchDarkly → Account settings → Authorization → SDK keys (server-side, one per environment) |
+
+> SDK keys in both Eppo and LaunchDarkly are **scoped to a single environment**. Make sure the value you export matches the environment you intend to evaluate against — `evaluate` will surface a reminder if it sees mismatched results.
+
+### Datadog Application Key permissions
 
 Your Datadog Application Key must have the following scopes enabled:
 
@@ -78,33 +76,67 @@ Your Datadog Application Key must have the following scopes enabled:
 
 To set these permissions, go to **Organization Settings → Application Keys**, select your key, and enable the scopes listed above. The feature flag scopes are under the **Feature Flags** section; `restriction_policies_read` and `restriction_policies_write` are under **Access Management**; `teams_read` is under **Teams**.
 
-### For evaluation
+### Examples
 
-Everything above, plus:
+**Migrate from Eppo**
 
-| Credential | Where to find it |
-|---|---|
-| **Eppo SDK key** | Eppo → SDK Keys (server SDK key, one per environment) |
-| **Datadog Client token** | Datadog → Organization Settings → Client Tokens |
+```bash
+export DD_API_KEY=...
+export DD_APP_KEY=...
+export EPPO_API_KEY=...
 
-All credentials are prompted interactively and saved to `~/.dd-flag-migration/config.json` so you only need to enter them once.
+npx @datadog/dd-flag-migration migrate
+```
+
+**Evaluate an Eppo migration**
+
+```bash
+export DD_API_KEY=...
+export DD_APP_KEY=...
+export DD_CLIENT_TOKEN=...
+export EPPO_SDK_KEY=...
+
+npx @datadog/dd-flag-migration evaluate
+```
+
+**Migrate from LaunchDarkly**
+
+```bash
+export DD_API_KEY=...
+export DD_APP_KEY=...
+export LAUNCHDARKLY_API_KEY=...
+
+npx @datadog/dd-flag-migration migrate
+```
+
+**Evaluate a LaunchDarkly migration**
+
+```bash
+export DD_API_KEY=...
+export DD_APP_KEY=...
+export DD_CLIENT_TOKEN=...
+export LAUNCHDARKLY_SDK_KEY=...
+
+npx @datadog/dd-flag-migration evaluate
+```
 
 ---
 
 ## Step 1 — Migrate flags
 
 ```bash
-dd-flag-migration migrate
+npx @datadog/dd-flag-migration migrate
 ```
 
 The tool will walk you through:
 
 1. **Select your provider** — Eppo or LaunchDarkly
-2. **Enter your provider API key** — used to fetch your flags
-3. **Enter your Datadog API and Application keys** — used to create flags in Datadog
-4. **Map environments** — link each source environment (e.g. `production`) to the corresponding Datadog environment
-5. **Select flags** — choose which flags to migrate; flags already in Datadog are marked. Press **Tab** to toggle visibility of already-migrated flags, then **Ctrl+A** to select all remaining flags
-6. **Confirm and migrate** — flags are created in Datadog and enabled in the mapped environments. A progress bar tracks migration status in real time
+2. **Map environments** — link each source environment (e.g. `production`) to the corresponding Datadog environment
+3. **Select flags** — choose which flags to migrate; flags already in Datadog are marked. Press **Tab** to toggle visibility of already-migrated flags, then **Ctrl+A** to select all remaining flags
+4. **Confirm and migrate** — flags are created in Datadog and enabled in the mapped environments. A progress bar tracks migration status in real time
+
+API keys are read from environment variables (see [Credentials](#credentials-youll-need)).
+For scripted runs or non-US sites, pass `--datadog-site=<site>` to set the Datadog site without using the prompt.
 
 When the migration completes, a record is saved to `~/.dd-flag-migration/migration-<timestamp>.json`. You can optionally export results to an `.xlsx` file.
 
@@ -140,7 +172,7 @@ To create and manage sub-organizations, see [Multi-Organization Accounts](https:
 To preview what would be created without making any changes:
 
 ```bash
-dd-flag-migration migrate --dry-run
+npx @datadog/dd-flag-migration migrate --dry-run
 ```
 
 This writes the full list of API requests that would be sent to a `dry-run-<timestamp>.json` file in the current directory.
@@ -152,17 +184,17 @@ This writes the full list of API requests that would be sent to a `dry-run-<time
 Once flags have been migrated, run the evaluation to compare how flags are evaluated in Eppo vs. Datadog for the same inputs:
 
 ```bash
-dd-flag-migration evaluate
+npx @datadog/dd-flag-migration evaluate
 ```
 
 The tool will:
 
 1. **Select a migration file** — pick from previous migrations (most recent first)
-2. **Enter Datadog credentials** — API key, Application key, and Client token
-3. **Select a Datadog environment** — choose which environment to evaluate against
-4. **Enter your Eppo SDK key** — the server SDK key for the matching Eppo environment
-5. **Enter a test subject ID** — a user ID (or any string) to use for flag evaluation
-6. **Run evaluations** — the tool generates test cases from each flag's targeting rules and compares the Eppo and Datadog results side by side
+2. **Select a Datadog environment** — choose which environment to evaluate against
+3. **Enter a test subject ID** — a user ID (or any string) to use for flag evaluation
+4. **Run evaluations** — the tool generates test cases from each flag's targeting rules and compares the provider and Datadog results side by side
+
+Datadog and provider credentials are read from environment variables (see [Credentials](#credentials-youll-need)).
 
 Results are displayed in a table showing the Eppo value, Datadog value, migration status, and whether the flag is enabled. Matching values are shown in green; differences in yellow.
 
@@ -172,30 +204,36 @@ You can optionally export the full results to an `.xlsx` file.
 
 | Flag | Description |
 |---|---|
-| `--use-saved-keys` | Skip credential prompts and use saved keys |
 | `--use-latest-migration` | Skip the migration file selector and use the most recent |
 | `--test-subject-id=<id>` | Set the subject ID non-interactively |
 | `--flag-environment=<name>` | Set the Datadog environment name non-interactively |
+| `--datadog-site=<site>` | Set the Datadog site non-interactively |
 
 Example for scripted use:
 
 ```bash
-dd-flag-migration evaluate \
-  --use-saved-keys \
+npx @datadog/dd-flag-migration evaluate \
   --use-latest-migration \
   --test-subject-id=user-123 \
-  --flag-environment=production
+  --flag-environment=production \
+  --datadog-site=datadoghq.com
 ```
 
 ---
 
 ## Configuration
 
-Credentials and settings are stored in `~/.dd-flag-migration/config.json`. You can edit this file directly if needed.
+The only setting persisted to `~/.dd-flag-migration/config.json` is your Datadog site (so you don't have to re-enter it on every run). Credentials are **never** read from or written to this file — set them as environment variables instead.
 
 ### Non-US Datadog sites
 
-If your Datadog organization is on a regional site (EU, US3, US5, etc.), add the site to your config before running either command:
+If your Datadog organization is on a regional site (EU, US3, US5, etc.), pass the site for a single run:
+
+```bash
+npx @datadog/dd-flag-migration evaluate --datadog-site=datadoghq.eu
+```
+
+To save a default site for interactive runs, add the site to your config:
 
 ```json
 {

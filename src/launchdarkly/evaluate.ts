@@ -1,7 +1,4 @@
-import { confirm, password } from '@inquirer/prompts';
 import type * as LDSdk from '@launchdarkly/node-server-sdk';
-import chalk from 'chalk';
-import { getLDSdkKeyForEnv, saveLDSdkKeyForEnv } from '../config.js';
 import type {
 	DDFlagValue,
 	DDStatus,
@@ -225,41 +222,6 @@ export function generateLDTestCases(flag: LDFlag, envKey: string): TestCase[] {
 		seen.add(k);
 		return true;
 	});
-}
-
-// ─── Credential Prompt ───────────────────────────────────────────────────────
-
-export async function promptForLDSdkKey(
-	ldEnvName: string,
-	useSavedKeys = false,
-): Promise<string> {
-	const stored = getLDSdkKeyForEnv(ldEnvName);
-
-	if (stored && useSavedKeys) {
-		console.log(
-			chalk.gray(
-				`  Using saved LaunchDarkly SDK key for ${chalk.cyan(ldEnvName)}.\n`,
-			),
-		);
-		return stored;
-	}
-
-	if (stored) {
-		const useStored = await confirm({
-			message: `Use your saved LaunchDarkly SDK key for ${chalk.cyan(ldEnvName)}?`,
-			default: true,
-		});
-		if (useStored) return stored;
-	}
-
-	const key = await password({
-		message: `Enter your LaunchDarkly SDK key for ${chalk.cyan(ldEnvName)} (server-side SDK key):`,
-		validate: (v) => (v.trim().length > 0 ? true : 'SDK key cannot be empty'),
-	});
-
-	saveLDSdkKeyForEnv(ldEnvName, key.trim());
-	console.log(chalk.gray('  Key saved for future sessions.\n'));
-	return key.trim();
 }
 
 // ─── SDK Initialization ───────────────────────────────────────────────────────

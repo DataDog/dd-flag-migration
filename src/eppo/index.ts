@@ -1,10 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { confirm, password, select } from '@inquirer/prompts';
+import { select } from '@inquirer/prompts';
 import axios from 'axios';
 import chalk from 'chalk';
 import ora from 'ora';
-import { CONFIG_DIR, getEppoApiKey, saveEppoApiKey } from '../config.js';
+import { CONFIG_DIR } from '../config.js';
 import {
 	createFeatureFlag,
 	enableFeatureFlagEnvironment,
@@ -21,11 +21,7 @@ import type {
 	DatadogEnvironment,
 	MigrationEnvironmentMapping,
 } from '../types.js';
-import {
-	extractEnvironments,
-	fetchEppoFlags,
-	validateEppoApiKey,
-} from './api.js';
+import { extractEnvironments, fetchEppoFlags } from './api.js';
 import { migrateAudiences } from './audiences.js';
 import {
 	buildAllocations,
@@ -103,39 +99,6 @@ function flagLabel(flag: EppoFlag, inDatadog: boolean): string {
 }
 
 // ─── Prompt Steps ─────────────────────────────────────────────────────────────
-
-async function promptForApiKey(): Promise<string> {
-	const storedKey = getEppoApiKey();
-
-	if (storedKey) {
-		const useStored = await confirm({
-			message: 'Use your saved Eppo API key?',
-			default: true,
-		});
-		if (useStored) return storedKey;
-	}
-
-	// eslint-disable-next-line no-constant-condition
-	while (true) {
-		const apiKey = await password({
-			message: 'Enter your Eppo API key:',
-			validate: (input) =>
-				input.trim().length > 0 ? true : 'API key cannot be empty',
-		});
-
-		const spinner = ora('Validating API key…').start();
-		const valid = await validateEppoApiKey(apiKey.trim());
-
-		if (valid) {
-			spinner.succeed('API key validated!');
-			saveEppoApiKey(apiKey.trim());
-			console.log(chalk.gray('  Key saved for future sessions.\n'));
-			return apiKey.trim();
-		} else {
-			spinner.fail(chalk.red('Invalid API key. Please try again.'));
-		}
-	}
-}
 
 async function linkEnvironments(
 	eppoEnvs: EppoFlagEnvironment[],
@@ -929,7 +892,9 @@ export async function runEppoMigration(
 	ddSite: string,
 	dryRun: boolean,
 ): Promise<void> {
-	const apiKey = await promptForApiKey();
+	// EPPO_API_KEY presence was validated in src/index.ts before this runs.
+	// biome-ignore lint/style/noNonNullAssertion: validated upstream
+	const apiKey = process.env.EPPO_API_KEY!.trim();
 
 	console.log();
 
