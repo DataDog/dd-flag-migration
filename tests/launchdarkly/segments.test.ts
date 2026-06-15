@@ -1,9 +1,12 @@
-import { describe, expect, it } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
+import AxiosMockAdapter from 'axios-mock-adapter';
+import { ldClient } from '../../src/launchdarkly/api.js';
 import {
 	buildNegatedRules,
 	buildNonNegatedRules,
 	discoverSegmentRefs,
 	getCreationType,
+	planDryRunSegments,
 	renderSavedFilterName,
 } from '../../src/launchdarkly/segments.js';
 import type {
@@ -12,6 +15,7 @@ import type {
 	LDRule,
 	LDSegment,
 } from '../../src/launchdarkly/types.js';
+import type { DatadogEnvironment } from '../../src/types.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -86,6 +90,13 @@ function makeFlag(key: string, envKey: string, clauses: LDClause[]): LDFlag {
 		},
 	};
 }
+
+const ddProd: DatadogEnvironment = {
+	id: 'dd-prod',
+	name: 'Production',
+	is_production: true,
+	queries: ['prod'],
+};
 
 // ─── discoverSegmentRefs ──────────────────────────────────────────────────────
 
@@ -601,5 +612,69 @@ describe('buildNegatedRules', () => {
 		expect(result).not.toBeNull();
 		expect(result).toHaveLength(1);
 		expect(result?.[0].conditions).toHaveLength(0);
+	});
+});
+
+// ─── planDryRunSegments ───────────────────────────────────────────────────────
+
+describe('planDryRunSegments', () => {
+	let mock: AxiosMockAdapter;
+
+	beforeEach(() => {
+		mock = new AxiosMockAdapter(ldClient as never);
+	});
+
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('folds empty segment refs as constants instead of synthetic saved filters', async () => {
+		const flag = makeFlag('f1', 'prod', [
+			makeClause({
+				op: 'segmentMatch',
+				values: ['empty-seg'],
+				negate: false,
+			}),
+			makeClause({
+				_id: 'c2',
+				op: 'segmentMatch',
+				values: ['empty-seg'],
+				negate: true,
+			}),
+			makeClause({
+				_id: 'c3',
+				op: 'segmentMatch',
+				values: ['real-seg'],
+				negate: false,
+			}),
+		]);
+
+		mock
+			.onGet(
+				'https://app.launchdarkly.com/api/v2/segments/project/prod?limit=50',
+			)
+			.reply(200, {
+				items: [
+					makeSegment({ key: 'empty-seg' }),
+					makeSegment({ key: 'real-seg', included: ['user-1'] }),
+				],
+			});
+
+		const result = await planDryRunSegments({
+			ldApiKey: 'ld-api-key',
+			projectKey: 'project',
+			selectedFlags: [flag],
+			envMapping: new Map([['prod', ddProd]]),
+		});
+
+		expect(result.segmentConstantLookup.get('empty-seg:prod:false')).toBe(
+			false,
+		);
+		expect(result.segmentConstantLookup.get('empty-seg:prod:true')).toBe(true);
+		expect(result.savedFilterLookup.has('empty-seg:prod:false')).toBe(false);
+		expect(result.savedFilterLookup.has('empty-seg:prod:true')).toBe(false);
+		expect(result.savedFilterLookup.get('real-seg:prod:false')).toBe(
+			'dry-run-placeholder-0',
+		);
 	});
 });

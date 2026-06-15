@@ -297,6 +297,81 @@ function isMatchNoneSegment(segment: LDSegment): boolean {
 	);
 }
 
+function createSegmentMigrationStats(): SegmentMigrationStats {
+	return {
+		discovered: 0,
+		created: 0,
+		negated: 0,
+		skipped: 0,
+		reused: 0,
+		failures: [],
+	};
+}
+
+function segmentLookupKey(ref: SegmentRef): string {
+	return `${ref.segmentKey}:${ref.envKey}:${ref.negated}`;
+}
+
+function discoveredSegmentCount(refs: SegmentRef[]): number {
+	return new Set(refs.map((r) => `${r.segmentKey}:${r.envKey}`)).size;
+}
+
+function groupSegmentRefsByEnv(refs: SegmentRef[]): Map<string, Set<string>> {
+	const neededByEnv = new Map<string, Set<string>>();
+	for (const ref of refs) {
+		if (!neededByEnv.has(ref.envKey)) neededByEnv.set(ref.envKey, new Set());
+		neededByEnv.get(ref.envKey)?.add(ref.segmentKey);
+	}
+	return neededByEnv;
+}
+
+async function fetchReferencedSegments(
+	ldApiKey: string,
+	projectKey: string,
+	refs: SegmentRef[],
+	stats: SegmentMigrationStats,
+): Promise<Map<string, Map<string, LDSegment>>> {
+	const neededByEnv = groupSegmentRefsByEnv(refs);
+	const fetchSpinner = createSpinner(
+		'Fetching segments from LaunchDarkly…',
+	).start();
+	const segmentsByKey = new Map<string, Map<string, LDSegment>>();
+
+	try {
+		for (const [envKey, neededKeys] of neededByEnv) {
+			const envSegments = new Map<string, LDSegment>();
+			segmentsByKey.set(envKey, envSegments);
+
+			const allSegments = await fetchSegments(ldApiKey, projectKey, envKey);
+			for (const seg of allSegments) {
+				if (neededKeys.has(seg.key)) {
+					envSegments.set(seg.key, seg);
+				}
+			}
+
+			// Fallback: fetch any still-missing segments individually
+			for (const key of neededKeys) {
+				if (!envSegments.has(key)) {
+					const seg = await fetchSegment(ldApiKey, projectKey, envKey, key);
+					if (seg) {
+						envSegments.set(key, seg);
+					} else {
+						fetchSpinner.warn(
+							`Segment "${key}" not found in env "${envKey}" — dependent flag rules will be skipped`,
+						);
+						stats.skipped++;
+					}
+				}
+			}
+		}
+		fetchSpinner.succeed('Fetched segments from LaunchDarkly');
+		return segmentsByKey;
+	} catch (err) {
+		fetchSpinner.fail('Failed to fetch segments from LaunchDarkly');
+		throw err;
+	}
+}
+
 function formatAxiosError(err: unknown): string {
 	if (!axios.isAxiosError(err)) return String(err);
 	const status = err.response?.status;
@@ -338,14 +413,7 @@ export async function migrateSegments(params: {
 	} = params;
 	const savedFilterLookup = new Map<string, string>();
 	const segmentConstantLookup = new Map<string, boolean>();
-	const stats: SegmentMigrationStats = {
-		discovered: 0,
-		created: 0,
-		negated: 0,
-		skipped: 0,
-		reused: 0,
-		failures: [],
-	};
+	const stats = createSegmentMigrationStats();
 
 	const envKeys = [...envMapping.keys()];
 
@@ -354,9 +422,7 @@ export async function migrateSegments(params: {
 		'Discovering segments referenced by flags…',
 	).start();
 	const refs = discoverSegmentRefs(selectedFlags, envKeys);
-	stats.discovered = new Set(
-		refs.map((r) => `${r.segmentKey}:${r.envKey}`),
-	).size;
+	stats.discovered = discoveredSegmentCount(refs);
 	discoverSpinner.succeed(
 		`Found ${stats.discovered} segment(s) across ${envKeys.length} environment(s)`,
 	);
@@ -365,46 +431,13 @@ export async function migrateSegments(params: {
 		return { savedFilterLookup, segmentConstantLookup, stats };
 	}
 
-	// Group needed segment keys by envKey
-	const neededByEnv = new Map<string, Set<string>>();
-	for (const ref of refs) {
-		if (!neededByEnv.has(ref.envKey)) neededByEnv.set(ref.envKey, new Set());
-		neededByEnv.get(ref.envKey)?.add(ref.segmentKey);
-	}
-
 	// ── Step 2: Fetch segments from LD ────────────────────────────────────────
-	const fetchSpinner = createSpinner(
-		'Fetching segments from LaunchDarkly…',
-	).start();
-	const segmentsByKey = new Map<string, Map<string, LDSegment>>();
-
-	for (const [envKey, neededKeys] of neededByEnv) {
-		const envSegments = new Map<string, LDSegment>();
-		segmentsByKey.set(envKey, envSegments);
-
-		const allSegments = await fetchSegments(ldApiKey, projectKey, envKey);
-		for (const seg of allSegments) {
-			if (neededKeys.has(seg.key)) {
-				envSegments.set(seg.key, seg);
-			}
-		}
-
-		// Fallback: fetch any still-missing segments individually
-		for (const key of neededKeys) {
-			if (!envSegments.has(key)) {
-				const seg = await fetchSegment(ldApiKey, projectKey, envKey, key);
-				if (seg) {
-					envSegments.set(key, seg);
-				} else {
-					fetchSpinner.warn(
-						`Segment "${key}" not found in env "${envKey}" — dependent flag rules will be skipped`,
-					);
-					stats.skipped++;
-				}
-			}
-		}
-	}
-	fetchSpinner.succeed('Fetched segments from LaunchDarkly');
+	const segmentsByKey = await fetchReferencedSegments(
+		ldApiKey,
+		projectKey,
+		refs,
+		stats,
+	);
 
 	// ── Step 3: List existing DD saved filters for idempotency ────────────────
 	const idempotencySpinner = createSpinner(
@@ -453,10 +486,7 @@ export async function migrateSegments(params: {
 		}
 
 		if (isMatchNoneSegment(segment)) {
-			segmentConstantLookup.set(
-				`${ref.segmentKey}:${ref.envKey}:${ref.negated}`,
-				ref.negated,
-			);
+			segmentConstantLookup.set(segmentLookupKey(ref), ref.negated);
 			stats.skipped++;
 			continue;
 		}
@@ -465,10 +495,7 @@ export async function migrateSegments(params: {
 		if (existingByTuple.has(tupleKey)) {
 			const existingId = existingByTuple.get(tupleKey) ?? '';
 			const existingSf = existingFilters.find((sf) => sf.id === existingId);
-			savedFilterLookup.set(
-				`${ref.segmentKey}:${ref.envKey}:${ref.negated}`,
-				existingId,
-			);
+			savedFilterLookup.set(segmentLookupKey(ref), existingId);
 			stats.reused++;
 			pendingFilters.push({
 				ref,
@@ -591,7 +618,7 @@ export async function migrateSegments(params: {
 
 	for (const pending of newPendingFilters) {
 		const { ref, segment } = pending;
-		const lookupKey = `${ref.segmentKey}:${ref.envKey}:${ref.negated}`;
+		const lookupKey = segmentLookupKey(ref);
 
 		// Determine name prefix
 		let namePrefix = pending.namePrefix;
@@ -702,6 +729,85 @@ export async function migrateSegments(params: {
 
 	savedFilterSpinner.succeed(
 		`Created ${stats.created} saved filter(s) (${stats.negated} negated variants, ${stats.reused} reused, ${stats.skipped} skipped)`,
+	);
+
+	return { savedFilterLookup, segmentConstantLookup, stats };
+}
+
+/**
+ * Dry-run Phase 1: fetch referenced LaunchDarkly segments and prepare the lookup
+ * maps used by allocation building without creating Datadog saved filters.
+ * Empty match-none segments are folded as constants; all other resolvable
+ * segment refs receive synthetic saved-filter IDs for the dry-run request body.
+ */
+export async function planDryRunSegments(params: {
+	ldApiKey: string;
+	projectKey: string;
+	selectedFlags: LDFlag[];
+	envMapping: Map<string, DatadogEnvironment>;
+}): Promise<SegmentMigrationResult> {
+	const { ldApiKey, projectKey, selectedFlags, envMapping } = params;
+	const savedFilterLookup = new Map<string, string>();
+	const segmentConstantLookup = new Map<string, boolean>();
+	const stats = createSegmentMigrationStats();
+	const envKeys = [...envMapping.keys()];
+
+	const discoverSpinner = createSpinner(
+		'Discovering segments referenced by flags…',
+	).start();
+	const refs = discoverSegmentRefs(selectedFlags, envKeys);
+	stats.discovered = discoveredSegmentCount(refs);
+	discoverSpinner.succeed(
+		`Found ${stats.discovered} segment(s) across ${envKeys.length} environment(s)`,
+	);
+
+	if (refs.length === 0) {
+		return { savedFilterLookup, segmentConstantLookup, stats };
+	}
+
+	const segmentsByKey = await fetchReferencedSegments(
+		ldApiKey,
+		projectKey,
+		refs,
+		stats,
+	);
+
+	const planningSpinner = createSpinner(
+		'Planning saved filters for segments…',
+	).start();
+	let placeholderIndex = 0;
+	for (const ref of refs) {
+		const segment = segmentsByKey.get(ref.envKey)?.get(ref.segmentKey);
+		if (!segment) continue; // fetch failed; already counted as skipped
+
+		if (segment.deleted) {
+			stats.skipped++;
+			continue;
+		}
+
+		const lookupKey = segmentLookupKey(ref);
+		if (isMatchNoneSegment(segment)) {
+			segmentConstantLookup.set(lookupKey, ref.negated);
+			stats.skipped++;
+			continue;
+		}
+
+		const targetingRules = ref.negated
+			? buildNegatedRules(segment)
+			: buildNonNegatedRules(segment);
+		if (targetingRules === null) {
+			stats.skipped++;
+			continue;
+		}
+
+		savedFilterLookup.set(lookupKey, `dry-run-placeholder-${placeholderIndex}`);
+		placeholderIndex++;
+		stats.created++;
+		if (ref.negated) stats.negated++;
+	}
+
+	planningSpinner.succeed(
+		`Would create ${stats.created} saved filter(s) (${stats.negated} negated variants, ${stats.reused} reused, ${stats.skipped} skipped)`,
 	);
 
 	return { savedFilterLookup, segmentConstantLookup, stats };

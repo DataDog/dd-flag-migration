@@ -161,19 +161,9 @@ export function resolveSegmentMatch(
 
 	const savedFilterIds: string[] = [];
 	let hasMissingSegment = false;
-	let hasConstantTrue = false;
-	let hasConstantFalse = false;
 	for (const segKey of clause.values as string[]) {
 		const mapKey = `${segKey}:${envKey}:${clause.negate}`;
-		const constant = segmentConstantLookup.get(mapKey);
-		if (constant !== undefined) {
-			if (constant) {
-				hasConstantTrue = true;
-			} else {
-				hasConstantFalse = true;
-			}
-			continue;
-		}
+		if (segmentConstantLookup.has(mapKey)) continue;
 		const id = savedFilterLookup.get(mapKey);
 		if (id) {
 			savedFilterIds.push(id);
@@ -183,13 +173,11 @@ export function resolveSegmentMatch(
 	}
 
 	if (clause.negate) {
-		if (hasConstantFalse) return { match: false };
 		if (hasMissingSegment) return { skip: 'segment not migrated' };
 		if (savedFilterIds.length === 0) return { match: true };
 		return { combine: 'AND', savedFilterIds };
 	}
 
-	if (hasConstantTrue) return { match: true };
 	if (hasMissingSegment) return { skip: 'segment not migrated' };
 	if (savedFilterIds.length === 0) return { match: false };
 
