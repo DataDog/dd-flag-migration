@@ -1445,6 +1445,7 @@ async function executeMigration(
 	}
 
 	console.log();
+	if (nonInteractive && errored > 0) process.exit(1);
 	return 'migrate';
 }
 
