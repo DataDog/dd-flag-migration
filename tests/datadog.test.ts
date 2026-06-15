@@ -21,7 +21,6 @@ import {
 	fetchRestrictionPolicy,
 	syncAllocationsForEnvironment,
 	updateFlagTags,
-	validateDatadogKeys,
 } from '../src/datadog.js';
 import type {
 	DatadogAllocationSyncRequest,
@@ -134,43 +133,6 @@ describe('fetchDatadogEnvironments', () => {
 		await expect(
 			fetchDatadogEnvironments(API_KEY, APP_KEY, SITE),
 		).rejects.toThrow();
-	});
-});
-
-// ─── validateDatadogKeys ──────────────────────────────────────────────────────
-
-describe('validateDatadogKeys', () => {
-	let mock: AxiosMockAdapter;
-
-	beforeEach(() => {
-		mock = new AxiosMockAdapter(ddClient as never);
-	});
-
-	afterEach(() => {
-		mock.restore();
-	});
-
-	it('returns true when the API call succeeds', async () => {
-		mock
-			.onGet(`${BASE}/api/v2/feature-flags/environments`)
-			.reply(200, { data: [] });
-
-		const result = await validateDatadogKeys(API_KEY, APP_KEY, SITE);
-		expect(result).toBe(true);
-	});
-
-	it('returns false on 401', async () => {
-		mock.onGet(`${BASE}/api/v2/feature-flags/environments`).reply(401);
-
-		const result = await validateDatadogKeys(API_KEY, APP_KEY, SITE);
-		expect(result).toBe(false);
-	});
-
-	it('returns false on network error', async () => {
-		mock.onGet(`${BASE}/api/v2/feature-flags/environments`).networkError();
-
-		const result = await validateDatadogKeys(API_KEY, APP_KEY, SITE);
-		expect(result).toBe(false);
 	});
 });
 

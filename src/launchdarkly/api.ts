@@ -285,21 +285,6 @@ export function isReleaseInProgress(release: LDRelease): boolean {
 	return release.phases.some((phase) => phase.status !== 'Complete');
 }
 
-// ─── Validation ──────────────────────────────────────────────────────────────
-
-/** Validate a LaunchDarkly API key by attempting to list projects. */
-export async function validateLDApiKey(apiKey: string): Promise<boolean> {
-	try {
-		await ldClient.get(`${LD_BASE_URL}/api/v2/projects`, {
-			headers: ldHeaders(apiKey),
-			params: { limit: 1 },
-		});
-		return true;
-	} catch {
-		return false;
-	}
-}
-
 // ─── Custom Roles ────────────────────────────────────────────────────────────
 
 /**

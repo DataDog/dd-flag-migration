@@ -147,19 +147,6 @@ export async function fetchDatadogEnvironments(
 	}));
 }
 
-export async function validateDatadogKeys(
-	apiKey: string,
-	appKey: string,
-	site = 'datadoghq.com',
-): Promise<boolean> {
-	try {
-		await fetchDatadogEnvironments(apiKey, appKey, site);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
 // Local type for JSON:API flag list response
 type JsonApiFlag = {
 	id: string;

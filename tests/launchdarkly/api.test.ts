@@ -13,7 +13,6 @@ import {
 	fetchProjects,
 	fetchTeamsWithRoles,
 	ldClient,
-	validateLDApiKey,
 } from '../../src/launchdarkly/api.js';
 import type { LDCustomRole, LDFlag } from '../../src/launchdarkly/types.js';
 
@@ -264,36 +263,6 @@ describe('fetchFlag', () => {
 		expect(flag.key).toBe('kill-switch');
 		expect(flag.environments).toBeDefined();
 		expect(Object.keys(flag.environments ?? {})).toEqual(['dev', 'production']);
-	});
-});
-
-// ─── validateLDApiKey ────────────────────────────────────────────────────────
-
-describe('validateLDApiKey', () => {
-	let mock: AxiosMockAdapter;
-
-	beforeEach(() => {
-		mock = new AxiosMockAdapter(ldClient as never);
-	});
-
-	afterEach(() => {
-		mock.restore();
-	});
-
-	it('returns true for valid API key', async () => {
-		mock
-			.onGet('https://app.launchdarkly.com/api/v2/projects')
-			.reply(200, { items: [], totalCount: 0 });
-
-		expect(await validateLDApiKey('valid-key')).toBe(true);
-	});
-
-	it('returns false for invalid API key', async () => {
-		mock
-			.onGet('https://app.launchdarkly.com/api/v2/projects')
-			.reply(401, { message: 'Unauthorized' });
-
-		expect(await validateLDApiKey('bad-key')).toBe(false);
 	});
 });
 
