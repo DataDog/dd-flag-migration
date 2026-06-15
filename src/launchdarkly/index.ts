@@ -34,6 +34,7 @@ import {
 	fetchFlag,
 	fetchFlagRelease,
 	fetchFlags,
+	fetchFlagsByKey,
 	fetchProjectEnvironments,
 	fetchProjects,
 	fetchTeamsWithRoles,
@@ -1723,23 +1724,6 @@ export function resolveLDEnvMap(
 	return { envMapping, selectedEnvKeys };
 }
 
-export function resolveLDFlags(keys: string[], allFlags: LDFlag[]): LDFlag[] {
-	const byKey = new Map(allFlags.map((f) => [f.key, f]));
-	const selected: LDFlag[] = [];
-	const missing: string[] = [];
-	for (const key of keys) {
-		const f = byKey.get(key);
-		if (f) selected.push(f);
-		else missing.push(key);
-	}
-	if (missing.length > 0) {
-		throw new Error(
-			`Flag(s) not found in LaunchDarkly project: ${missing.join(', ')}`,
-		);
-	}
-	return selected;
-}
-
 async function runLaunchDarklyMigrationNonInteractive(
 	ldApiKey: string,
 	ddApiKey: string,
@@ -1786,20 +1770,23 @@ async function runLaunchDarklyMigrationNonInteractive(
 			chalk.gray(` (${selectedProject.key})`),
 	);
 
-	const loadSpinner = ora('Fetching flags and Datadog data…').start();
-	let allFlags: LDFlag[];
+	const loadSpinner = ora(
+		`Fetching ${ni.flagKeys.length} flag(s) and Datadog data…`,
+	).start();
+	let selectedFlags: LDFlag[];
 	let ldEnvironments: LDEnvironment[];
 	let datadogFlags: DatadogFlagEntry[] = [];
 	let datadogEnvs: DatadogEnvironment[] = [];
 	try {
-		[allFlags, ldEnvironments, datadogFlags, datadogEnvs] = await Promise.all([
-			fetchFlags(ldApiKey, selectedProject.key),
-			fetchProjectEnvironments(ldApiKey, selectedProject.key),
-			fetchDatadogFlags(ddApiKey, ddAppKey, ddSite),
-			fetchDatadogEnvironments(ddApiKey, ddAppKey, ddSite),
-		]);
+		[selectedFlags, ldEnvironments, datadogFlags, datadogEnvs] =
+			await Promise.all([
+				fetchFlagsByKey(ldApiKey, selectedProject.key, ni.flagKeys),
+				fetchProjectEnvironments(ldApiKey, selectedProject.key),
+				fetchDatadogFlags(ddApiKey, ddAppKey, ddSite),
+				fetchDatadogEnvironments(ddApiKey, ddAppKey, ddSite),
+			]);
 		loadSpinner.succeed(
-			`Loaded ${allFlags.length} LD flag(s) · ${ldEnvironments.length} LD environment(s) · ${datadogFlags.length} Datadog flag(s) · ${datadogEnvs.length} Datadog environment(s)`,
+			`Loaded ${selectedFlags.length} LD flag(s) · ${ldEnvironments.length} LD environment(s) · ${datadogFlags.length} Datadog flag(s) · ${datadogEnvs.length} Datadog environment(s)`,
 		);
 	} catch (err) {
 		loadSpinner.fail('Failed to load data');
@@ -1809,14 +1796,12 @@ async function runLaunchDarklyMigrationNonInteractive(
 
 	let envMapping: Map<string, DatadogEnvironment>;
 	let selectedEnvKeys: string[];
-	let selectedFlags: LDFlag[];
 	try {
 		({ envMapping, selectedEnvKeys } = resolveLDEnvMap(
 			ni.envMap,
 			ldEnvironments,
 			datadogEnvs,
 		));
-		selectedFlags = resolveLDFlags(ni.flagKeys, allFlags);
 	} catch (err) {
 		console.error(
 			chalk.red(`\n  ${err instanceof Error ? err.message : String(err)}\n`),

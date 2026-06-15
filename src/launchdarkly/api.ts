@@ -241,6 +241,37 @@ export async function fetchFlag(
 	return response.data;
 }
 
+/**
+ * Fetch the specified flags by key, preserving the requested order. Throws
+ * listing all missing keys if any 404. Used by non-interactive mode to avoid
+ * listing every flag in the project just to filter down to a few.
+ */
+export async function fetchFlagsByKey(
+	apiKey: string,
+	projectKey: string,
+	flagKeys: string[],
+): Promise<LDFlag[]> {
+	const flags: LDFlag[] = [];
+	const missing: string[] = [];
+	for (const key of flagKeys) {
+		try {
+			flags.push(await fetchFlag(apiKey, projectKey, key));
+		} catch (err) {
+			if (axios.isAxiosError(err) && err.response?.status === 404) {
+				missing.push(key);
+				continue;
+			}
+			throw err;
+		}
+	}
+	if (missing.length > 0) {
+		throw new Error(
+			`Flag(s) not found in LaunchDarkly project: ${missing.join(', ')}`,
+		);
+	}
+	return flags;
+}
+
 // ─── Releases ────────────────────────────────────────────────────────────────
 
 export interface LDReleasePhase {

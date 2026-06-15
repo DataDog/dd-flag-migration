@@ -1,8 +1,8 @@
 import { describe, expect, it } from '@jest/globals';
 import { resolveEppoEnvMap, resolveEppoFlags } from '../src/eppo/index.js';
 import type { EppoFlag, EppoFlagEnvironment } from '../src/eppo/types.js';
-import { resolveLDEnvMap, resolveLDFlags } from '../src/launchdarkly/index.js';
-import type { LDEnvironment, LDFlag } from '../src/launchdarkly/types.js';
+import { resolveLDEnvMap } from '../src/launchdarkly/index.js';
+import type { LDEnvironment } from '../src/launchdarkly/types.js';
 import type { DatadogEnvironment } from '../src/types.js';
 
 const ddEnvs: DatadogEnvironment[] = [
@@ -46,24 +46,6 @@ describe('resolveLDEnvMap', () => {
 		expect(() =>
 			resolveLDEnvMap([['production', 'NopeEnv']], ldEnvs, ddEnvs),
 		).toThrow(/Datadog environment not found/);
-	});
-});
-
-describe('resolveLDFlags', () => {
-	const flags: LDFlag[] = [
-		{ key: 'a', name: 'A' } as LDFlag,
-		{ key: 'b', name: 'B' } as LDFlag,
-	];
-
-	it('returns flags in the requested order', () => {
-		const result = resolveLDFlags(['b', 'a'], flags);
-		expect(result.map((f) => f.key)).toEqual(['b', 'a']);
-	});
-
-	it('throws listing all missing keys', () => {
-		expect(() =>
-			resolveLDFlags(['a', 'missing-1', 'missing-2'], flags),
-		).toThrow(/missing-1, missing-2/);
 	});
 });
 

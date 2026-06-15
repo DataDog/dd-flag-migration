@@ -9,6 +9,7 @@ import {
 	fetchCustomRoles,
 	fetchFlag,
 	fetchFlags,
+	fetchFlagsByKey,
 	fetchProjectEnvironments,
 	fetchProjects,
 	fetchTeamsWithRoles,
@@ -263,6 +264,64 @@ describe('fetchFlag', () => {
 		expect(flag.key).toBe('kill-switch');
 		expect(flag.environments).toBeDefined();
 		expect(Object.keys(flag.environments ?? {})).toEqual(['dev', 'production']);
+	});
+});
+
+// ─── fetchFlagsByKey ─────────────────────────────────────────────────────────
+
+describe('fetchFlagsByKey', () => {
+	let mock: AxiosMockAdapter;
+
+	beforeEach(() => {
+		mock = new AxiosMockAdapter(ldClient as never);
+	});
+
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('fetches each requested flag and preserves order', async () => {
+		mock
+			.onGet('https://app.launchdarkly.com/api/v2/flags/my-project/kill-switch')
+			.reply(200, booleanFlagFull)
+			.onGet(
+				'https://app.launchdarkly.com/api/v2/flags/my-project/theme-selector',
+			)
+			.reply(200, { ...booleanFlagFull, key: 'theme-selector' });
+
+		const flags = await fetchFlagsByKey(API_KEY, 'my-project', [
+			'theme-selector',
+			'kill-switch',
+		]);
+		expect(flags.map((f) => f.key)).toEqual(['theme-selector', 'kill-switch']);
+	});
+
+	it('throws listing all missing keys when any flag 404s', async () => {
+		mock
+			.onGet('https://app.launchdarkly.com/api/v2/flags/my-project/kill-switch')
+			.reply(200, booleanFlagFull)
+			.onGet('https://app.launchdarkly.com/api/v2/flags/my-project/missing-1')
+			.reply(404, { message: 'not found' })
+			.onGet('https://app.launchdarkly.com/api/v2/flags/my-project/missing-2')
+			.reply(404, { message: 'not found' });
+
+		await expect(
+			fetchFlagsByKey(API_KEY, 'my-project', [
+				'kill-switch',
+				'missing-1',
+				'missing-2',
+			]),
+		).rejects.toThrow(/missing-1, missing-2/);
+	});
+
+	it('rethrows non-404 errors', async () => {
+		mock
+			.onGet('https://app.launchdarkly.com/api/v2/flags/my-project/kill-switch')
+			.reply(500, { message: 'server error' });
+
+		await expect(
+			fetchFlagsByKey(API_KEY, 'my-project', ['kill-switch']),
+		).rejects.toThrow();
 	});
 });
 
