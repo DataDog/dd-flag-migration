@@ -14,6 +14,7 @@ describe('resolveLDEnvMap', () => {
 	const ldEnvs: LDEnvironment[] = [
 		{ key: 'production', name: 'Production', color: '', archived: false },
 		{ key: 'staging', name: 'Staging', color: '', archived: false },
+		{ key: 'legacy', name: 'Legacy', color: '', archived: true },
 	];
 
 	it('matches LD env by key', () => {
@@ -46,6 +47,18 @@ describe('resolveLDEnvMap', () => {
 		expect(() =>
 			resolveLDEnvMap([['production', 'NopeEnv']], ldEnvs, ddEnvs),
 		).toThrow(/Datadog environment not found/);
+	});
+
+	it('throws for archived LD env', () => {
+		expect(() =>
+			resolveLDEnvMap([['legacy', 'Production']], ldEnvs, ddEnvs),
+		).toThrow(/archived/);
+	});
+
+	it('excludes archived envs from the available list in not-found error', () => {
+		expect(() =>
+			resolveLDEnvMap([['nope', 'Production']], ldEnvs, ddEnvs),
+		).toThrow(/LaunchDarkly environment not found.*(?!legacy)/s);
 	});
 });
 
@@ -80,8 +93,20 @@ describe('resolveEppoEnvMap', () => {
 
 describe('resolveEppoFlags', () => {
 	const flags: EppoFlag[] = [
-		{ key: 'a', name: 'A' } as EppoFlag,
-		{ key: 'b', name: 'B' } as EppoFlag,
+		{
+			key: 'a',
+			name: 'A',
+			environments: [
+				{ id: 1, name: 'Production', active: true, is_production: true },
+			],
+		} as EppoFlag,
+		{
+			key: 'b',
+			name: 'B',
+			environments: [
+				{ id: 2, name: 'Staging', active: true, is_production: false },
+			],
+		} as EppoFlag,
 	];
 
 	it('returns the matching flags', () => {
@@ -90,5 +115,24 @@ describe('resolveEppoFlags', () => {
 
 	it('throws listing missing keys', () => {
 		expect(() => resolveEppoFlags(['b', 'missing'], flags)).toThrow(/missing/);
+	});
+
+	it('passes when all flags are present in a mapped env', () => {
+		expect(
+			resolveEppoFlags(['a', 'b'], flags, new Set([1, 2])).map((f) => f.key),
+		).toEqual(['a', 'b']);
+	});
+
+	it('throws when a flag has no environment in the mapped set', () => {
+		expect(() => resolveEppoFlags(['a', 'b'], flags, new Set([1]))).toThrow(
+			/not present in any mapped Eppo environment.*b/,
+		);
+	});
+
+	it('skips env check when selectedEnvIds is undefined', () => {
+		const flagsNoEnv: EppoFlag[] = [{ key: 'x', name: 'X' } as EppoFlag];
+		expect(resolveEppoFlags(['x'], flagsNoEnv).map((f) => f.key)).toEqual([
+			'x',
+		]);
 	});
 });

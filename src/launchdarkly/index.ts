@@ -1706,10 +1706,16 @@ export function resolveLDEnvMap(
 			ldEnvironments.find((e) => e.name === src);
 		if (!ldEnv) {
 			const available = ldEnvironments
+				.filter((e) => !e.archived)
 				.map((e) => (e.key === e.name ? e.key : `${e.key} (${e.name})`))
 				.join(', ');
 			throw new Error(
 				`LaunchDarkly environment not found: "${src}". Available: ${available}`,
+			);
+		}
+		if (ldEnv.archived) {
+			throw new Error(
+				`LaunchDarkly environment "${ldEnv.key}" is archived and cannot be migrated`,
 			);
 		}
 		const ddEnv = ddByName.get(dst);
