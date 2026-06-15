@@ -62,7 +62,7 @@ describe('resolveLDEnvMap', () => {
 	it('excludes archived envs from the available list in not-found error', () => {
 		expect(() =>
 			resolveLDEnvMap([['nope', 'Production']], ldEnvs, ddEnvs),
-		).toThrow(/LaunchDarkly environment not found.*(?!legacy)/s);
+		).toThrow(/Available: (?!.*legacy)/s);
 	});
 });
 
