@@ -284,7 +284,17 @@ export interface SegmentMigrationStats {
 export interface SegmentMigrationResult {
 	/** "segKey:envKey:negated" → savedFilterId */
 	savedFilterLookup: Map<string, string>;
+	/** "segKey:envKey:negated" → constant segmentMatch result */
+	segmentConstantLookup: Map<string, boolean>;
 	stats: SegmentMigrationStats;
+}
+
+function isMatchNoneSegment(segment: LDSegment): boolean {
+	return (
+		segment.rules.length === 0 &&
+		segment.included.length === 0 &&
+		segment.includedContexts.length === 0
+	);
 }
 
 function formatAxiosError(err: unknown): string {
@@ -327,6 +337,7 @@ export async function migrateSegments(params: {
 		ddSite,
 	} = params;
 	const savedFilterLookup = new Map<string, string>();
+	const segmentConstantLookup = new Map<string, boolean>();
 	const stats: SegmentMigrationStats = {
 		discovered: 0,
 		created: 0,
@@ -351,7 +362,7 @@ export async function migrateSegments(params: {
 	);
 
 	if (refs.length === 0) {
-		return { savedFilterLookup, stats };
+		return { savedFilterLookup, segmentConstantLookup, stats };
 	}
 
 	// Group needed segment keys by envKey
@@ -435,6 +446,20 @@ export async function migrateSegments(params: {
 	for (const ref of refs) {
 		const segment = segmentsByKey.get(ref.envKey)?.get(ref.segmentKey);
 		if (!segment) continue; // fetch failed; already counted as skipped
+
+		if (segment.deleted) {
+			stats.skipped++;
+			continue;
+		}
+
+		if (isMatchNoneSegment(segment)) {
+			segmentConstantLookup.set(
+				`${ref.segmentKey}:${ref.envKey}:${ref.negated}`,
+				ref.negated,
+			);
+			stats.skipped++;
+			continue;
+		}
 
 		const tupleKey = `launchdarkly:${projectKey}:${ref.segmentKey}:${ref.envKey}:${ref.negated}`;
 		if (existingByTuple.has(tupleKey)) {
@@ -585,21 +610,6 @@ export async function migrateSegments(params: {
 			}
 		}
 
-		// Guard: deleted segment
-		if (segment.deleted) {
-			stats.skipped++;
-			continue;
-		}
-
-		// Guard: empty-match segment (no rules AND no included)
-		if (segment.rules.length === 0 && segment.included.length === 0) {
-			savedFilterSpinner.warn(
-				`Skipped "${ref.segmentKey}" — empty segment (no rules or included users)`,
-			);
-			stats.skipped++;
-			continue;
-		}
-
 		// Render name
 		const name = renderSavedFilterName(
 			segment.name,
@@ -694,5 +704,5 @@ export async function migrateSegments(params: {
 		`Created ${stats.created} saved filter(s) (${stats.negated} negated variants, ${stats.reused} reused, ${stats.skipped} skipped)`,
 	);
 
-	return { savedFilterLookup, stats };
+	return { savedFilterLookup, segmentConstantLookup, stats };
 }

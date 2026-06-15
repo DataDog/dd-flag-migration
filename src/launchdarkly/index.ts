@@ -789,7 +789,9 @@ async function executeMigration(
 
 	// ── Phase 1: Migrate segments as saved filters ─────────────────────────────
 	let savedFilterLookup = new Map<string, string>();
+	let segmentConstantLookup = new Map<string, boolean>();
 	let phase1Subheader: string | undefined;
+	let segmentMigrationStats: LDMigrationFile['segmentMigration'];
 	if (dryRun) {
 		// Populate the lookup with placeholder IDs so buildAllocations can
 		// accurately simulate the migration for segment-backed flags.
@@ -813,6 +815,8 @@ async function executeMigration(
 				ddSite,
 			});
 			savedFilterLookup = segmentResult.savedFilterLookup;
+			segmentConstantLookup = segmentResult.segmentConstantLookup;
+			segmentMigrationStats = segmentResult.stats;
 			if (segmentResult.stats.discovered > 0) {
 				const { created: sc, reused: sr, skipped: ss } = segmentResult.stats;
 				phase1Subheader =
@@ -896,6 +900,7 @@ async function executeMigration(
 				skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
 				syncedFlagKeys: syncedFlagKeys.length > 0 ? syncedFlagKeys : undefined,
 				flagKeyMapping,
+				segmentMigration: segmentMigrationStats,
 				flags: detailedFlags,
 				environmentMapping: environmentMappingArr,
 			};
@@ -993,6 +998,7 @@ async function executeMigration(
 				flag,
 				envMapping,
 				savedFilterLookup,
+				segmentConstantLookup,
 			);
 			if (!Array.isArray(allocationsResult)) {
 				spinner.warn(
@@ -1518,6 +1524,7 @@ async function executeMigration(
 			skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
 			syncedFlagKeys: syncedFlagKeys.length > 0 ? syncedFlagKeys : undefined,
 			flagKeyMapping,
+			segmentMigration: segmentMigrationStats,
 			flags: detailedFlags,
 			environmentMapping: environmentMappingArr,
 		};

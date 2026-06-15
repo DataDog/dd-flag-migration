@@ -1236,6 +1236,28 @@ describe('resolveSegmentMatch', () => {
 		expect(res).toEqual({ combine: 'OR', savedFilterIds: ['sf-a'] });
 	});
 
+	it('returns match=false for non-negated empty segment constants', () => {
+		const constants = new Map([['empty-seg:prod:false', false]]);
+		const clause = makeClause({
+			op: 'segmentMatch',
+			values: ['empty-seg'],
+			negate: false,
+		});
+		const res = resolveSegmentMatch(clause, 'prod', new Map(), constants);
+		expect(res).toEqual({ match: false });
+	});
+
+	it('returns match=true for negated empty segment constants', () => {
+		const constants = new Map([['empty-seg:prod:true', true]]);
+		const clause = makeClause({
+			op: 'segmentMatch',
+			values: ['empty-seg'],
+			negate: true,
+		});
+		const res = resolveSegmentMatch(clause, 'prod', new Map(), constants);
+		expect(res).toEqual({ match: true });
+	});
+
 	it('returns OR combine for non-negated multi-segment', () => {
 		const lookup = new Map([
 			['seg-a:prod:false', 'sf-a'],
@@ -1248,6 +1270,18 @@ describe('resolveSegmentMatch', () => {
 		});
 		const res = resolveSegmentMatch(clause, 'prod', lookup);
 		expect(res).toEqual({ combine: 'OR', savedFilterIds: ['sf-a', 'sf-b'] });
+	});
+
+	it('drops false constants from non-negated multi-segment OR', () => {
+		const lookup = new Map([['seg-a:prod:false', 'sf-a']]);
+		const constants = new Map([['empty-seg:prod:false', false]]);
+		const clause = makeClause({
+			op: 'segmentMatch',
+			values: ['empty-seg', 'seg-a'],
+			negate: false,
+		});
+		const res = resolveSegmentMatch(clause, 'prod', lookup, constants);
+		expect(res).toEqual({ combine: 'OR', savedFilterIds: ['sf-a'] });
 	});
 
 	it('returns AND combine for negated multi-segment', () => {
@@ -1368,6 +1402,81 @@ describe('buildTargetingRules — segmentMatch', () => {
 			attribute: 'country',
 			value: ['US'],
 		});
+	});
+
+	it('non-negated empty segment constant makes the rule unreachable', () => {
+		const constants = new Map([['empty-seg:prod:false', false]]);
+		const clauses = [
+			makeClause({
+				op: 'segmentMatch',
+				values: ['empty-seg'],
+				negate: false,
+			}),
+			makeClause({
+				_id: 'c2',
+				op: 'in',
+				attribute: 'country',
+				values: ['US'],
+			}),
+		];
+		const result = buildTargetingRules(clauses, 'prod', new Map(), constants);
+		expect(result).toBeNull();
+	});
+
+	it('non-negated empty segment constant dominates missing segments in the same rule', () => {
+		const constants = new Map([['empty-seg:prod:false', false]]);
+		const clauses = [
+			makeClause({
+				op: 'segmentMatch',
+				values: ['missing-seg'],
+				negate: false,
+			}),
+			makeClause({
+				_id: 'c2',
+				op: 'segmentMatch',
+				values: ['empty-seg'],
+				negate: false,
+			}),
+		];
+		const result = buildTargetingRules(clauses, 'prod', new Map(), constants);
+		expect(result).toBeNull();
+	});
+
+	it('negated empty segment constant is dropped from a mixed rule', () => {
+		const constants = new Map([['empty-seg:prod:true', true]]);
+		const clauses = [
+			makeClause({
+				op: 'segmentMatch',
+				values: ['empty-seg'],
+				negate: true,
+			}),
+			makeClause({
+				_id: 'c2',
+				op: 'in',
+				attribute: 'country',
+				values: ['US'],
+			}),
+		];
+		const result = buildTargetingRules(clauses, 'prod', new Map(), constants);
+		expect(Array.isArray(result)).toBe(true);
+		const rules = result as DatadogTargetingRule[];
+		expect(rules).toHaveLength(1);
+		expect(rules[0].conditions).toEqual([
+			{ operator: 'ONE_OF', attribute: 'country', value: ['US'] },
+		]);
+	});
+
+	it('negated empty segment constant by itself becomes an unconditional rule', () => {
+		const constants = new Map([['empty-seg:prod:true', true]]);
+		const clauses = [
+			makeClause({
+				op: 'segmentMatch',
+				values: ['empty-seg'],
+				negate: true,
+			}),
+		];
+		const result = buildTargetingRules(clauses, 'prod', new Map(), constants);
+		expect(result).toEqual([]);
 	});
 
 	it('non-negated multi-segment AND inline → fan-out with inline in each rule', () => {
@@ -1530,6 +1639,106 @@ describe('buildAllocations — segmentMatch', () => {
 		expect(allocs[0].targeting_rules?.[0].conditions[0]).toEqual({
 			saved_filter_id: 'sf-a',
 		});
+	});
+
+	it('skips the rule allocation for a non-negated empty segment constant', () => {
+		const constants = new Map([['empty-seg:production:false', false]]);
+		const flag = makeFlag({
+			key: 'f1',
+			environments: {
+				production: {
+					on: true,
+					archived: false,
+					targets: [],
+					contextTargets: [],
+					rules: [
+						{
+							_id: 'r1',
+							variation: 0,
+							clauses: [
+								makeClause({
+									op: 'segmentMatch',
+									values: ['empty-seg'],
+									negate: false,
+								}),
+								makeClause({
+									_id: 'c2',
+									op: 'in',
+									attribute: 'country',
+									values: ['US'],
+								}),
+							],
+							trackEvents: false,
+						},
+					],
+					fallthrough: { variation: 1 },
+					offVariation: 1,
+					prerequisites: [],
+					_environmentName: 'Production',
+				},
+			},
+		});
+		const result = buildAllocations(
+			flag,
+			new Map([['production', ddProd]]),
+			new Map(),
+			constants,
+		);
+		expect(Array.isArray(result)).toBe(true);
+		const allocs = result as DatadogAllocationForFlagCreation[];
+		expect(allocs).toHaveLength(1);
+		expect(allocs[0].key).toBe('f1-production-fallthrough');
+	});
+
+	it('drops a negated empty segment constant and keeps remaining rule conditions', () => {
+		const constants = new Map([['empty-seg:production:true', true]]);
+		const flag = makeFlag({
+			key: 'f1',
+			environments: {
+				production: {
+					on: true,
+					archived: false,
+					targets: [],
+					contextTargets: [],
+					rules: [
+						{
+							_id: 'r1',
+							variation: 0,
+							clauses: [
+								makeClause({
+									op: 'segmentMatch',
+									values: ['empty-seg'],
+									negate: true,
+								}),
+								makeClause({
+									_id: 'c2',
+									op: 'in',
+									attribute: 'country',
+									values: ['US'],
+								}),
+							],
+							trackEvents: false,
+						},
+					],
+					fallthrough: { variation: 1 },
+					offVariation: 1,
+					prerequisites: [],
+					_environmentName: 'Production',
+				},
+			},
+		});
+		const result = buildAllocations(
+			flag,
+			new Map([['production', ddProd]]),
+			new Map(),
+			constants,
+		);
+		expect(Array.isArray(result)).toBe(true);
+		const allocs = result as DatadogAllocationForFlagCreation[];
+		expect(allocs).toHaveLength(2);
+		expect(allocs[0].targeting_rules?.[0].conditions).toEqual([
+			{ operator: 'ONE_OF', attribute: 'country', value: ['US'] },
+		]);
 	});
 
 	it('returns flagSkip object when segment is missing from lookup', () => {
