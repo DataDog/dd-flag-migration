@@ -478,6 +478,7 @@ async function confirmMigration(
 			}));
 			if (variants.length === 0) {
 				spinner.warn(`Skipped ${chalk.cyan(flag.key)} — no variants`);
+				skippedFlags.push({ key: flag.key, reason: 'No variants' });
 				skipped++;
 				progressBar?.update(flag.key, { created, skipped, failed: errored });
 				continue;
