@@ -1,77 +1,82 @@
 {
-	"name": "@datadog/dd-flag-migration",
-	"version": "1.0.1",
-	"description": "CLI tool to migrate feature flags to Datadog",
-	"license": "Apache-2.0",
-	"type": "module",
-	"main": "dist/cli.js",
-	"bin": "dist/cli.js",
-	"scripts": {
-		"setup": "yarn install && yarn allow-scripts",
-		"migrate": "tsx src/cli.ts migrate",
-		"evaluate": "tsx src/cli.ts evaluate",
-		"build": "tsc -p tsconfig.build.json",
-		"start": "node dist/index.js",
-		"lint": "biome check",
-		"lint:fix": "biome check --write",
-		"typecheck": "tsc",
-		"test": "node --experimental-vm-modules node_modules/.bin/jest",
-		"licenses:validate": "scripts/licenses-validate.sh"
-	},
-	"dependencies": {
-		"@eppo/node-server-sdk": "^4.0.0",
-		"@inquirer/prompts": "^8.4.2",
-		"@launchdarkly/node-server-sdk": "^9.0.0",
-		"axios": "^1.15.1",
-		"chalk": "^5.3.0",
-		"exceljs": "^4.4.0",
-		"ora": "^9.3.0"
-	},
-	"devDependencies": {
-		"@biomejs/biome": "^2.4.12",
-		"@lavamoat/allow-scripts": "^3.4.3",
-		"@lavamoat/preinstall-always-fail": "^2.1.0",
-		"@types/jest": "^30.0.0",
-		"@types/node": "^25.6.0",
-		"axios-mock-adapter": "^2.1.0",
-		"jest": "^30.3.0",
-		"ts-jest": "^29.4.9",
-		"tsx": "^4.0.0",
-		"typescript": "^6.0.3"
-	},
-	"lavamoat": {
-		"allowScripts": {
-			"$root$": false,
-			"@lavamoat/preinstall-always-fail": false,
-			"tsx>esbuild": true,
-			"jest>@jest/core>jest-resolve>unrs-resolver": true
-		}
-	},
-	"packageManager": "yarn@4.10.3",
-	"engines": {
-		"node": ">=18",
-		"yarn": ">=4.10.3"
-	},
-	"repository": {
-		"type": "git",
-		"url": "git+https://github.com/DataDog/dd-flag-migration.git"
-	},
-	"keywords": [
-		"feature-flags",
-		"migration",
-		"launchdarkly",
-		"eppo",
-		"datadog",
-		"cli",
-		"devtools",
-		"feature-toggles",
-		"feature-management"
-	],
-	"bugs": {
-		"url": "https://github.com/DataDog/dd-flag-migration/issues"
-	},
-	"homepage": "https://github.com/DataDog/dd-flag-migration#readme",
-	"publishConfig": {
-		"access": "public"
-	}
+  "name": "@datadog/dd-flag-migration",
+  "version": "1.0.1",
+  "description": "CLI tool to migrate feature flags to Datadog",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "dist/cli.js",
+  "bin": "dist/cli.js",
+  "scripts": {
+    "setup": "yarn install && yarn allow-scripts",
+    "migrate": "tsx src/cli.ts migrate",
+    "evaluate": "tsx src/cli.ts evaluate",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/index.js",
+    "lint": "biome check",
+    "lint:fix": "biome check --write",
+    "typecheck": "tsc",
+    "test": "node --experimental-vm-modules node_modules/.bin/jest",
+    "licenses:validate": "scripts/licenses-validate.sh"
+  },
+  "dependencies": {
+    "@eppo/node-server-sdk": "^4.0.0",
+    "@inquirer/prompts": "^8.4.2",
+    "@launchdarkly/node-server-sdk": "^9.0.0",
+    "axios": "^1.17.0",
+    "chalk": "^5.3.0",
+    "exceljs": "^4.4.0",
+    "ora": "^9.3.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.12",
+    "@lavamoat/allow-scripts": "^3.4.3",
+    "@lavamoat/preinstall-always-fail": "^2.1.0",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^25.6.0",
+    "axios-mock-adapter": "^2.1.0",
+    "jest": "^30.3.0",
+    "ts-jest": "^29.4.9",
+    "tsx": "^4.0.0",
+    "typescript": "^6.0.3"
+  },
+  "lavamoat": {
+    "allowScripts": {
+      "$root$": false,
+      "@lavamoat/preinstall-always-fail": false,
+      "tsx>esbuild": true,
+      "jest>@jest/core>jest-resolve>unrs-resolver": true
+    }
+  },
+  "packageManager": "yarn@4.10.3",
+  "engines": {
+    "node": ">=18",
+    "yarn": ">=4.10.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DataDog/dd-flag-migration.git"
+  },
+  "keywords": [
+    "feature-flags",
+    "migration",
+    "launchdarkly",
+    "eppo",
+    "datadog",
+    "cli",
+    "devtools",
+    "feature-toggles",
+    "feature-management"
+  ],
+  "bugs": {
+    "url": "https://github.com/DataDog/dd-flag-migration/issues"
+  },
+  "homepage": "https://github.com/DataDog/dd-flag-migration#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "resolutions": {
+    "brace-expansion": "^2.0.3",
+    "picomatch": "^4.0.4",
+    "uuid": "^11.1.1"
+  }
 }
