@@ -509,7 +509,7 @@ interface MigrationOptions {
 	dryRun: boolean;
 	conflictResolution?: ConflictResolution;
 	nonInteractive?: boolean;
-	noExport?: boolean;
+	doExport?: boolean;
 }
 
 async function executeMigration(
@@ -529,7 +529,7 @@ async function executeMigration(
 		dryRun,
 		conflictResolution,
 		nonInteractive,
-		noExport,
+		doExport,
 	} = opts;
 
 	if (flags.length === 0) {
@@ -1431,7 +1431,7 @@ async function executeMigration(
 
 		let exportToSheets: boolean;
 		if (nonInteractive) {
-			exportToSheets = !noExport;
+			exportToSheets = doExport ?? false;
 		} else {
 			exportToSheets = await confirm({
 				message: 'Would you like to export migration results to an .xlsx file?',
@@ -1459,7 +1459,7 @@ export interface LDNonInteractiveOptions {
 
 export interface RunLaunchDarklyMigrationOptions {
 	nonInteractive?: LDNonInteractiveOptions;
-	noExport?: boolean;
+	doExport?: boolean;
 }
 
 export async function runLaunchDarklyMigration(
@@ -1481,7 +1481,7 @@ export async function runLaunchDarklyMigration(
 			ddSite,
 			dryRun,
 			options.nonInteractive,
-			options.noExport ?? false,
+			options.doExport ?? false,
 		);
 		return;
 	}
@@ -1738,7 +1738,7 @@ async function runLaunchDarklyMigrationNonInteractive(
 	ddSite: string,
 	dryRun: boolean,
 	ni: LDNonInteractiveOptions,
-	noExport: boolean,
+	doExport: boolean,
 ): Promise<void> {
 	printHeader();
 	console.log(chalk.gray('  Running in non-interactive mode\n'));
@@ -1831,7 +1831,7 @@ async function runLaunchDarklyMigrationNonInteractive(
 			// Default to skip for cross-project conflicts in non-interactive mode.
 			conflictResolution: { action: 'skip' },
 			nonInteractive: true,
-			noExport,
+			doExport,
 		},
 	);
 }

@@ -138,7 +138,7 @@ The tool will walk you through:
 API keys are read from environment variables (see [Credentials](#credentials-youll-need)).
 Pass `--datadog-site=<site>` to set the Datadog site without a prompt. For fully scripted runs, see [Non-interactive mode](#non-interactive-mode) below.
 
-When the migration completes, a record is saved to `~/.dd-flag-migration/migration-<timestamp>.json`. You can optionally export results to an `.xlsx` file.
+When the migration completes, a record is saved to `~/.dd-flag-migration/migration-<timestamp>.json`. In interactive mode you'll be prompted to export results to an `.xlsx` file; in non-interactive mode pass `--export=true` to generate one.
 
 ### Large migrations
 
@@ -186,7 +186,7 @@ Pass `--interactive=false` to run the migration entirely from CLI arguments, wit
 | Flag | Description |
 |---|---|
 | `--dry-run` | Preview changes without writing to Datadog |
-| `--no-export` | Skip the `.xlsx` export step |
+| `--export=<bool>` | Export results to an `.xlsx` file after migration (default: `false`) |
 
 **Examples**
 

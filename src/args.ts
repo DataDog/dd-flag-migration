@@ -11,7 +11,7 @@ export interface MigrateArgs {
 	dryRun: boolean;
 	datadogSite: string | undefined;
 	interactive: boolean;
-	noExport: boolean;
+	doExport: boolean;
 	nonInteractive?: NonInteractiveArgs;
 }
 
@@ -42,7 +42,7 @@ interface FlagDef {
 
 const FLAGS: FlagDef[] = [
 	{ name: '--dry-run', takesValue: false },
-	{ name: '--no-export', takesValue: false },
+	{ name: '--export', takesValue: true },
 	{ name: '--datadog-site', takesValue: true },
 	{ name: '--interactive', takesValue: true },
 	{ name: '--provider', takesValue: true },
@@ -57,7 +57,7 @@ const FLAGS: FlagDef[] = [
  */
 export function parseMigrateArgs(argv: string[]): MigrateArgs {
 	let dryRun = false;
-	let noExport = false;
+	let doExport = false;
 	let datadogSite: string | undefined;
 	let interactive: boolean | undefined;
 	let provider: ProviderValue | undefined;
@@ -105,8 +105,8 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 			case '--dry-run':
 				dryRun = true;
 				break;
-			case '--no-export':
-				noExport = true;
+			case '--export':
+				doExport = parseBool(value as string, name);
 				break;
 			case '--datadog-site':
 				datadogSite = (value as string).trim();
@@ -170,7 +170,7 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 			dryRun,
 			datadogSite,
 			interactive: false,
-			noExport,
+			doExport,
 			nonInteractive: {
 				provider,
 				projectKey,
@@ -184,6 +184,6 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 		dryRun,
 		datadogSite,
 		interactive: true,
-		noExport,
+		doExport,
 	};
 }

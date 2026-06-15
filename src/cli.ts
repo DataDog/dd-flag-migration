@@ -50,7 +50,7 @@ function printHelp(exitCode = 0): never {
 		'  --interactive=<bool>         Set to false to run without prompts (default: true)',
 	);
 	console.log(
-		'  --no-export                  Skip xlsx export (non-interactive mode only)',
+		'  --export=<bool>              Export results to xlsx after migration (default: false)',
 	);
 	console.log();
 	console.log(

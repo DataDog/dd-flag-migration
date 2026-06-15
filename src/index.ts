@@ -134,7 +134,7 @@ async function main(): Promise<void> {
 				'./launchdarkly/index.js'
 			);
 			await runLaunchDarklyMigration(ddApiKey, ddAppKey, ddSite, args.dryRun, {
-				noExport: args.noExport,
+				doExport: args.doExport,
 				nonInteractive: {
 					// biome-ignore lint/style/noNonNullAssertion: validated for LD
 					projectKey: ni.projectKey!,
@@ -145,7 +145,7 @@ async function main(): Promise<void> {
 		} else {
 			const { runEppoMigration } = await import('./eppo/index.js');
 			await runEppoMigration(ddApiKey, ddAppKey, ddSite, args.dryRun, {
-				noExport: args.noExport,
+				doExport: args.doExport,
 				nonInteractive: {
 					envMap: ni.envMap,
 					flagKeys: ni.flagKeys,

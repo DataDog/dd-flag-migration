@@ -260,7 +260,7 @@ async function confirmMigration(
 	site: string,
 	dryRun: boolean,
 	nonInteractive = false,
-	noExport = false,
+	doExport = false,
 ): Promise<ConfirmAction> {
 	if (flags.length === 0) {
 		console.log(chalk.yellow('\nNo flags selected — nothing to migrate.'));
@@ -876,7 +876,7 @@ async function confirmMigration(
 
 		let exportToSheets: boolean;
 		if (nonInteractive) {
-			exportToSheets = !noExport;
+			exportToSheets = doExport;
 		} else {
 			const { confirm } = await import('@inquirer/prompts');
 			exportToSheets = await confirm({
@@ -904,7 +904,7 @@ export interface EppoNonInteractiveOptions {
 
 export interface RunEppoMigrationOptions {
 	nonInteractive?: EppoNonInteractiveOptions;
-	noExport?: boolean;
+	doExport?: boolean;
 }
 
 export async function runEppoMigration(
@@ -926,7 +926,7 @@ export async function runEppoMigration(
 			ddSite,
 			dryRun,
 			options.nonInteractive,
-			options.noExport ?? false,
+			options.doExport ?? false,
 		);
 		return;
 	}
@@ -1119,7 +1119,7 @@ async function runEppoMigrationNonInteractive(
 	ddSite: string,
 	dryRun: boolean,
 	ni: EppoNonInteractiveOptions,
-	noExport: boolean,
+	doExport: boolean,
 ): Promise<void> {
 	console.log();
 	console.log(chalk.gray('  Running in non-interactive mode'));
@@ -1185,6 +1185,6 @@ async function runEppoMigrationNonInteractive(
 		ddSite,
 		dryRun,
 		true,
-		noExport,
+		doExport,
 	);
 }

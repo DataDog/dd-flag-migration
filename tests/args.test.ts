@@ -6,7 +6,7 @@ describe('parseMigrateArgs', () => {
 		const args = parseMigrateArgs([]);
 		expect(args.interactive).toBe(true);
 		expect(args.dryRun).toBe(false);
-		expect(args.noExport).toBe(false);
+		expect(args.doExport).toBe(false);
 		expect(args.nonInteractive).toBeUndefined();
 	});
 
@@ -176,21 +176,48 @@ describe('parseMigrateArgs', () => {
 		).toThrow(/--env-map must be/);
 	});
 
-	it('accepts --no-export', () => {
+	it('accepts --export=true', () => {
 		const args = parseMigrateArgs([
 			'--interactive=false',
 			'--provider=eppo',
 			'--datadog-site=datadoghq.com',
 			'--env-map=p,p',
 			'--feature-flag=x',
-			'--no-export',
+			'--export=true',
 		]);
-		expect(args.noExport).toBe(true);
+		expect(args.doExport).toBe(true);
 	});
 
-	it('rejects --no-export=foo (no value flag)', () => {
-		expect(() => parseMigrateArgs(['--no-export=true'])).toThrow(
-			/does not take a value/,
+	it('accepts --export=false', () => {
+		const args = parseMigrateArgs([
+			'--interactive=false',
+			'--provider=eppo',
+			'--datadog-site=datadoghq.com',
+			'--env-map=p,p',
+			'--feature-flag=x',
+			'--export=false',
+		]);
+		expect(args.doExport).toBe(false);
+	});
+
+	it('defaults doExport to false when --export is omitted', () => {
+		const args = parseMigrateArgs([
+			'--interactive=false',
+			'--provider=eppo',
+			'--datadog-site=datadoghq.com',
+			'--env-map=p,p',
+			'--feature-flag=x',
+		]);
+		expect(args.doExport).toBe(false);
+	});
+
+	it('rejects --export without a value', () => {
+		expect(() => parseMigrateArgs(['--export'])).toThrow(/requires a value/);
+	});
+
+	it('rejects --export=maybe', () => {
+		expect(() => parseMigrateArgs(['--export=maybe'])).toThrow(
+			/expects a boolean/,
 		);
 	});
 
