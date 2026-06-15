@@ -21,6 +21,7 @@ import type {
 	LDFlag,
 } from '../../src/launchdarkly/types.js';
 import type {
+	DatadogAllocationForFlagCreation,
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,
 	DatadogFlagEntry,
@@ -1006,6 +1007,105 @@ describe('migrate a flag where the mapped environment does not exist on the flag
 	it('only enables environments that exist and are on', () => {
 		expect(result.envsToEnable).toHaveLength(1);
 		expect(result.envsToEnable[0].id).toBe('dd-staging');
+	});
+});
+
+describe('migrate a flag with segmentMatch resolved via a match-all saved filter (empty segment)', () => {
+	// An empty LD segment (no rules, no included users) is migrated as a
+	// saved filter with `targetingKey MATCHES .*`. The flag migration should
+	// resolve the segmentMatch clause to the saved filter ID and produce a
+	// valid allocation — not skip the flag.
+	const flag: LDFlag = {
+		name: 'My Feature Flag',
+		kind: 'boolean',
+		key: 'my-feature-flag',
+		variations: [
+			{ _id: 'v0', value: true },
+			{ _id: 'v1', value: false },
+		],
+		defaults: { onVariation: 1, offVariation: 1 },
+		environments: {
+			production: makeEnv({
+				_environmentName: 'Production',
+				on: true,
+				rules: [
+					{
+						_id: 'r1',
+						variation: 0,
+						clauses: [
+							{
+								_id: 'c1',
+								attribute: 'segmentMatch',
+								op: 'segmentMatch',
+								values: ['empty-segment'],
+								contextKind: 'user',
+								negate: false,
+							},
+							{
+								_id: 'c2',
+								attribute: 'plan',
+								op: 'in',
+								values: ['enterprise'],
+								contextKind: 'user',
+								negate: false,
+							},
+						],
+						trackEvents: false,
+					},
+				],
+				fallthrough: { variation: 1 },
+			}),
+		},
+		tags: [],
+		archived: false,
+		deprecated: false,
+		temporary: true,
+	};
+
+	const envMapping = new Map([['production', ddProd]]);
+	// Simulate Phase 1 having created a match-all saved filter for the empty segment
+	const savedFilterLookup = new Map([
+		['empty-segment:production:false', 'sf-match-all-uuid'],
+	]);
+
+	const allocationsResult = buildAllocations(
+		flag,
+		envMapping,
+		savedFilterLookup,
+	);
+
+	it('resolves the segmentMatch and does not produce a flagSkip', () => {
+		expect(Array.isArray(allocationsResult)).toBe(true);
+	});
+
+	it('produces two allocations: one rule + one fallthrough', () => {
+		expect(Array.isArray(allocationsResult) && allocationsResult).toHaveLength(
+			2,
+		);
+	});
+
+	it('rule allocation references the saved filter ID', () => {
+		const allocs = allocationsResult as DatadogAllocationForFlagCreation[];
+		const rule = allocs[0];
+		expect(rule.targeting_rules).toHaveLength(1);
+		expect(rule.targeting_rules?.[0].conditions).toContainEqual({
+			saved_filter_id: 'sf-match-all-uuid',
+		});
+	});
+
+	it('rule allocation also includes the non-segment condition', () => {
+		const allocs = allocationsResult as DatadogAllocationForFlagCreation[];
+		const rule = allocs[0];
+		expect(rule.targeting_rules?.[0].conditions).toContainEqual({
+			operator: 'ONE_OF',
+			attribute: 'plan',
+			value: ['enterprise'],
+		});
+	});
+
+	it('fallthrough has no targeting rules', () => {
+		const allocs = allocationsResult as DatadogAllocationForFlagCreation[];
+		expect(allocs[1].targeting_rules).toBeUndefined();
 	});
 });
 

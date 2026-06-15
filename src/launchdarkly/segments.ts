@@ -591,15 +591,6 @@ export async function migrateSegments(params: {
 			continue;
 		}
 
-		// Guard: empty-match segment (no rules AND no included)
-		if (segment.rules.length === 0 && segment.included.length === 0) {
-			savedFilterSpinner.warn(
-				`Skipped "${ref.segmentKey}" — empty segment (no rules or included users)`,
-			);
-			stats.skipped++;
-			continue;
-		}
-
 		// Render name
 		const name = renderSavedFilterName(
 			segment.name,
@@ -645,6 +636,24 @@ export async function migrateSegments(params: {
 			continue;
 		}
 
+		// An empty segment (no rules, no included users) produces no rule groups.
+		// Normalize to a match-all rule so the saved filter can be created — the
+		// API rejects rule groups with zero conditions.
+		const normalizedRules =
+			targetingRules.length === 0
+				? [
+						{
+							conditions: [
+								{
+									operator: 'MATCHES',
+									attribute: 'targetingKey',
+									value: ['.*'],
+								},
+							],
+						},
+					]
+				: targetingRules;
+
 		const description = ref.negated
 			? segment.description
 				? `Inverse of: ${segment.description}`
@@ -668,7 +677,7 @@ export async function migrateSegments(params: {
 					name,
 					...(description ? { description } : {}),
 					creation_type: getCreationType(segment),
-					targeting_rules: targetingRules,
+					targeting_rules: normalizedRules,
 					migration_metadata: metadata,
 				},
 				ddSite,

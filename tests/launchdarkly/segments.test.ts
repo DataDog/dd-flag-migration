@@ -432,6 +432,13 @@ describe('buildNonNegatedRules', () => {
 		});
 		expect(buildNonNegatedRules(seg)).toBeNull();
 	});
+
+	it('empty segment (no rules, no included, no excluded): returns empty array', () => {
+		const seg = makeSegment({ key: 's' });
+		const result = buildNonNegatedRules(seg);
+		expect(result).not.toBeNull();
+		expect(result).toHaveLength(0);
+	});
 });
 
 // ─── buildNegatedRules ────────────────────────────────────────────────────────
@@ -589,8 +596,6 @@ describe('buildNegatedRules', () => {
 	});
 
 	it('empty segment (no rules, no included, no excluded): returns single group with zero conditions (tautology)', () => {
-		// The caller (migrateSegments) guards against this case before calling the API.
-		// This test documents the function's behavior for the empty-segment case.
 		const seg = makeSegment({ key: 's' });
 		const result = buildNegatedRules(seg);
 		expect(result).not.toBeNull();
