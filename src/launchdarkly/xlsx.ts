@@ -17,6 +17,7 @@ interface LDMigrationSheetRow {
 	flag: LDFlag;
 	status: LDMigrationRowStatus;
 	error: string;
+	datadogKey: string;
 }
 
 function buildLDMigrationRows(
@@ -26,22 +27,27 @@ function buildLDMigrationRows(
 	const skippedKeys = new Set((migration.skippedFlags ?? []).map((f) => f.key));
 	const syncedKeys = new Set(migration.syncedFlagKeys ?? []);
 	const errorByKey = new Map(migration.failures.map((f) => [f.key, f.error]));
+	const datadogKeyBySource = new Map(
+		(migration.flagKeyMapping ?? []).map((m) => [m.sourceKey, m.datadogKey]),
+	);
 
 	const rows: LDMigrationSheetRow[] = [];
 
 	for (const flag of migration.flags) {
+		const datadogKey = datadogKeyBySource.get(flag.key) ?? flag.key;
 		if (failedKeys.has(flag.key)) {
 			rows.push({
 				flag,
 				status: 'Failed',
 				error: errorByKey.get(flag.key) ?? '',
+				datadogKey,
 			});
 		} else if (skippedKeys.has(flag.key)) {
-			rows.push({ flag, status: 'Skipped', error: '' });
+			rows.push({ flag, status: 'Skipped', error: '', datadogKey });
 		} else if (syncedKeys.has(flag.key)) {
-			rows.push({ flag, status: 'Synced', error: '' });
+			rows.push({ flag, status: 'Synced', error: '', datadogKey });
 		} else {
-			rows.push({ flag, status: 'Created', error: '' });
+			rows.push({ flag, status: 'Created', error: '', datadogKey });
 		}
 	}
 
@@ -138,10 +144,10 @@ export async function exportLDMigrationToXlsx(
 
 	const rows = buildLDMigrationRows(migration);
 
-	for (const { flag, status, error } of rows) {
+	for (const { flag, status, error, datadogKey } of rows) {
 		const actionRequired =
 			status === 'Created'
-				? `Update your code to reference Datadog flag key: ${flag.key}`
+				? `Update your code to reference Datadog flag key: ${datadogKey}`
 				: '';
 
 		const dataRow = ws.addRow([

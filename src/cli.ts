@@ -66,7 +66,7 @@ function printHelp(exitCode = 0): never {
 		'  --env-map <source,target>        Map a source env to a Datadog env (repeatable; ≥1)',
 	);
 	console.log(
-		'  --feature-flag <key>             Flag key to migrate (repeatable; ≥1)',
+		'  --feature-flag <key>[,<dd-key>]  Flag key to migrate; LaunchDarkly may include a Datadog rename (repeatable; ≥1)',
 	);
 	console.log(
 		'  --project <key>                  LaunchDarkly project key (LaunchDarkly only)',

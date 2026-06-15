@@ -276,13 +276,14 @@ export async function evaluateLDFlag(
 	ldClient: LDClient,
 	ddFlags: Record<string, DDFlagValue>,
 	ddFlagKeys: Set<string>,
+	datadogFlagKey = flag.key,
 ): Promise<EvaluationResult> {
 	const vtype = mapFlagType(flag);
-	const ddFlag = ddFlags[flag.key];
+	const ddFlag = ddFlags[datadogFlagKey];
 	const ddStatus: DDStatus =
 		ddFlag !== undefined
 			? 'assigned'
-			: ddFlagKeys.has(flag.key)
+			: ddFlagKeys.has(datadogFlagKey)
 				? 'not-assigned'
 				: 'not-in-dd';
 
@@ -340,14 +341,15 @@ export async function evaluateLDFlagAdvanced(
 	ldClient: LDClient,
 	ddFlags: Record<string, DDFlagValue>,
 	ddFlagKeys: Set<string>,
+	datadogFlagKey = flagKey,
 ): Promise<
 	EvaluationResult & { providerStatus: 'found' | 'not-found' | 'error' }
 > {
-	const ddFlag = ddFlags[flagKey];
+	const ddFlag = ddFlags[datadogFlagKey];
 	const ddStatus: DDStatus =
 		ddFlag !== undefined
 			? 'assigned'
-			: ddFlagKeys.has(flagKey)
+			: ddFlagKeys.has(datadogFlagKey)
 				? 'not-assigned'
 				: 'not-in-dd';
 

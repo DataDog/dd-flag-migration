@@ -932,6 +932,13 @@ async function main(): Promise<void> {
 
 	// Track which flag keys are in the migration file
 	const migrationFileKeys = new Set(migration.flags.map((f) => f.key));
+	const ldDatadogKeyBySource = isLD
+		? new Map(
+				((migration as unknown as LDMigrationFile).flagKeyMapping ?? []).map(
+					(mapping) => [mapping.sourceKey, mapping.datadogKey],
+				),
+			)
+		: null;
 
 	// Collect all unique (subjectId, attributes) contexts needed across all flags
 	type DDContext = { subjectId: string; attributes: SubjectAttributes };
@@ -1052,7 +1059,8 @@ async function main(): Promise<void> {
 
 	for (const { flagKey, testCases } of flagTestCases) {
 		const inMigrationFile = migrationFileKeys.has(flagKey);
-		const ddMigrationMetadata = ddMigrationMetadataByKey.get(flagKey);
+		const datadogFlagKey = ldDatadogKeyBySource?.get(flagKey) ?? flagKey;
+		const ddMigrationMetadata = ddMigrationMetadataByKey.get(datadogFlagKey);
 
 		const skipReason = skippedFlagReason.get(flagKey);
 		const envFailCount = enableFailCountByFlag.get(flagKey) ?? 0;
@@ -1074,7 +1082,7 @@ async function main(): Promise<void> {
 						: envFailCount > 0
 							? 'partial'
 							: 'created';
-		const ddEnabled = ddEnabledByKey.get(flagKey) ?? null;
+		const ddEnabled = ddEnabledByKey.get(datadogFlagKey) ?? null;
 
 		const testResults: FlagTestResult[] = [];
 
@@ -1087,11 +1095,11 @@ async function main(): Promise<void> {
 			const ddFlagsForCase = ddFlagsPerContext.get(contextKey) ?? {};
 
 			if (providerInitError) {
-				const ddFlag = ddFlagsForCase[flagKey];
+				const ddFlag = ddFlagsForCase[datadogFlagKey];
 				const ddStatus: DDStatus =
 					ddFlag !== undefined
 						? 'assigned'
-						: ddFlagKeys.has(flagKey)
+						: ddFlagKeys.has(datadogFlagKey)
 							? 'not-assigned'
 							: 'not-in-dd';
 				testResults.push({
@@ -1103,7 +1111,11 @@ async function main(): Promise<void> {
 					error: `${providerLabel} SDK: ${providerInitError}`,
 					providerStatus: 'error',
 				});
-			} else if (isAdvanced && !inMigrationFile && !ddFlagKeys.has(flagKey)) {
+			} else if (
+				isAdvanced &&
+				!inMigrationFile &&
+				!ddFlagKeys.has(datadogFlagKey)
+			) {
 				// Flag not in migration file and not found in DD — skip provider call, will classify as notInDD
 				testResults.push({
 					testCase: tc,
@@ -1132,6 +1144,7 @@ async function main(): Promise<void> {
 						providerClient as LDClient,
 						ddFlagsForCase,
 						ddFlagKeys,
+						datadogFlagKey,
 					);
 					testResults.push({
 						testCase: tc,
@@ -1154,6 +1167,7 @@ async function main(): Promise<void> {
 						providerClient as LDClient,
 						ddFlagsForCase,
 						ddFlagKeys,
+						datadogFlagKey,
 					);
 					testResults.push({
 						testCase: tc,

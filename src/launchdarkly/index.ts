@@ -210,6 +210,62 @@ export interface ConflictClassification {
 	existingFlag?: DatadogFlagEntry;
 }
 
+export interface LDFlagMigrationSpec {
+	sourceKey: string;
+	datadogKey: string;
+}
+
+export type NonInteractiveConflictType = 'none' | 'same_project' | 'duplicate';
+
+export interface NonInteractiveConflictClassification {
+	type: NonInteractiveConflictType;
+	existingFlag?: DatadogFlagEntry;
+}
+
+export function parseLDFlagMigrationSpecs(
+	flagSpecs: string[],
+): LDFlagMigrationSpec[] {
+	const seenSourceKeys = new Set<string>();
+	return flagSpecs.map((raw) => {
+		const parts = raw.split(',').map((part) => part.trim());
+		if (
+			parts.length > 2 ||
+			parts.length === 0 ||
+			parts.some((part) => part.length === 0)
+		) {
+			throw new Error(
+				`--feature-flag must be either '<source-key>' or '<source-key>,<datadog-key>', got: ${raw}`,
+			);
+		}
+		const [sourceKey, datadogKey = sourceKey] = parts;
+		if (seenSourceKeys.has(sourceKey)) {
+			throw new Error(`Duplicate LaunchDarkly flag key: ${sourceKey}`);
+		}
+		seenSourceKeys.add(sourceKey);
+		return { sourceKey, datadogKey };
+	});
+}
+
+export function classifyNonInteractiveConflict(
+	datadogFlags: DatadogFlagEntry[],
+	projectKey: string,
+	sourceFlagKey: string,
+	datadogFlagKey: string,
+): NonInteractiveConflictClassification {
+	const keyMatch = datadogFlags.find((f) => f.key === datadogFlagKey);
+	if (!keyMatch) return { type: 'none' };
+
+	const metadata = keyMatch.migration_metadata;
+	if (
+		metadata?.project_key === projectKey &&
+		metadata.flag_key === sourceFlagKey
+	) {
+		return { type: 'same_project', existingFlag: keyMatch };
+	}
+
+	return { type: 'duplicate', existingFlag: keyMatch };
+}
+
 /** Classify the relationship between an LD flag and existing DD flags. */
 export function classifyConflict(
 	datadogFlags: DatadogFlagEntry[],
@@ -511,6 +567,7 @@ interface MigrationOptions {
 	conflictResolution?: ConflictResolution;
 	nonInteractive?: boolean;
 	doExport?: boolean;
+	targetKeyBySource?: Map<string, string>;
 }
 
 async function executeMigration(
@@ -531,6 +588,7 @@ async function executeMigration(
 		conflictResolution,
 		nonInteractive,
 		doExport,
+		targetKeyBySource,
 	} = opts;
 
 	if (flags.length === 0) {
@@ -795,6 +853,15 @@ async function executeMigration(
 	const syncedFlagKeys: string[] = [];
 	const dryRunRequests: Array<{ method: string; path: string; body: unknown }> =
 		[];
+	const flagKeyMapping =
+		targetKeyBySource === undefined
+			? undefined
+			: detailedFlags
+					.map((flag) => ({
+						sourceKey: flag.key,
+						datadogKey: targetKeyBySource.get(flag.key) ?? flag.key,
+					}))
+					.filter((mapping) => mapping.datadogKey !== mapping.sourceKey);
 	const progressBar = nonInteractive
 		? undefined
 		: new MigrationProgressBar(detailedFlags.length, phase1Subheader);
@@ -828,6 +895,7 @@ async function executeMigration(
 				enableFailures,
 				skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
 				syncedFlagKeys: syncedFlagKeys.length > 0 ? syncedFlagKeys : undefined,
+				flagKeyMapping,
 				flags: detailedFlags,
 				environmentMapping: environmentMappingArr,
 			};
@@ -940,10 +1008,33 @@ async function executeMigration(
 			}
 			const allocations = allocationsResult;
 			const envsToEnable = getEnvsToEnable(flag, envMapping);
-			const conflict = classifyConflict(datadogFlags, projectKey, flag.key);
+			const targetKey = targetKeyBySource?.get(flag.key) ?? flag.key;
+			const conflict = nonInteractive
+				? classifyNonInteractiveConflict(
+						datadogFlags,
+						projectKey,
+						flag.key,
+						targetKey,
+					)
+				: classifyConflict(datadogFlags, projectKey, flag.key);
+
+			if (nonInteractive && conflict.type === 'duplicate') {
+				const existing = conflict.existingFlag;
+				const metadata = existing?.migration_metadata;
+				const reason =
+					`Duplicate Datadog flag key "${targetKey}" already exists` +
+					(metadata
+						? ` from LaunchDarkly project "${metadata.project_key}"`
+						: ' without LaunchDarkly migration metadata');
+				spinner.fail(`Failed ${chalk.cyan(flag.key)}: ${chalk.red(reason)}`);
+				failures.push({ key: flag.key, error: reason });
+				errored++;
+				progressBar?.update(flag.key, { created, skipped, failed: errored });
+				continue;
+			}
 
 			// Cross-project conflict: skip or prefix
-			if (conflict.type === 'cross_project') {
+			if (!nonInteractive && conflict.type === 'cross_project') {
 				if (!conflictResolution || conflictResolution.action === 'skip') {
 					spinner.warn(
 						`Skipped ${chalk.cyan(flag.key)} — key already used by a flag from a different LaunchDarkly project`,
@@ -962,7 +1053,8 @@ async function executeMigration(
 
 			// For same_project and manual conflicts, sync onto the existing flag
 			const existingFlagId =
-				conflict.type === 'same_project' || conflict.type === 'manual'
+				conflict.type === 'same_project' ||
+				(!nonInteractive && conflict.type === 'manual')
 					? conflict.existingFlag?.id
 					: undefined;
 
@@ -1204,11 +1296,12 @@ async function executeMigration(
 				}
 			} else {
 				const usePrefix =
+					!nonInteractive &&
 					conflict.type === 'cross_project' &&
 					conflictResolution?.action === 'prefix';
 				const ddKey = usePrefix
 					? `${conflictResolution.prefix}-${flag.key}`
-					: flag.key;
+					: targetKey;
 
 				const tags = flag.tags;
 
@@ -1389,9 +1482,9 @@ async function executeMigration(
 		const dryRunData = {
 			provider: 'launchdarkly',
 			migratedAt: timestamp,
-			success: true,
-			summary: { created, synced, skipped, errored: 0, enabled: 0 },
-			failures: [],
+			success: errored === 0,
+			summary: { created, synced, skipped, errored, enabled: 0 },
+			failures,
 			enableFailures: [],
 			skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
 			flags: detailedFlags.map((f) => ({
@@ -1399,6 +1492,7 @@ async function executeMigration(
 				name: f.name,
 				kind: f.kind,
 			})),
+			flagKeyMapping,
 			environmentMapping: environmentMappingArr,
 			requests: dryRunRequests,
 		};
@@ -1423,6 +1517,7 @@ async function executeMigration(
 			enableFailures,
 			skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
 			syncedFlagKeys: syncedFlagKeys.length > 0 ? syncedFlagKeys : undefined,
+			flagKeyMapping,
 			flags: detailedFlags,
 			environmentMapping: environmentMappingArr,
 		};
@@ -1762,6 +1857,20 @@ async function runLaunchDarklyMigrationNonInteractive(
 		);
 	}
 
+	let flagSpecs: LDFlagMigrationSpec[];
+	try {
+		flagSpecs = parseLDFlagMigrationSpecs(ni.flagKeys);
+	} catch (err) {
+		console.error(
+			chalk.red(`\n  ${err instanceof Error ? err.message : String(err)}\n`),
+		);
+		process.exit(1);
+	}
+	const sourceFlagKeys = flagSpecs.map((spec) => spec.sourceKey);
+	const targetKeyBySource = new Map(
+		flagSpecs.map((spec) => [spec.sourceKey, spec.datadogKey]),
+	);
+
 	const projectSpinner = createSpinner(
 		'Fetching LaunchDarkly projects…',
 	).start();
@@ -1793,7 +1902,7 @@ async function runLaunchDarklyMigrationNonInteractive(
 	);
 
 	const loadSpinner = createSpinner(
-		`Fetching ${ni.flagKeys.length} flag(s) and Datadog data…`,
+		`Fetching ${sourceFlagKeys.length} flag(s) and Datadog data…`,
 	).start();
 	let selectedFlags: LDFlag[];
 	let ldEnvironments: LDEnvironment[];
@@ -1802,7 +1911,7 @@ async function runLaunchDarklyMigrationNonInteractive(
 	try {
 		[selectedFlags, ldEnvironments, datadogFlags, datadogEnvs] =
 			await Promise.all([
-				fetchFlagsByKey(ldApiKey, selectedProject.key, ni.flagKeys),
+				fetchFlagsByKey(ldApiKey, selectedProject.key, sourceFlagKeys),
 				fetchProjectEnvironments(ldApiKey, selectedProject.key),
 				fetchDatadogFlags(ddApiKey, ddAppKey, ddSite),
 				fetchDatadogEnvironments(ddApiKey, ddAppKey, ddSite),
@@ -1848,6 +1957,7 @@ async function runLaunchDarklyMigrationNonInteractive(
 			conflictResolution: { action: 'skip' },
 			nonInteractive: true,
 			doExport,
+			targetKeyBySource,
 		},
 	);
 }

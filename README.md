@@ -180,7 +180,7 @@ Non-interactive migrations write a JSON result document to stdout. Status messag
 | `--provider <Eppo\|LaunchDarkly>` | Source provider (case-insensitive) |
 | `--datadog-site <site>` | Datadog site (e.g. `datadoghq.com`) |
 | `--env-map <source,target>` | Map a source environment to a Datadog environment. Repeat for each environment |
-| `--feature-flag <key>` | Flag key to migrate. Repeat for each flag |
+| `--feature-flag <key>` | Flag key to migrate. Repeat for each flag. For LaunchDarkly, use `<source-key>,<datadog-key>` to rename the Datadog flag |
 | `--project <key>` | LaunchDarkly project key *(LaunchDarkly only)* |
 
 **Optional flags**
@@ -203,6 +203,17 @@ npx @datadog/dd-flag-migration migrate --interactive=false \
   --env-map Staging,QA \
   --feature-flag flag-one \
   --feature-flag flag-two
+```
+
+Rename a LaunchDarkly flag while migrating it:
+
+```bash
+npx @datadog/dd-flag-migration migrate --interactive=false \
+  --provider LaunchDarkly \
+  --project my-ld-project \
+  --datadog-site datadoghq.com \
+  --env-map Production,Production \
+  --feature-flag my-flag-1,my-renamed-flag-1
 ```
 
 Migrate Eppo flags (no project key required):

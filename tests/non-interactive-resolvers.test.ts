@@ -1,9 +1,13 @@
 import { describe, expect, it } from '@jest/globals';
 import { resolveEppoEnvMap, resolveEppoFlags } from '../src/eppo/index.js';
 import type { EppoFlag, EppoFlagEnvironment } from '../src/eppo/types.js';
-import { resolveLDEnvMap } from '../src/launchdarkly/index.js';
+import {
+	classifyNonInteractiveConflict,
+	parseLDFlagMigrationSpecs,
+	resolveLDEnvMap,
+} from '../src/launchdarkly/index.js';
 import type { LDEnvironment } from '../src/launchdarkly/types.js';
-import type { DatadogEnvironment } from '../src/types.js';
+import type { DatadogEnvironment, DatadogFlagEntry } from '../src/types.js';
 
 const ddEnvs: DatadogEnvironment[] = [
 	{ id: 'dd1', name: 'Production', is_production: true, queries: ['prod'] },
@@ -59,6 +63,125 @@ describe('resolveLDEnvMap', () => {
 		expect(() =>
 			resolveLDEnvMap([['nope', 'Production']], ldEnvs, ddEnvs),
 		).toThrow(/LaunchDarkly environment not found.*(?!legacy)/s);
+	});
+});
+
+describe('parseLDFlagMigrationSpecs', () => {
+	it('uses the source key as the Datadog key when no rename is provided', () => {
+		expect(parseLDFlagMigrationSpecs(['flag-a'])).toEqual([
+			{ sourceKey: 'flag-a', datadogKey: 'flag-a' },
+		]);
+	});
+
+	it('parses source and Datadog keys from comma-delimited specs', () => {
+		expect(parseLDFlagMigrationSpecs(['flag-a,renamed-flag-a'])).toEqual([
+			{ sourceKey: 'flag-a', datadogKey: 'renamed-flag-a' },
+		]);
+	});
+
+	it('trims source and Datadog keys', () => {
+		expect(parseLDFlagMigrationSpecs([' flag-a , renamed-flag-a '])).toEqual([
+			{ sourceKey: 'flag-a', datadogKey: 'renamed-flag-a' },
+		]);
+	});
+
+	it('rejects malformed rename specs', () => {
+		expect(() => parseLDFlagMigrationSpecs(['flag-a,'])).toThrow(
+			/--feature-flag/,
+		);
+		expect(() => parseLDFlagMigrationSpecs(['flag-a,b,c'])).toThrow(
+			/--feature-flag/,
+		);
+	});
+
+	it('rejects duplicate source keys', () => {
+		expect(() =>
+			parseLDFlagMigrationSpecs(['flag-a', 'flag-a,renamed-flag-a']),
+		).toThrow(/Duplicate LaunchDarkly flag key/);
+	});
+});
+
+describe('classifyNonInteractiveConflict', () => {
+	const projectKey = 'mobile';
+	const sourceKey = 'enable-dark-mode';
+	const targetKey = 'renamed-dark-mode';
+
+	it('returns none when no Datadog flag has the target key', () => {
+		expect(
+			classifyNonInteractiveConflict([], projectKey, sourceKey, targetKey),
+		).toEqual({ type: 'none' });
+	});
+
+	it('returns same_project when the target key was migrated from the same source flag', () => {
+		const datadogFlags: DatadogFlagEntry[] = [
+			{
+				id: 'dd-same',
+				key: targetKey,
+				migration_metadata: {
+					project_key: projectKey,
+					flag_key: sourceKey,
+				},
+			},
+		];
+		const result = classifyNonInteractiveConflict(
+			datadogFlags,
+			projectKey,
+			sourceKey,
+			targetKey,
+		);
+		expect(result.type).toBe('same_project');
+		expect(result.existingFlag?.id).toBe('dd-same');
+	});
+
+	it('returns duplicate when the target key exists without migration metadata', () => {
+		const result = classifyNonInteractiveConflict(
+			[{ id: 'dd-manual', key: targetKey }],
+			projectKey,
+			sourceKey,
+			targetKey,
+		);
+		expect(result.type).toBe('duplicate');
+		expect(result.existingFlag?.id).toBe('dd-manual');
+	});
+
+	it('returns duplicate when the target key was migrated from another project', () => {
+		const result = classifyNonInteractiveConflict(
+			[
+				{
+					id: 'dd-web',
+					key: targetKey,
+					migration_metadata: {
+						project_key: 'web',
+						flag_key: sourceKey,
+					},
+				},
+			],
+			projectKey,
+			sourceKey,
+			targetKey,
+		);
+		expect(result.type).toBe('duplicate');
+		expect(result.existingFlag?.id).toBe('dd-web');
+	});
+
+	it('returns duplicate when the target key belongs to a different source flag in the same project', () => {
+		const result = classifyNonInteractiveConflict(
+			[
+				{
+					id: 'dd-other-flag',
+					key: targetKey,
+					migration_metadata: {
+						project_key: projectKey,
+						flag_key: 'other-flag',
+					},
+				},
+			],
+			projectKey,
+			sourceKey,
+			targetKey,
+		);
+		expect(result.type).toBe('duplicate');
+		expect(result.existingFlag?.id).toBe('dd-other-flag');
 	});
 });
 
