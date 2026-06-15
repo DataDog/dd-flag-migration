@@ -5,7 +5,6 @@ import type { getInstance as getEppoInstance } from '@eppo/node-server-sdk';
 import { confirm, input, select } from '@inquirer/prompts';
 import axios from 'axios';
 import chalk from 'chalk';
-import ora from 'ora';
 import { CONFIG_DIR, getDatadogSite, saveDatadogSite } from './config.js';
 import { ddClient } from './datadog.js';
 import { requireEnvVars } from './env.js';
@@ -35,6 +34,7 @@ import {
 } from './launchdarkly/evaluate.js';
 import { mapFlagType } from './launchdarkly/migration.js';
 import type { LDFlag, LDMigrationFile } from './launchdarkly/types.js';
+import { createSpinner } from './spinner.js';
 import type {
 	DDFlagValue,
 	DDStatus,
@@ -946,7 +946,9 @@ async function main(): Promise<void> {
 	}
 
 	// 5b. Initialize provider SDK (non-fatal — errors surface in the table)
-	const initSpinner = ora(`Initializing ${providerLabel} SDK…`).start();
+	const initSpinner = createSpinner(
+		`Initializing ${providerLabel} SDK…`,
+	).start();
 	let providerClient: unknown = null;
 	let providerInitError: string | undefined;
 
@@ -965,7 +967,7 @@ async function main(): Promise<void> {
 	}
 
 	// 6. Fetch Datadog data: flag list + assignments for every unique context
-	const ddSpinner = ora(
+	const ddSpinner = createSpinner(
 		`Fetching Datadog data for ${uniqueContexts.size} test context(s)…`,
 	).start();
 	let ddFlagsPerContext: Map<string, Record<string, DDFlagValue>>;
@@ -1020,7 +1022,7 @@ async function main(): Promise<void> {
 		(sum, { testCases }) => sum + testCases.length,
 		0,
 	);
-	const evalSpinner = ora(
+	const evalSpinner = createSpinner(
 		`Evaluating ${flagTestCases.length} flag(s) across ${totalEvals} test case(s)…`,
 	).start();
 	const rows: TableRow[] = [];

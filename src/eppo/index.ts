@@ -3,7 +3,6 @@ import path from 'node:path';
 import { select } from '@inquirer/prompts';
 import axios from 'axios';
 import chalk from 'chalk';
-import ora from 'ora';
 import { CONFIG_DIR } from '../config.js';
 import {
 	createFeatureFlag,
@@ -16,6 +15,7 @@ import {
 import { filterableCheckbox } from '../filterable-checkbox.js';
 import { toSyncRequests } from '../migration.js';
 import { MigrationProgressBar } from '../progress-bar.js';
+import { createSpinner } from '../spinner.js';
 import type {
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,
@@ -427,7 +427,7 @@ async function confirmMigration(
 	progressBar?.start();
 	try {
 		for (const flag of flags) {
-			let spinner = ora(`Migrating ${chalk.cyan(flag.key)}…`).start();
+			let spinner = createSpinner(`Migrating ${chalk.cyan(flag.key)}…`).start();
 
 			if (flag.type === 'BANDIT') {
 				spinner.warn(
@@ -541,7 +541,7 @@ async function confirmMigration(
 				spinner.warn(
 					`${chalk.cyan(flag.key)} exists in Datadog — targeting filters in ${envsToEnable.map((e) => e.name).join(', ')} will be overwritten`,
 				);
-				spinner = ora(`Migrating ${chalk.cyan(flag.key)}…`).start();
+				spinner = createSpinner(`Migrating ${chalk.cyan(flag.key)}…`).start();
 
 				if (dryRun) {
 					let syncFilterCount = 0;
@@ -933,7 +933,7 @@ export async function runEppoMigration(
 
 	console.log();
 
-	const spinner = ora('Loading data…').start();
+	const spinner = createSpinner('Loading data…').start();
 	let flags: EppoFlag[] = [];
 	let datadogKeys: Map<string, string> = new Map();
 	let datadogEnvs: DatadogEnvironment[] = [];
@@ -1128,7 +1128,7 @@ async function runEppoMigrationNonInteractive(
 	}
 	console.log();
 
-	const spinner = ora('Loading data…').start();
+	const spinner = createSpinner('Loading data…').start();
 	let flags: EppoFlag[] = [];
 	let datadogKeys: Map<string, string> = new Map();
 	let datadogEnvs: DatadogEnvironment[] = [];

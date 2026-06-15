@@ -1,7 +1,7 @@
 import axios from 'axios';
 import chalk from 'chalk';
-import ora from 'ora';
 import { createSavedFilter, listSavedFilters } from '../datadog.js';
+import { createSpinner } from '../spinner.js';
 import type {
 	DatadogTargetingRule,
 	EppoSavedFilterMigrationMetadata,
@@ -110,7 +110,7 @@ export async function migrateAudiences(params: {
 	};
 
 	// ── Step 1: Fetch active audiences from Eppo ──────────────────────────────
-	const fetchSpinner = ora('Fetching audiences from Eppo…').start();
+	const fetchSpinner = createSpinner('Fetching audiences from Eppo…').start();
 	const audiences = await fetchEppoAudiences(eppoApiKey);
 	stats.discovered = audiences.length;
 	fetchSpinner.succeed(`Found ${audiences.length} active audience(s) in Eppo`);
@@ -120,7 +120,7 @@ export async function migrateAudiences(params: {
 	}
 
 	// ── Step 2: List existing DD saved filters for idempotency ────────────────
-	const idempotencySpinner = ora(
+	const idempotencySpinner = createSpinner(
 		'Checking for already-migrated saved filters…',
 	).start();
 	const existingFilters: SavedFilterSummary[] = [];
@@ -147,7 +147,7 @@ export async function migrateAudiences(params: {
 	);
 
 	// ── Step 3: Create saved filters for new audiences ────────────────────────
-	const createSpinner = ora(
+	const savedFilterSpinner = createSpinner(
 		dryRun
 			? 'Planning saved filters for audiences…'
 			: 'Creating saved filters for audiences…',
@@ -155,7 +155,7 @@ export async function migrateAudiences(params: {
 
 	for (const audience of audiences) {
 		if (audience.targeting_rules.length === 0) {
-			createSpinner.warn(
+			savedFilterSpinner.warn(
 				`Skipped "${audience.name}" — audience has no targeting rules`,
 			);
 			stats.skipped++;
@@ -183,7 +183,7 @@ export async function migrateAudiences(params: {
 
 		const targetingRules = buildAudienceTargetingRules(audience);
 		if (!targetingRules) {
-			createSpinner.warn(
+			savedFilterSpinner.warn(
 				`Skipped "${audience.name}" — no mappable targeting rules`,
 			);
 			stats.skipped++;
@@ -246,7 +246,7 @@ export async function migrateAudiences(params: {
 			stats.created++;
 		} catch (err) {
 			const error = formatAxiosError(err);
-			createSpinner.warn(
+			savedFilterSpinner.warn(
 				`Failed to create saved filter for "${audience.name}": ${error}`,
 			);
 			stats.failures.push({
@@ -258,7 +258,7 @@ export async function migrateAudiences(params: {
 	}
 
 	const createdVerb = dryRun ? 'Would create' : 'Created';
-	createSpinner.succeed(
+	savedFilterSpinner.succeed(
 		`${createdVerb} ${stats.created} audience saved filter(s) (${stats.reused} reused, ${stats.skipped} skipped)`,
 	);
 

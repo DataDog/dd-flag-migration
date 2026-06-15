@@ -3,7 +3,6 @@ import path from 'node:path';
 import { confirm, input, select } from '@inquirer/prompts';
 import axios from 'axios';
 import chalk from 'chalk';
-import ora from 'ora';
 import { CONFIG_DIR } from '../config.js';
 import {
 	applyRestrictionPolicy,
@@ -24,6 +23,7 @@ import {
 } from '../filterable-checkbox.js';
 import { toSyncRequests } from '../migration.js';
 import { MigrationProgressBar } from '../progress-bar.js';
+import { createSpinner } from '../spinner.js';
 import type {
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,
@@ -580,7 +580,7 @@ async function executeMigration(
 	}
 
 	// Fetch full flag details for selected flags
-	const detailSpinner = ora(
+	const detailSpinner = createSpinner(
 		`Fetching details for ${flags.length} flag(s)…`,
 	).start();
 	let detailedFlags: LDFlag[];
@@ -595,7 +595,7 @@ async function executeMigration(
 
 	// Discover teams with edit access via RBAC (project-level)
 	let projectEditorTeamKeys = new Set<string>();
-	const roleSpinner = ora('Fetching custom roles and teams…').start();
+	const roleSpinner = createSpinner('Fetching custom roles and teams…').start();
 	try {
 		const [customRoles, teamsWithRoles] = await Promise.all([
 			fetchCustomRoles(ldApiKey),
@@ -634,7 +634,7 @@ async function executeMigration(
 	const ldTeamKeys = [...projectEditorTeamKeys];
 
 	if (ldTeamKeys.length > 0) {
-		const teamSpinner = ora('Fetching Datadog teams…').start();
+		const teamSpinner = createSpinner('Fetching Datadog teams…').start();
 		try {
 			const ddTeams = await fetchDatadogTeams(ddApiKey, ddAppKey, ddSite);
 			teamSpinner.succeed(`Found ${ddTeams.length} Datadog team(s)`);
@@ -846,7 +846,7 @@ async function executeMigration(
 	progressBar?.start();
 	try {
 		for (const flag of detailedFlags) {
-			let spinner = ora(`Migrating ${chalk.cyan(flag.key)}…`).start();
+			let spinner = createSpinner(`Migrating ${chalk.cyan(flag.key)}…`).start();
 
 			// Check skip conditions
 			const skipResult = shouldSkipFlag(flag, selectedEnvs);
@@ -1041,7 +1041,7 @@ async function executeMigration(
 				spinner.warn(
 					`${chalk.cyan(flag.key)} exists in Datadog — targeting filters in ${envsToEnable.map((e) => e.name).join(', ')} will be overwritten`,
 				);
-				spinner = ora(`Migrating ${chalk.cyan(flag.key)}…`).start();
+				spinner = createSpinner(`Migrating ${chalk.cyan(flag.key)}…`).start();
 
 				if (dryRun) {
 					let syncFilterCount = 0;
@@ -1495,7 +1495,9 @@ export async function runLaunchDarklyMigration(
 		);
 	}
 
-	const projectSpinner = ora('Fetching LaunchDarkly projects…').start();
+	const projectSpinner = createSpinner(
+		'Fetching LaunchDarkly projects…',
+	).start();
 	let projects: LDProject[];
 	try {
 		projects = await fetchProjects(ldApiKey);
@@ -1531,7 +1533,7 @@ export async function runLaunchDarklyMigration(
 	);
 
 	// Fetch flags, project environments, and DD data in parallel
-	const loadSpinner = ora('Fetching flags and Datadog data…').start();
+	const loadSpinner = createSpinner('Fetching flags and Datadog data…').start();
 	let allFlags: LDFlag[];
 	let ldEnvironments: LDEnvironment[];
 	let datadogFlags: DatadogFlagEntry[] = [];
@@ -1748,7 +1750,9 @@ async function runLaunchDarklyMigrationNonInteractive(
 		);
 	}
 
-	const projectSpinner = ora('Fetching LaunchDarkly projects…').start();
+	const projectSpinner = createSpinner(
+		'Fetching LaunchDarkly projects…',
+	).start();
 	let projects: LDProject[];
 	try {
 		projects = await fetchProjects(ldApiKey);
@@ -1776,7 +1780,7 @@ async function runLaunchDarklyMigrationNonInteractive(
 			chalk.gray(` (${selectedProject.key})`),
 	);
 
-	const loadSpinner = ora(
+	const loadSpinner = createSpinner(
 		`Fetching ${ni.flagKeys.length} flag(s) and Datadog data…`,
 	).start();
 	let selectedFlags: LDFlag[];
