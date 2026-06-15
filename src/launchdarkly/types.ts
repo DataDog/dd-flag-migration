@@ -186,6 +186,14 @@ export interface LDMigrationFile {
 	skippedFlags?: Array<{ key: string; reason: string }>;
 	syncedFlagKeys?: string[];
 	flagKeyMapping?: Array<{ sourceKey: string; datadogKey: string }>;
+	segmentMigration?: {
+		discovered: number;
+		created: number;
+		negated: number;
+		reused: number;
+		skipped: number;
+		failures: Array<{ segmentKey: string; envKey: string; error: string }>;
+	};
 	flags: LDFlag[];
 	environmentMapping: Array<{
 		sourceEnvId: string;

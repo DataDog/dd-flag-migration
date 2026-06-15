@@ -52,7 +52,11 @@ import {
 	mapFlagType,
 	shouldSkipFlag,
 } from './migration.js';
-import { discoverSegmentRefs, migrateSegments } from './segments.js';
+import {
+	discoverSegmentRefs,
+	migrateSegments,
+	planDryRunSegments,
+} from './segments.js';
 import type { LDEnvironment, LDFlag, LDMigrationFile } from './types.js';
 
 // ─── UI Helpers ──────────────────────────────────────────────────────────────
@@ -789,17 +793,38 @@ async function executeMigration(
 
 	// ── Phase 1: Migrate segments as saved filters ─────────────────────────────
 	let savedFilterLookup = new Map<string, string>();
+	let segmentConstantLookup = new Map<string, boolean>();
 	let phase1Subheader: string | undefined;
+	let segmentMigrationStats: LDMigrationFile['segmentMigration'];
 	if (dryRun) {
-		// Populate the lookup with placeholder IDs so buildAllocations can
-		// accurately simulate the migration for segment-backed flags.
-		const refs = discoverSegmentRefs(detailedFlags, [...envMapping.keys()]);
-		for (let i = 0; i < refs.length; i++) {
-			const { segmentKey, envKey, negated } = refs[i];
-			savedFilterLookup.set(
-				`${segmentKey}:${envKey}:${negated}`,
-				`dry-run-placeholder-${i}`,
+		try {
+			const segmentResult = await planDryRunSegments({
+				ldApiKey,
+				projectKey,
+				selectedFlags: detailedFlags,
+				envMapping,
+			});
+			savedFilterLookup = segmentResult.savedFilterLookup;
+			segmentConstantLookup = segmentResult.segmentConstantLookup;
+		} catch (err) {
+			console.log(
+				chalk.yellow(
+					`  ⚠ Segment dry-run planning failed: ${err instanceof Error ? err.message : String(err)}`,
+				),
 			);
+			console.log(
+				chalk.dim(
+					'    Falling back to synthetic saved-filter IDs; empty segment folding may be inaccurate.',
+				),
+			);
+			const refs = discoverSegmentRefs(detailedFlags, [...envMapping.keys()]);
+			for (let i = 0; i < refs.length; i++) {
+				const { segmentKey, envKey, negated } = refs[i];
+				savedFilterLookup.set(
+					`${segmentKey}:${envKey}:${negated}`,
+					`dry-run-placeholder-${i}`,
+				);
+			}
 		}
 	} else {
 		try {
@@ -813,6 +838,8 @@ async function executeMigration(
 				ddSite,
 			});
 			savedFilterLookup = segmentResult.savedFilterLookup;
+			segmentConstantLookup = segmentResult.segmentConstantLookup;
+			segmentMigrationStats = segmentResult.stats;
 			if (segmentResult.stats.discovered > 0) {
 				const { created: sc, reused: sr, skipped: ss } = segmentResult.stats;
 				phase1Subheader =
@@ -896,6 +923,7 @@ async function executeMigration(
 				skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
 				syncedFlagKeys: syncedFlagKeys.length > 0 ? syncedFlagKeys : undefined,
 				flagKeyMapping,
+				segmentMigration: segmentMigrationStats,
 				flags: detailedFlags,
 				environmentMapping: environmentMappingArr,
 			};
@@ -993,6 +1021,7 @@ async function executeMigration(
 				flag,
 				envMapping,
 				savedFilterLookup,
+				segmentConstantLookup,
 			);
 			if (!Array.isArray(allocationsResult)) {
 				spinner.warn(
@@ -1518,6 +1547,7 @@ async function executeMigration(
 			skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
 			syncedFlagKeys: syncedFlagKeys.length > 0 ? syncedFlagKeys : undefined,
 			flagKeyMapping,
+			segmentMigration: segmentMigrationStats,
 			flags: detailedFlags,
 			environmentMapping: environmentMappingArr,
 		};

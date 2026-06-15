@@ -1009,6 +1009,86 @@ describe('migrate a flag where the mapped environment does not exist on the flag
 	});
 });
 
+describe('migrate a flag with segmentMatch resolved via an empty segment constant', () => {
+	// An empty LD segment (no rules, no included users) matches no contexts.
+	// A rule that ANDs against it is unreachable, so the migration should omit
+	// that rule allocation and keep the fallthrough.
+	const flag: LDFlag = {
+		name: 'My Feature Flag',
+		kind: 'boolean',
+		key: 'my-feature-flag',
+		variations: [
+			{ _id: 'v0', value: true },
+			{ _id: 'v1', value: false },
+		],
+		defaults: { onVariation: 1, offVariation: 1 },
+		environments: {
+			production: makeEnv({
+				_environmentName: 'Production',
+				on: true,
+				rules: [
+					{
+						_id: 'r1',
+						variation: 0,
+						clauses: [
+							{
+								_id: 'c1',
+								attribute: 'segmentMatch',
+								op: 'segmentMatch',
+								values: ['empty-segment'],
+								contextKind: 'user',
+								negate: false,
+							},
+							{
+								_id: 'c2',
+								attribute: 'plan',
+								op: 'in',
+								values: ['enterprise'],
+								contextKind: 'user',
+								negate: false,
+							},
+						],
+						trackEvents: false,
+					},
+				],
+				fallthrough: { variation: 1 },
+			}),
+		},
+		tags: [],
+		archived: false,
+		deprecated: false,
+		temporary: true,
+	};
+
+	const envMapping = new Map([['production', ddProd]]);
+	const segmentConstantLookup = new Map([
+		['empty-segment:production:false', false],
+	]);
+
+	const allocationsResult = buildAllocations(
+		flag,
+		envMapping,
+		new Map(),
+		segmentConstantLookup,
+	);
+
+	it('resolves the segmentMatch and does not produce a flagSkip', () => {
+		expect(Array.isArray(allocationsResult)).toBe(true);
+	});
+
+	it('produces only the fallthrough allocation', () => {
+		expect(Array.isArray(allocationsResult) && allocationsResult).toHaveLength(
+			1,
+		);
+	});
+
+	it('fallthrough has no targeting rules', () => {
+		expect(
+			Array.isArray(allocationsResult) && allocationsResult[0].targeting_rules,
+		).toBeUndefined();
+	});
+});
+
 describe('migrate a flag with empty targets (no values)', () => {
 	const flag: LDFlag = {
 		name: 'Empty Target Flag',

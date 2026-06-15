@@ -139,33 +139,49 @@ function combineRegex(patterns: string[]): string {
 export type SegmentMatchResolution =
 	| { combine: 'AND'; savedFilterIds: string[] }
 	| { combine: 'OR'; savedFilterIds: string[] }
+	| { match: boolean }
 	| { skip: string };
 
 /**
  * Resolve a segmentMatch clause to saved filter IDs.
  * negate:false → OR semantics → combine:"OR" (one targeting rule per id)
  * negate:true  → AND semantics → combine:"AND" (all ids in one targeting rule)
+ * Constant segment results are folded so empty segments do not require
+ * synthetic saved filters.
  */
 export function resolveSegmentMatch(
 	clause: LDClause,
 	envKey: string,
 	savedFilterLookup: Map<string, string>,
+	segmentConstantLookup: Map<string, boolean> = new Map(),
 ): SegmentMatchResolution {
 	if ((clause.values as unknown[]).length === 0) {
 		return { skip: 'segment not migrated' };
 	}
 
 	const savedFilterIds: string[] = [];
+	let hasMissingSegment = false;
 	for (const segKey of clause.values as string[]) {
 		const mapKey = `${segKey}:${envKey}:${clause.negate}`;
+		if (segmentConstantLookup.has(mapKey)) continue;
 		const id = savedFilterLookup.get(mapKey);
-		if (!id) return { skip: 'segment not migrated' };
-		savedFilterIds.push(id);
+		if (id) {
+			savedFilterIds.push(id);
+		} else {
+			hasMissingSegment = true;
+		}
 	}
 
-	return clause.negate
-		? { combine: 'AND', savedFilterIds }
-		: { combine: 'OR', savedFilterIds };
+	if (clause.negate) {
+		if (hasMissingSegment) return { skip: 'segment not migrated' };
+		if (savedFilterIds.length === 0) return { match: true };
+		return { combine: 'AND', savedFilterIds };
+	}
+
+	if (hasMissingSegment) return { skip: 'segment not migrated' };
+	if (savedFilterIds.length === 0) return { match: false };
+
+	return { combine: 'OR', savedFilterIds };
 }
 
 // ─── Skip Detection ──────────────────────────────────────────────────────────
@@ -265,17 +281,31 @@ export function buildTargetingRules(
 	clauses: LDClause[],
 	envKey = '',
 	savedFilterLookup: Map<string, string> = new Map(),
+	segmentConstantLookup: Map<string, boolean> = new Map(),
 ): BuildTargetingRulesResult {
 	if (clauses.length === 0) return [];
 
 	const inlineConditions: DatadogTargetingRule['conditions'] = [];
 	const andCombineIds: string[] = [];
 	const orCombineGroups: string[][] = [];
+	let deferredFlagSkip: string | undefined;
 
 	for (const clause of clauses) {
 		if (clause.op === 'segmentMatch') {
-			const res = resolveSegmentMatch(clause, envKey, savedFilterLookup);
-			if ('skip' in res) return { flagSkip: res.skip };
+			const res = resolveSegmentMatch(
+				clause,
+				envKey,
+				savedFilterLookup,
+				segmentConstantLookup,
+			);
+			if ('skip' in res) {
+				deferredFlagSkip ??= res.skip;
+				continue;
+			}
+			if ('match' in res) {
+				if (!res.match) return null;
+				continue;
+			}
 			if (res.combine === 'AND') {
 				andCombineIds.push(...res.savedFilterIds);
 			} else {
@@ -291,6 +321,8 @@ export function buildTargetingRules(
 			});
 		}
 	}
+
+	if (deferredFlagSkip !== undefined) return { flagSkip: deferredFlagSkip };
 
 	// Fan-out cap: product of all OR-combine group sizes
 	const fanOutSize = orCombineGroups.reduce((prod, g) => prod * g.length, 1);
@@ -310,13 +342,18 @@ export function buildTargetingRules(
 		fanOutCombinations = next;
 	}
 
-	return fanOutCombinations.map((fanOutIds) => ({
+	const targetingRules = fanOutCombinations.map((fanOutIds) => ({
 		conditions: [
 			...fanOutIds.map((id) => ({ saved_filter_id: id })),
 			...andCombineIds.map((id) => ({ saved_filter_id: id })),
 			...inlineConditions,
 		],
 	}));
+
+	return targetingRules.length === 1 &&
+		targetingRules[0].conditions.length === 0
+		? []
+		: targetingRules;
 }
 
 /** Build variant weights from a rollout or single variation index */
@@ -361,6 +398,7 @@ export function buildAllocations(
 	flag: LDFlag,
 	envMapping: Map<string, DatadogEnvironment>,
 	savedFilterLookup: Map<string, string> = new Map(),
+	segmentConstantLookup: Map<string, boolean> = new Map(),
 ): BuildAllocationsResult {
 	const allocations: DatadogAllocationForFlagCreation[] = [];
 
@@ -407,6 +445,7 @@ export function buildAllocations(
 				rule.clauses,
 				ldEnvKey,
 				savedFilterLookup,
+				segmentConstantLookup,
 			);
 
 			if (
