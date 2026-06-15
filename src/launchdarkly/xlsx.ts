@@ -27,6 +27,9 @@ function buildLDMigrationRows(
 	const skippedKeys = new Set((migration.skippedFlags ?? []).map((f) => f.key));
 	const syncedKeys = new Set(migration.syncedFlagKeys ?? []);
 	const errorByKey = new Map(migration.failures.map((f) => [f.key, f.error]));
+	const skipReasonByKey = new Map(
+		(migration.skippedFlags ?? []).map((f) => [f.key, f.reason]),
+	);
 	const datadogKeyBySource = new Map(
 		(migration.flagKeyMapping ?? []).map((m) => [m.sourceKey, m.datadogKey]),
 	);
@@ -43,7 +46,12 @@ function buildLDMigrationRows(
 				datadogKey,
 			});
 		} else if (skippedKeys.has(flag.key)) {
-			rows.push({ flag, status: 'Skipped', error: '', datadogKey });
+			rows.push({
+				flag,
+				status: 'Skipped',
+				error: skipReasonByKey.get(flag.key) ?? '',
+				datadogKey,
+			});
 		} else if (syncedKeys.has(flag.key)) {
 			rows.push({ flag, status: 'Synced', error: '', datadogKey });
 		} else {

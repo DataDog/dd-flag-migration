@@ -26,6 +26,9 @@ function buildMigrationRows(migration: MigrationFile): MigrationSheetRow[] {
 	const failedKeys = new Set(migration.failures.map((f) => f.key));
 	const skippedKeys = new Set((migration.skippedFlags ?? []).map((f) => f.key));
 	const errorByKey = new Map(migration.failures.map((f) => [f.key, f.error]));
+	const skipReasonByKey = new Map(
+		(migration.skippedFlags ?? []).map((f) => [f.key, f.reason]),
+	);
 
 	const rows: MigrationSheetRow[] = [];
 
@@ -37,7 +40,11 @@ function buildMigrationRows(migration: MigrationFile): MigrationSheetRow[] {
 				error: errorByKey.get(flag.key) ?? '',
 			});
 		} else if (skippedKeys.has(flag.key)) {
-			rows.push({ flag, status: 'Skipped', error: '' });
+			rows.push({
+				flag,
+				status: 'Skipped',
+				error: skipReasonByKey.get(flag.key) ?? '',
+			});
 		} else {
 			rows.push({ flag, status: 'Created', error: '' });
 		}
