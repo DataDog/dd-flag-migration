@@ -1086,6 +1086,7 @@ export function resolveEppoEnvMap(
 export function resolveEppoFlags(
 	keys: string[],
 	allFlags: EppoFlag[],
+	selectedEnvIds?: Set<number>,
 ): EppoFlag[] {
 	const byKey = new Map(allFlags.map((f) => [f.key, f]));
 	const selected: EppoFlag[] = [];
@@ -1097,6 +1098,16 @@ export function resolveEppoFlags(
 	}
 	if (missing.length > 0) {
 		throw new Error(`Flag(s) not found in Eppo: ${missing.join(', ')}`);
+	}
+	if (selectedEnvIds && selectedEnvIds.size > 0) {
+		const noEnv = selected.filter(
+			(f) => !f.environments?.some((e) => selectedEnvIds.has(e.id)),
+		);
+		if (noEnv.length > 0) {
+			throw new Error(
+				`Flag(s) not present in any mapped Eppo environment: ${noEnv.map((f) => f.key).join(', ')}`,
+			);
+		}
 	}
 	return selected;
 }
@@ -1151,7 +1162,11 @@ async function runEppoMigrationNonInteractive(
 			eppoEnvironments,
 			datadogEnvs,
 		));
-		selectedFlags = resolveEppoFlags(ni.flagKeys, flags);
+		selectedFlags = resolveEppoFlags(
+			ni.flagKeys,
+			flags,
+			new Set(envMapping.keys()),
+		);
 	} catch (err) {
 		console.error(
 			chalk.red(`\n  ${err instanceof Error ? err.message : String(err)}\n`),
