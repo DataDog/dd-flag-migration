@@ -57,6 +57,9 @@ function printHelp(exitCode = 0): never {
 		`${chalk.bold('Required when')} ${chalk.cyan('--interactive=false')}:`,
 	);
 	console.log(
+		'  Output is a JSON result document on stdout; status logs go to stderr.',
+	);
+	console.log(
 		'  --provider <Eppo|LaunchDarkly>   Source feature flag provider (case-insensitive)',
 	);
 	console.log(

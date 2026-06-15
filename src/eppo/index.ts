@@ -14,6 +14,7 @@ import {
 } from '../datadog.js';
 import { filterableCheckbox } from '../filterable-checkbox.js';
 import { toSyncRequests } from '../migration.js';
+import { writeJsonOutput } from '../output.js';
 import { MigrationProgressBar } from '../progress-bar.js';
 import { createSpinner } from '../spinner.js';
 import type {
@@ -378,7 +379,9 @@ async function confirmMigration(
 	const failures: Array<{ key: string; error: string }> = [];
 	const enableFailures: Array<{ key: string; env: string; error: string }> = [];
 	const skippedFlags: Array<{ key: string; reason: string }> = [];
-	const progressBar = new MigrationProgressBar(flags.length, phase1Subheader);
+	const progressBar = nonInteractive
+		? undefined
+		: new MigrationProgressBar(flags.length, phase1Subheader);
 
 	const environmentMapping: MigrationEnvironmentMapping[] = [];
 	for (const [eppoEnvId, ddEnv] of envMapping) {
@@ -423,7 +426,7 @@ async function confirmMigration(
 		process.exit(130);
 	};
 	process.once('SIGINT', sigintHandler);
-	if (progressBar) clearScreen();
+	if (!nonInteractive) clearScreen();
 	progressBar?.start();
 	try {
 		for (const flag of flags) {
@@ -835,8 +838,9 @@ async function confirmMigration(
 	}
 
 	const timestamp = new Date().toISOString();
+	let outputData: DryRunFile | MigrationFile | undefined;
 
-	if (dryRun && dryRunRequests.length > 0) {
+	if (dryRun) {
 		const dryRunData: DryRunFile = {
 			provider,
 			migratedAt: timestamp,
@@ -849,13 +853,16 @@ async function confirmMigration(
 			environmentMapping,
 			requests: dryRunRequests,
 		};
-		const filename = `dry-run-${timestamp}.json`;
-		const filepath = path.join(process.cwd(), filename);
-		fs.writeFileSync(filepath, JSON.stringify(dryRunData, null, 2));
-		console.log(chalk.gray(`  Requests written to ${filepath}`));
+		outputData = dryRunData;
+		if (dryRunRequests.length > 0) {
+			const filename = `dry-run-${timestamp}.json`;
+			const filepath = path.join(process.cwd(), filename);
+			fs.writeFileSync(filepath, JSON.stringify(dryRunData, null, 2));
+			console.log(chalk.gray(`  Requests written to ${filepath}`));
+		}
 	}
 
-	if (!dryRun && (created > 0 || synced > 0 || errored > 0)) {
+	if (!dryRun) {
 		const migrationData: MigrationFile = {
 			provider,
 			migratedAt: timestamp,
@@ -867,31 +874,39 @@ async function confirmMigration(
 			flags,
 			environmentMapping,
 		};
-		const filename = `migration-${timestamp}.json`;
-		if (!fs.existsSync(CONFIG_DIR))
-			fs.mkdirSync(CONFIG_DIR, { recursive: true });
-		const filepath = path.join(CONFIG_DIR, filename);
-		fs.writeFileSync(filepath, JSON.stringify(migrationData, null, 2));
-		console.log(chalk.gray(`  Migration saved to ${filepath}`));
+		outputData = migrationData;
+		if (created > 0 || synced > 0 || errored > 0) {
+			const filename = `migration-${timestamp}.json`;
+			if (!fs.existsSync(CONFIG_DIR))
+				fs.mkdirSync(CONFIG_DIR, { recursive: true });
+			const filepath = path.join(CONFIG_DIR, filename);
+			fs.writeFileSync(filepath, JSON.stringify(migrationData, null, 2));
+			console.log(chalk.gray(`  Migration saved to ${filepath}`));
 
-		let exportToSheets: boolean;
-		if (nonInteractive) {
-			exportToSheets = doExport;
-		} else {
-			const { confirm } = await import('@inquirer/prompts');
-			exportToSheets = await confirm({
-				message: 'Would you like to export migration results to an .xlsx file?',
-				default: false,
-			});
-		}
-		if (exportToSheets) {
-			const { exportMigrationToXlsx } = await import('./xlsx.js');
-			await exportMigrationToXlsx(migrationData);
+			let exportToSheets: boolean;
+			if (nonInteractive) {
+				exportToSheets = doExport;
+			} else {
+				const { confirm } = await import('@inquirer/prompts');
+				exportToSheets = await confirm({
+					message:
+						'Would you like to export migration results to an .xlsx file?',
+					default: false,
+				});
+			}
+			if (exportToSheets) {
+				const { exportMigrationToXlsx } = await import('./xlsx.js');
+				await exportMigrationToXlsx(migrationData);
+			}
 		}
 	}
 
+	if (nonInteractive && outputData) {
+		writeJsonOutput(outputData);
+	}
+
 	console.log();
-	if (nonInteractive && errored > 0) process.exit(1);
+	if (nonInteractive && errored > 0) process.exitCode = 1;
 	return 'migrate';
 }
 

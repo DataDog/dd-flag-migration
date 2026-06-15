@@ -22,6 +22,7 @@ import {
 	filterableSelect,
 } from '../filterable-checkbox.js';
 import { toSyncRequests } from '../migration.js';
+import { writeJsonOutput } from '../output.js';
 import { MigrationProgressBar } from '../progress-bar.js';
 import { createSpinner } from '../spinner.js';
 import type {
@@ -794,10 +795,9 @@ async function executeMigration(
 	const syncedFlagKeys: string[] = [];
 	const dryRunRequests: Array<{ method: string; path: string; body: unknown }> =
 		[];
-	const progressBar = new MigrationProgressBar(
-		detailedFlags.length,
-		phase1Subheader,
-	);
+	const progressBar = nonInteractive
+		? undefined
+		: new MigrationProgressBar(detailedFlags.length, phase1Subheader);
 
 	const environmentMappingArr: LDMigrationFile['environmentMapping'] = [];
 	for (const [ldEnvKey, ddEnv] of envMapping) {
@@ -842,7 +842,7 @@ async function executeMigration(
 		process.exit(130);
 	};
 	process.once('SIGINT', sigintHandler);
-	if (progressBar) clearScreen();
+	if (!nonInteractive) clearScreen();
 	progressBar?.start();
 	try {
 		for (const flag of detailedFlags) {
@@ -1383,8 +1383,9 @@ async function executeMigration(
 
 	// ─── Persist Results ───────────────────────────────────────────────────────
 	const timestamp = new Date().toISOString();
+	let outputData: unknown;
 
-	if (dryRun && dryRunRequests.length > 0) {
+	if (dryRun) {
 		const dryRunData = {
 			provider: 'launchdarkly',
 			migratedAt: timestamp,
@@ -1401,13 +1402,16 @@ async function executeMigration(
 			environmentMapping: environmentMappingArr,
 			requests: dryRunRequests,
 		};
-		const filename = `dry-run-${timestamp}.json`;
-		const filepath = path.join(process.cwd(), filename);
-		fs.writeFileSync(filepath, JSON.stringify(dryRunData, null, 2));
-		console.log(chalk.gray(`  Requests written to ${filepath}`));
+		outputData = dryRunData;
+		if (dryRunRequests.length > 0) {
+			const filename = `dry-run-${timestamp}.json`;
+			const filepath = path.join(process.cwd(), filename);
+			fs.writeFileSync(filepath, JSON.stringify(dryRunData, null, 2));
+			console.log(chalk.gray(`  Requests written to ${filepath}`));
+		}
 	}
 
-	if (!dryRun && (created > 0 || synced > 0 || errored > 0)) {
+	if (!dryRun) {
 		const migrationData: LDMigrationFile = {
 			provider: 'launchdarkly',
 			projectKey,
@@ -1422,30 +1426,38 @@ async function executeMigration(
 			flags: detailedFlags,
 			environmentMapping: environmentMappingArr,
 		};
-		const filename = `migration-${timestamp}.json`;
-		if (!fs.existsSync(CONFIG_DIR))
-			fs.mkdirSync(CONFIG_DIR, { recursive: true });
-		const filepath = path.join(CONFIG_DIR, filename);
-		fs.writeFileSync(filepath, JSON.stringify(migrationData, null, 2));
-		console.log(chalk.gray(`  Migration saved to ${filepath}`));
+		outputData = migrationData;
+		if (created > 0 || synced > 0 || errored > 0) {
+			const filename = `migration-${timestamp}.json`;
+			if (!fs.existsSync(CONFIG_DIR))
+				fs.mkdirSync(CONFIG_DIR, { recursive: true });
+			const filepath = path.join(CONFIG_DIR, filename);
+			fs.writeFileSync(filepath, JSON.stringify(migrationData, null, 2));
+			console.log(chalk.gray(`  Migration saved to ${filepath}`));
 
-		let exportToSheets: boolean;
-		if (nonInteractive) {
-			exportToSheets = doExport ?? false;
-		} else {
-			exportToSheets = await confirm({
-				message: 'Would you like to export migration results to an .xlsx file?',
-				default: false,
-			});
-		}
-		if (exportToSheets) {
-			const { exportLDMigrationToXlsx } = await import('./xlsx.js');
-			await exportLDMigrationToXlsx(migrationData);
+			let exportToSheets: boolean;
+			if (nonInteractive) {
+				exportToSheets = doExport ?? false;
+			} else {
+				exportToSheets = await confirm({
+					message:
+						'Would you like to export migration results to an .xlsx file?',
+					default: false,
+				});
+			}
+			if (exportToSheets) {
+				const { exportLDMigrationToXlsx } = await import('./xlsx.js');
+				await exportLDMigrationToXlsx(migrationData);
+			}
 		}
 	}
 
+	if (nonInteractive && outputData) {
+		writeJsonOutput(outputData);
+	}
+
 	console.log();
-	if (nonInteractive && errored > 0) process.exit(1);
+	if (nonInteractive && errored > 0) process.exitCode = 1;
 	return 'migrate';
 }
 

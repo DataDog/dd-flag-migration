@@ -171,6 +171,8 @@ To create and manage sub-organizations, see [Multi-Organization Accounts](https:
 
 Pass `--interactive=false` to run the migration entirely from CLI arguments, with no prompts. This is useful for scripted or CI environments.
 
+Non-interactive migrations write a JSON result document to stdout. Status messages, progress output, and export messages are written to stderr so stdout can be piped into tools such as `jq`.
+
 **Required flags**
 
 | Flag | Description |

@@ -9,6 +9,7 @@ import {
 } from './args.js';
 import { getDatadogSite, saveDatadogSite } from './config.js';
 import { requireEnvVars } from './env.js';
+import { withConsoleLogToStderr } from './output.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -118,40 +119,48 @@ async function main(): Promise<void> {
 	const ddAppKey = ddEnv.DD_APP_KEY;
 
 	if (!args.interactive && args.nonInteractive) {
-		// Non-interactive: skip UI, prompts, and saved-site lookup.
 		const ni = args.nonInteractive;
-		if (ni.provider === 'eppo') {
-			requireEnvVars(['EPPO_API_KEY']);
-		} else {
-			requireEnvVars(['LAUNCHDARKLY_API_KEY']);
-		}
-		// Already validated upstream.
-		// biome-ignore lint/style/noNonNullAssertion: validated in parseMigrateArgs
-		const ddSite = args.datadogSite!;
+		await withConsoleLogToStderr(async () => {
+			// Non-interactive: skip UI, prompts, and saved-site lookup.
+			if (ni.provider === 'eppo') {
+				requireEnvVars(['EPPO_API_KEY']);
+			} else {
+				requireEnvVars(['LAUNCHDARKLY_API_KEY']);
+			}
+			// Already validated upstream.
+			// biome-ignore lint/style/noNonNullAssertion: validated in parseMigrateArgs
+			const ddSite = args.datadogSite!;
 
-		if (ni.provider === 'launchdarkly') {
-			const { runLaunchDarklyMigration } = await import(
-				'./launchdarkly/index.js'
-			);
-			await runLaunchDarklyMigration(ddApiKey, ddAppKey, ddSite, args.dryRun, {
-				doExport: args.doExport,
-				nonInteractive: {
-					// biome-ignore lint/style/noNonNullAssertion: validated for LD
-					projectKey: ni.projectKey!,
-					envMap: ni.envMap,
-					flagKeys: ni.flagKeys,
-				},
-			});
-		} else {
-			const { runEppoMigration } = await import('./eppo/index.js');
-			await runEppoMigration(ddApiKey, ddAppKey, ddSite, args.dryRun, {
-				doExport: args.doExport,
-				nonInteractive: {
-					envMap: ni.envMap,
-					flagKeys: ni.flagKeys,
-				},
-			});
-		}
+			if (ni.provider === 'launchdarkly') {
+				const { runLaunchDarklyMigration } = await import(
+					'./launchdarkly/index.js'
+				);
+				await runLaunchDarklyMigration(
+					ddApiKey,
+					ddAppKey,
+					ddSite,
+					args.dryRun,
+					{
+						doExport: args.doExport,
+						nonInteractive: {
+							// biome-ignore lint/style/noNonNullAssertion: validated for LD
+							projectKey: ni.projectKey!,
+							envMap: ni.envMap,
+							flagKeys: ni.flagKeys,
+						},
+					},
+				);
+			} else {
+				const { runEppoMigration } = await import('./eppo/index.js');
+				await runEppoMigration(ddApiKey, ddAppKey, ddSite, args.dryRun, {
+					doExport: args.doExport,
+					nonInteractive: {
+						envMap: ni.envMap,
+						flagKeys: ni.flagKeys,
+					},
+				});
+			}
+		});
 		return;
 	}
 
