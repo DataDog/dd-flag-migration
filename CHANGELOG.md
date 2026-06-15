@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.1] — 2026-06-15
+
+### Migration — LaunchDarkly
+
+- Fix: fold empty segments during migration instead of creating synthetic saved filters (#80)
+  - Empty segments (no rules, no included targets) match no contexts; non-negated references make the containing rule unreachable and are omitted, negated references are always true and the clause is dropped
+  - Multi-segment OR clauses drop false empty-segment constants and continue using real saved filters
+  - Records segment migration stats in migration output so Phase 1 outcomes are visible without re-running
+
+### Export
+
+- Fix: include skip reason in the `Error` column of the `.xlsx` migration export for both Eppo and LaunchDarkly (#81)
+  - Also fixes a bug in the Eppo migration where the "no variants" skip case was not tracked in `skippedFlags`, causing the reason to be absent from the JSON export
+
 ## [1.0.0] — 2026-06-15
 
 ### CLI — Non-interactive / scripted mode
