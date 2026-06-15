@@ -188,19 +188,3 @@ export async function fetchEppoAudiences(
 	}
 	return all;
 }
-
-export async function validateEppoApiKey(apiKey: string): Promise<boolean> {
-	try {
-		// Probe with a single-row page rather than fetching every flag.
-		await eppoClient.get(`${EPPO_BASE_URL}/api/v1/feature-flags`, {
-			headers: {
-				'x-eppo-token': apiKey,
-				'Content-Type': 'application/json',
-			},
-			params: { offset: 0, limit: 1 },
-		});
-		return true;
-	} catch {
-		return false;
-	}
-}

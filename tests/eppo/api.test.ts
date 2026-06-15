@@ -16,7 +16,6 @@ import {
 	eppoClient,
 	extractEnvironments,
 	fetchEppoFlags,
-	validateEppoApiKey,
 } from '../../src/eppo/api.js';
 import type { EppoFlag } from '../../src/eppo/types.js';
 
@@ -381,30 +380,4 @@ describe('Eppo client 429 handling', () => {
 		);
 		expect(response.status).toBe(200);
 	}, 10000);
-});
-
-// ─── validateEppoApiKey ──────────────────────────────────────────────────────
-
-describe('validateEppoApiKey', () => {
-	let mock: AxiosMockAdapter;
-
-	beforeEach(() => {
-		mock = new AxiosMockAdapter(eppoClient as never);
-	});
-
-	afterEach(() => {
-		mock.restore();
-	});
-
-	it('returns true for valid API key', async () => {
-		mock.onGet('https://eppo.cloud/api/v1/feature-flags').reply(200, []);
-
-		expect(await validateEppoApiKey('valid-key')).toBe(true);
-	});
-
-	it('returns false for invalid API key', async () => {
-		mock.onGet('https://eppo.cloud/api/v1/feature-flags').reply(401);
-
-		expect(await validateEppoApiKey('bad-key')).toBe(false);
-	});
 });
