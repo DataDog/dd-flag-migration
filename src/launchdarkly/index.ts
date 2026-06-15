@@ -1740,7 +1740,6 @@ async function runLaunchDarklyMigrationNonInteractive(
 	ni: LDNonInteractiveOptions,
 	noExport: boolean,
 ): Promise<void> {
-	clearScreen();
 	printHeader();
 	console.log(chalk.gray('  Running in non-interactive mode\n'));
 	if (dryRun) {
