@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.0] — 2026-06-15
+
+### CLI — Non-interactive / scripted mode
+
+- Add `--interactive=false` flag that bypasses all prompts for CI and scripted usage (#77)
+  - Accepts `--provider`, `--env-map`, `--feature-flag`, `--project`, `--datadog-site`, `--dry-run`, and `--export` as pure CLI arguments
+  - Exits with code 1 when any per-flag migration fails, so CI callers get a non-zero status on partial failure
+  - Rejects archived LaunchDarkly environments passed via `--env-map`; the error message lists only non-archived environments
+  - Validates that each requested Eppo flag exists in a mapped source environment before starting
+  - Omits terminal escape sequences (clear-screen) so scrollback is preserved in CI logs
+  - Emits JSON output for migration results in non-interactive runs
+  - Handles LaunchDarkly cross-project key conflicts non-interactively
+- Replace `--no-export` with `--export=<bool>` (default: `false`) so scripted runs only write an `.xlsx` when explicitly opted in (#77)
+
+### CLI — Credential handling
+
+- Replace interactive API/SDK key prompts with environment variables (#76)
+  - Required for migration: `DD_API_KEY`, `DD_APP_KEY`, and `EPPO_API_KEY` or `LAUNCHDARKLY_API_KEY`
+  - Required for evaluation: `DD_API_KEY`, `DD_APP_KEY`, `DD_CLIENT_TOKEN`, and `EPPO_SDK_KEY` or `LAUNCHDARKLY_SDK_KEY`
+  - Missing variables are reported to stderr with the full list of missing names and exit code 1
+  - `datadogSite` preference continues to be saved and loaded from `~/.dd-flag-migration/config.json`
+  - Removes the `--use-saved-keys` flag from the evaluate command
+  - Adds `--datadog-site` as a CLI option for the evaluate command
+  - Prints a reminder after evaluation when any test case differs, noting that SDK keys are scoped to a single environment
+
 ## [0.3.0] — 2026-06-08
 
 ### UX — Large migrations
