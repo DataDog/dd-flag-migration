@@ -23,7 +23,7 @@ describe('createSpinner', () => {
 		}
 	});
 
-	it('does not put stdin in raw mode while a spinner runs', () => {
+	function stubTTY() {
 		const setRawMode = jest.fn();
 		Object.defineProperty(process.stdin, 'isTTY', {
 			value: true,
@@ -34,14 +34,24 @@ describe('createSpinner', () => {
 			configurable: true,
 		});
 		jest.spyOn(process.stderr, 'write').mockReturnValue(true as never);
+		return setRawMode;
+	}
 
+	it('does not put stdin in raw mode when called with a string', () => {
+		const setRawMode = stubTTY();
+		const spinner = createSpinner('Loading').start();
+		spinner.stop();
+		expect(setRawMode).not.toHaveBeenCalled();
+	});
+
+	it('overrides a caller-supplied discardStdin:true and still does not put stdin in raw mode', () => {
+		const setRawMode = stubTTY();
 		const spinner = createSpinner({
 			text: 'Loading',
 			isEnabled: true,
 			discardStdin: true,
 		}).start();
 		spinner.stop();
-
 		expect(setRawMode).not.toHaveBeenCalled();
 	});
 });
