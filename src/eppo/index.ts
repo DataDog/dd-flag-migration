@@ -3,7 +3,6 @@ import path from 'node:path';
 import { select } from '@inquirer/prompts';
 import axios from 'axios';
 import chalk from 'chalk';
-import ora from 'ora';
 import { CONFIG_DIR } from '../config.js';
 import {
 	createFeatureFlag,
@@ -15,7 +14,9 @@ import {
 } from '../datadog.js';
 import { filterableCheckbox } from '../filterable-checkbox.js';
 import { toSyncRequests } from '../migration.js';
+import { writeJsonOutput } from '../output.js';
 import { MigrationProgressBar } from '../progress-bar.js';
+import { createSpinner } from '../spinner.js';
 import type {
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,
@@ -259,9 +260,12 @@ async function confirmMigration(
 	provider: string,
 	site: string,
 	dryRun: boolean,
+	nonInteractive = false,
+	doExport = false,
 ): Promise<ConfirmAction> {
 	if (flags.length === 0) {
 		console.log(chalk.yellow('\nNo flags selected — nothing to migrate.'));
+		if (nonInteractive) return 'cancel';
 		const action = await select<'select-more' | 'cancel'>({
 			message: 'What would you like to do?',
 			choices: [
@@ -281,29 +285,31 @@ async function confirmMigration(
 	});
 	console.log();
 
-	const action = await select<ConfirmAction>({
-		message: dryRun
-			? `Simulate migration of ${flags.length} flag(s)?`
-			: `Migrate ${flags.length} flag(s) to Datadog?`,
-		choices: [
-			{
-				name: dryRun
-					? `Simulate ${flags.length} flag(s)`
-					: `Migrate ${flags.length} flag(s)`,
-				value: 'migrate',
-			},
-			{ name: 'Select more flags', value: 'select-more' },
-			{ name: 'Cancel', value: 'cancel' },
-		],
-	});
+	if (!nonInteractive) {
+		const action = await select<ConfirmAction>({
+			message: dryRun
+				? `Simulate migration of ${flags.length} flag(s)?`
+				: `Migrate ${flags.length} flag(s) to Datadog?`,
+			choices: [
+				{
+					name: dryRun
+						? `Simulate ${flags.length} flag(s)`
+						: `Migrate ${flags.length} flag(s)`,
+					value: 'migrate',
+				},
+				{ name: 'Select more flags', value: 'select-more' },
+				{ name: 'Cancel', value: 'cancel' },
+			],
+		});
 
-	if (action === 'cancel') {
-		console.log(chalk.yellow('\nMigration cancelled.'));
-		return 'cancel';
-	}
+		if (action === 'cancel') {
+			console.log(chalk.yellow('\nMigration cancelled.'));
+			return 'cancel';
+		}
 
-	if (action === 'select-more') {
-		return 'select-more';
+		if (action === 'select-more') {
+			return 'select-more';
+		}
 	}
 
 	if (dryRun) {
@@ -373,7 +379,9 @@ async function confirmMigration(
 	const failures: Array<{ key: string; error: string }> = [];
 	const enableFailures: Array<{ key: string; env: string; error: string }> = [];
 	const skippedFlags: Array<{ key: string; reason: string }> = [];
-	const progressBar = new MigrationProgressBar(flags.length, phase1Subheader);
+	const progressBar = nonInteractive
+		? undefined
+		: new MigrationProgressBar(flags.length, phase1Subheader);
 
 	const environmentMapping: MigrationEnvironmentMapping[] = [];
 	for (const [eppoEnvId, ddEnv] of envMapping) {
@@ -418,11 +426,11 @@ async function confirmMigration(
 		process.exit(130);
 	};
 	process.once('SIGINT', sigintHandler);
-	if (progressBar) clearScreen();
+	if (!nonInteractive) clearScreen();
 	progressBar?.start();
 	try {
 		for (const flag of flags) {
-			let spinner = ora(`Migrating ${chalk.cyan(flag.key)}…`).start();
+			let spinner = createSpinner(`Migrating ${chalk.cyan(flag.key)}…`).start();
 
 			if (flag.type === 'BANDIT') {
 				spinner.warn(
@@ -536,7 +544,7 @@ async function confirmMigration(
 				spinner.warn(
 					`${chalk.cyan(flag.key)} exists in Datadog — targeting filters in ${envsToEnable.map((e) => e.name).join(', ')} will be overwritten`,
 				);
-				spinner = ora(`Migrating ${chalk.cyan(flag.key)}…`).start();
+				spinner = createSpinner(`Migrating ${chalk.cyan(flag.key)}…`).start();
 
 				if (dryRun) {
 					let syncFilterCount = 0;
@@ -830,8 +838,9 @@ async function confirmMigration(
 	}
 
 	const timestamp = new Date().toISOString();
+	let outputData: DryRunFile | MigrationFile | undefined;
 
-	if (dryRun && dryRunRequests.length > 0) {
+	if (dryRun) {
 		const dryRunData: DryRunFile = {
 			provider,
 			migratedAt: timestamp,
@@ -844,13 +853,16 @@ async function confirmMigration(
 			environmentMapping,
 			requests: dryRunRequests,
 		};
-		const filename = `dry-run-${timestamp}.json`;
-		const filepath = path.join(process.cwd(), filename);
-		fs.writeFileSync(filepath, JSON.stringify(dryRunData, null, 2));
-		console.log(chalk.gray(`  Requests written to ${filepath}`));
+		outputData = dryRunData;
+		if (dryRunRequests.length > 0) {
+			const filename = `dry-run-${timestamp}.json`;
+			const filepath = path.join(process.cwd(), filename);
+			fs.writeFileSync(filepath, JSON.stringify(dryRunData, null, 2));
+			console.log(chalk.gray(`  Requests written to ${filepath}`));
+		}
 	}
 
-	if (!dryRun && (created > 0 || synced > 0 || errored > 0)) {
+	if (!dryRun) {
 		const migrationData: MigrationFile = {
 			provider,
 			migratedAt: timestamp,
@@ -862,43 +874,81 @@ async function confirmMigration(
 			flags,
 			environmentMapping,
 		};
-		const filename = `migration-${timestamp}.json`;
-		if (!fs.existsSync(CONFIG_DIR))
-			fs.mkdirSync(CONFIG_DIR, { recursive: true });
-		const filepath = path.join(CONFIG_DIR, filename);
-		fs.writeFileSync(filepath, JSON.stringify(migrationData, null, 2));
-		console.log(chalk.gray(`  Migration saved to ${filepath}`));
+		outputData = migrationData;
+		if (created > 0 || synced > 0 || errored > 0) {
+			const filename = `migration-${timestamp}.json`;
+			if (!fs.existsSync(CONFIG_DIR))
+				fs.mkdirSync(CONFIG_DIR, { recursive: true });
+			const filepath = path.join(CONFIG_DIR, filename);
+			fs.writeFileSync(filepath, JSON.stringify(migrationData, null, 2));
+			console.log(chalk.gray(`  Migration saved to ${filepath}`));
 
-		const { confirm } = await import('@inquirer/prompts');
-		const exportToSheets = await confirm({
-			message: 'Would you like to export migration results to an .xlsx file?',
-			default: false,
-		});
-		if (exportToSheets) {
-			const { exportMigrationToXlsx } = await import('./xlsx.js');
-			await exportMigrationToXlsx(migrationData);
+			let exportToSheets: boolean;
+			if (nonInteractive) {
+				exportToSheets = doExport;
+			} else {
+				const { confirm } = await import('@inquirer/prompts');
+				exportToSheets = await confirm({
+					message:
+						'Would you like to export migration results to an .xlsx file?',
+					default: false,
+				});
+			}
+			if (exportToSheets) {
+				const { exportMigrationToXlsx } = await import('./xlsx.js');
+				await exportMigrationToXlsx(migrationData);
+			}
 		}
 	}
 
+	if (nonInteractive && outputData) {
+		writeJsonOutput(outputData);
+	}
+
 	console.log();
+	if (nonInteractive && errored > 0) process.exitCode = 1;
 	return 'migrate';
 }
 
 // ─── Main Entry Point ─────────────────────────────────────────────────────────
+
+export interface EppoNonInteractiveOptions {
+	envMap: Array<[string, string]>;
+	flagKeys: string[];
+}
+
+export interface RunEppoMigrationOptions {
+	nonInteractive?: EppoNonInteractiveOptions;
+	doExport?: boolean;
+}
 
 export async function runEppoMigration(
 	ddApiKey: string,
 	ddAppKey: string,
 	ddSite: string,
 	dryRun: boolean,
+	options?: RunEppoMigrationOptions,
 ): Promise<void> {
 	// EPPO_API_KEY presence was validated in src/index.ts before this runs.
 	// biome-ignore lint/style/noNonNullAssertion: validated upstream
 	const apiKey = process.env.EPPO_API_KEY!.trim();
 
+	if (options?.nonInteractive) {
+		await runEppoMigrationNonInteractive(
+			apiKey,
+			ddApiKey,
+			ddAppKey,
+			ddSite,
+			dryRun,
+			options.nonInteractive,
+			options.doExport ?? false,
+		);
+		return;
+	}
+
 	console.log();
 
-	const spinner = ora('Loading data…').start();
+	const spinner = createSpinner('Loading data…').start();
 	let flags: EppoFlag[] = [];
 	let datadogKeys: Map<string, string> = new Map();
 	let datadogEnvs: DatadogEnvironment[] = [];
@@ -1012,4 +1062,144 @@ export async function runEppoMigration(
 
 		if (eppoEnvironments.length === 0) break; // nothing to go back to
 	}
+}
+
+// ─── Non-Interactive Entry Point ─────────────────────────────────────────────
+
+export function resolveEppoEnvMap(
+	pairs: Array<[string, string]>,
+	eppoEnvs: EppoFlagEnvironment[],
+	datadogEnvs: DatadogEnvironment[],
+): {
+	envMapping: Map<number, DatadogEnvironment>;
+	selectedEnvs: EppoFlagEnvironment[];
+} {
+	const envMapping = new Map<number, DatadogEnvironment>();
+	const selectedEnvs: EppoFlagEnvironment[] = [];
+	const ddByName = new Map(datadogEnvs.map((e) => [e.name, e]));
+	for (const [src, dst] of pairs) {
+		const eppoEnv = eppoEnvs.find((e) => e.name === src);
+		if (!eppoEnv) {
+			const available = eppoEnvs.map((e) => e.name).join(', ');
+			throw new Error(
+				`Eppo environment not found: "${src}". Available: ${available}`,
+			);
+		}
+		const ddEnv = ddByName.get(dst);
+		if (!ddEnv) {
+			const available = datadogEnvs.map((e) => e.name).join(', ');
+			throw new Error(
+				`Datadog environment not found: "${dst}". Available: ${available}`,
+			);
+		}
+		envMapping.set(eppoEnv.id, ddEnv);
+		selectedEnvs.push(eppoEnv);
+	}
+	return { envMapping, selectedEnvs };
+}
+
+export function resolveEppoFlags(
+	keys: string[],
+	allFlags: EppoFlag[],
+	selectedEnvIds?: Set<number>,
+): EppoFlag[] {
+	const byKey = new Map(allFlags.map((f) => [f.key, f]));
+	const selected: EppoFlag[] = [];
+	const missing: string[] = [];
+	for (const key of keys) {
+		const f = byKey.get(key);
+		if (f) selected.push(f);
+		else missing.push(key);
+	}
+	if (missing.length > 0) {
+		throw new Error(`Flag(s) not found in Eppo: ${missing.join(', ')}`);
+	}
+	if (selectedEnvIds && selectedEnvIds.size > 0) {
+		const noEnv = selected.filter(
+			(f) => !f.environments?.some((e) => selectedEnvIds.has(e.id)),
+		);
+		if (noEnv.length > 0) {
+			throw new Error(
+				`Flag(s) not present in any mapped Eppo environment: ${noEnv.map((f) => f.key).join(', ')}`,
+			);
+		}
+	}
+	return selected;
+}
+
+async function runEppoMigrationNonInteractive(
+	apiKey: string,
+	ddApiKey: string,
+	ddAppKey: string,
+	ddSite: string,
+	dryRun: boolean,
+	ni: EppoNonInteractiveOptions,
+	doExport: boolean,
+): Promise<void> {
+	console.log();
+	console.log(chalk.gray('  Running in non-interactive mode'));
+	if (dryRun) {
+		console.log(chalk.bold.yellow('  Dry run mode — no flags will be created'));
+	}
+	console.log();
+
+	const spinner = createSpinner('Loading data…').start();
+	let flags: EppoFlag[] = [];
+	let datadogKeys: Map<string, string> = new Map();
+	let datadogEnvs: DatadogEnvironment[] = [];
+
+	try {
+		[flags, datadogKeys, datadogEnvs] = await Promise.all([
+			fetchEppoFlags(apiKey, {
+				onProgress: (fetched) => {
+					spinner.text = `Loading data… (${fetched} Eppo flag${fetched === 1 ? '' : 's'} fetched)`;
+				},
+			}),
+			fetchDatadogFlagKeys(ddApiKey, ddAppKey, ddSite),
+			fetchDatadogEnvironments(ddApiKey, ddAppKey, ddSite),
+		]);
+		spinner.succeed(
+			`Loaded ${flags.length} Eppo flag(s) · ${datadogEnvs.length} Datadog environment(s)`,
+		);
+	} catch (err) {
+		spinner.fail('Failed to load data');
+		console.error(chalk.red(`  ${formatAxiosError(err)}`));
+		process.exit(1);
+	}
+
+	const eppoEnvironments = extractEnvironments(flags);
+
+	let envMapping: Map<number, DatadogEnvironment>;
+	let selectedFlags: EppoFlag[];
+	try {
+		({ envMapping } = resolveEppoEnvMap(
+			ni.envMap,
+			eppoEnvironments,
+			datadogEnvs,
+		));
+		selectedFlags = resolveEppoFlags(
+			ni.flagKeys,
+			flags,
+			new Set(envMapping.keys()),
+		);
+	} catch (err) {
+		console.error(
+			chalk.red(`\n  ${err instanceof Error ? err.message : String(err)}\n`),
+		);
+		process.exit(1);
+	}
+
+	await confirmMigration(
+		selectedFlags,
+		apiKey,
+		ddApiKey,
+		ddAppKey,
+		envMapping,
+		datadogKeys,
+		'eppo',
+		ddSite,
+		dryRun,
+		true,
+		doExport,
+	);
 }

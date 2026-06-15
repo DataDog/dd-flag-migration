@@ -185,6 +185,7 @@ export interface LDMigrationFile {
 	enableFailures: Array<{ key: string; env: string; error: string }>;
 	skippedFlags?: Array<{ key: string; reason: string }>;
 	syncedFlagKeys?: string[];
+	flagKeyMapping?: Array<{ sourceKey: string; datadogKey: string }>;
 	flags: LDFlag[];
 	environmentMapping: Array<{
 		sourceEnvId: string;

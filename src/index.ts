@@ -1,8 +1,15 @@
 #!/usr/bin/env node
 import { select } from '@inquirer/prompts';
 import chalk from 'chalk';
+import {
+	ArgParseError,
+	type MigrateArgs,
+	type ProviderValue,
+	parseMigrateArgs,
+} from './args.js';
 import { getDatadogSite, saveDatadogSite } from './config.js';
 import { requireEnvVars } from './env.js';
+import { withConsoleLogToStderr } from './output.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -11,24 +18,18 @@ const PROVIDERS = [
 	{ name: 'LaunchDarkly', value: 'launchdarkly' },
 ] as const;
 
-type ProviderValue = (typeof PROVIDERS)[number]['value'];
-
 // ─── Arg Parsing ──────────────────────────────────────────────────────────────
 
-function parseArgs(): { dryRun: boolean; datadogSite: string | undefined } {
-	const args = process.argv.slice(2);
-	const siteArg = args.find((a) => a.startsWith('--datadog-site='));
-	const datadogSite = siteArg
-		? siteArg.slice('--datadog-site='.length).trim()
-		: undefined;
-	if (datadogSite !== undefined && datadogSite.length === 0) {
-		process.stderr.write(chalk.red('\n--datadog-site must not be empty.\n\n'));
-		process.exit(1);
+function parseArgs(): MigrateArgs {
+	try {
+		return parseMigrateArgs(process.argv.slice(2));
+	} catch (err) {
+		if (err instanceof ArgParseError) {
+			process.stderr.write(chalk.red(`\n${err.message}\n\n`));
+			process.exit(1);
+		}
+		throw err;
 	}
-	return {
-		dryRun: args.includes('--dry-run'),
-		datadogSite,
-	};
 }
 
 // ─── UI Helpers ───────────────────────────────────────────────────────────────
@@ -108,18 +109,64 @@ async function promptForDatadogSite(
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-	const { dryRun, datadogSite } = parseArgs();
+	const args = parseArgs();
 
 	// Validate Datadog env vars up front. Provider-specific env vars are
-	// validated after the user picks a provider so that, e.g., a LaunchDarkly
+	// validated after the provider is known so that, e.g., a LaunchDarkly
 	// migration doesn't require EPPO_API_KEY to be set.
 	const ddEnv = requireEnvVars(['DD_API_KEY', 'DD_APP_KEY']);
 	const ddApiKey = ddEnv.DD_API_KEY;
 	const ddAppKey = ddEnv.DD_APP_KEY;
 
+	if (!args.interactive && args.nonInteractive) {
+		const ni = args.nonInteractive;
+		await withConsoleLogToStderr(async () => {
+			// Non-interactive: skip UI, prompts, and saved-site lookup.
+			if (ni.provider === 'eppo') {
+				requireEnvVars(['EPPO_API_KEY']);
+			} else {
+				requireEnvVars(['LAUNCHDARKLY_API_KEY']);
+			}
+			// Already validated upstream.
+			// biome-ignore lint/style/noNonNullAssertion: validated in parseMigrateArgs
+			const ddSite = args.datadogSite!;
+
+			if (ni.provider === 'launchdarkly') {
+				const { runLaunchDarklyMigration } = await import(
+					'./launchdarkly/index.js'
+				);
+				await runLaunchDarklyMigration(
+					ddApiKey,
+					ddAppKey,
+					ddSite,
+					args.dryRun,
+					{
+						doExport: args.doExport,
+						nonInteractive: {
+							// biome-ignore lint/style/noNonNullAssertion: validated for LD
+							projectKey: ni.projectKey!,
+							envMap: ni.envMap,
+							flagKeys: ni.flagKeys,
+						},
+					},
+				);
+			} else {
+				const { runEppoMigration } = await import('./eppo/index.js');
+				await runEppoMigration(ddApiKey, ddAppKey, ddSite, args.dryRun, {
+					doExport: args.doExport,
+					nonInteractive: {
+						envMap: ni.envMap,
+						flagKeys: ni.flagKeys,
+					},
+				});
+			}
+		});
+		return;
+	}
+
 	clearScreen();
 	printHeader();
-	if (dryRun) {
+	if (args.dryRun) {
 		console.log(
 			chalk.bold.yellow('  Dry run mode — no flags will be created\n'),
 		);
@@ -140,16 +187,16 @@ async function main(): Promise<void> {
 		requireEnvVars(['LAUNCHDARKLY_API_KEY']);
 	}
 
-	const ddSite = await promptForDatadogSite(datadogSite);
+	const ddSite = await promptForDatadogSite(args.datadogSite);
 
 	if (provider === 'launchdarkly') {
 		const { runLaunchDarklyMigration } = await import(
 			'./launchdarkly/index.js'
 		);
-		await runLaunchDarklyMigration(ddApiKey, ddAppKey, ddSite, dryRun);
+		await runLaunchDarklyMigration(ddApiKey, ddAppKey, ddSite, args.dryRun);
 	} else {
 		const { runEppoMigration } = await import('./eppo/index.js');
-		await runEppoMigration(ddApiKey, ddAppKey, ddSite, dryRun);
+		await runEppoMigration(ddApiKey, ddAppKey, ddSite, args.dryRun);
 	}
 }
 

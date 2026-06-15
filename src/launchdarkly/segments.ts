@@ -1,8 +1,8 @@
 import { input, select } from '@inquirer/prompts';
 import axios from 'axios';
 import chalk from 'chalk';
-import ora from 'ora';
 import { createSavedFilter, listSavedFilters } from '../datadog.js';
+import { createSpinner } from '../spinner.js';
 import type {
 	DatadogCondition,
 	DatadogEnvironment,
@@ -339,7 +339,7 @@ export async function migrateSegments(params: {
 	const envKeys = [...envMapping.keys()];
 
 	// ── Step 1: Discover needed segments ──────────────────────────────────────
-	const discoverSpinner = ora(
+	const discoverSpinner = createSpinner(
 		'Discovering segments referenced by flags…',
 	).start();
 	const refs = discoverSegmentRefs(selectedFlags, envKeys);
@@ -362,7 +362,9 @@ export async function migrateSegments(params: {
 	}
 
 	// ── Step 2: Fetch segments from LD ────────────────────────────────────────
-	const fetchSpinner = ora('Fetching segments from LaunchDarkly…').start();
+	const fetchSpinner = createSpinner(
+		'Fetching segments from LaunchDarkly…',
+	).start();
 	const segmentsByKey = new Map<string, Map<string, LDSegment>>();
 
 	for (const [envKey, neededKeys] of neededByEnv) {
@@ -394,7 +396,7 @@ export async function migrateSegments(params: {
 	fetchSpinner.succeed('Fetched segments from LaunchDarkly');
 
 	// ── Step 3: List existing DD saved filters for idempotency ────────────────
-	const idempotencySpinner = ora(
+	const idempotencySpinner = createSpinner(
 		'Checking for already-migrated saved filters…',
 	).start();
 	const existingFilters: SavedFilterSummary[] = [];
@@ -559,7 +561,7 @@ export async function migrateSegments(params: {
 	}
 
 	// ── Step 4: Create saved filters ──────────────────────────────────────────
-	const createSpinner = ora('Creating saved filters…').start();
+	const savedFilterSpinner = createSpinner('Creating saved filters…').start();
 	const createdNamesSoFar = new Set<string>(existingByName.keys());
 
 	for (const pending of newPendingFilters) {
@@ -570,7 +572,7 @@ export async function migrateSegments(params: {
 		let namePrefix = pending.namePrefix;
 		if (collisionSet.has(pending)) {
 			if (conflictResolution?.action === 'skip') {
-				createSpinner.warn(
+				savedFilterSpinner.warn(
 					`Skipped saved filter for "${ref.segmentKey}" — name conflict`,
 				);
 				stats.skipped++;
@@ -591,7 +593,7 @@ export async function migrateSegments(params: {
 
 		// Guard: empty-match segment (no rules AND no included)
 		if (segment.rules.length === 0 && segment.included.length === 0) {
-			createSpinner.warn(
+			savedFilterSpinner.warn(
 				`Skipped "${ref.segmentKey}" — empty segment (no rules or included users)`,
 			);
 			stats.skipped++;
@@ -606,7 +608,7 @@ export async function migrateSegments(params: {
 			namePrefix,
 		);
 		if (name === null) {
-			createSpinner.warn(
+			savedFilterSpinner.warn(
 				`Skipped "${ref.segmentKey}" — saved filter name exceeds 200 bytes after truncation envelope`,
 			);
 			stats.skipped++;
@@ -623,7 +625,7 @@ export async function migrateSegments(params: {
 				stats.reused++;
 				continue;
 			}
-			createSpinner.warn(
+			savedFilterSpinner.warn(
 				`Skipped "${ref.segmentKey}" — saved filter name collision after truncation`,
 			);
 			stats.skipped++;
@@ -636,7 +638,7 @@ export async function migrateSegments(params: {
 			: buildNonNegatedRules(segment);
 
 		if (targetingRules === null) {
-			createSpinner.warn(
+			savedFilterSpinner.warn(
 				`Skipped "${ref.segmentKey}" — unsupported segment (multi-context, nested segmentMatch, or negation explosion)`,
 			);
 			stats.skipped++;
@@ -677,7 +679,7 @@ export async function migrateSegments(params: {
 			if (ref.negated) stats.negated++;
 		} catch (err) {
 			const error = formatAxiosError(err);
-			createSpinner.warn(
+			savedFilterSpinner.warn(
 				`Failed to create saved filter for "${ref.segmentKey}": ${error}`,
 			);
 			stats.failures.push({
@@ -688,7 +690,7 @@ export async function migrateSegments(params: {
 		}
 	}
 
-	createSpinner.succeed(
+	savedFilterSpinner.succeed(
 		`Created ${stats.created} saved filter(s) (${stats.negated} negated variants, ${stats.reused} reused, ${stats.skipped} skipped)`,
 	);
 

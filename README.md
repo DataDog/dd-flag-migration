@@ -136,9 +136,9 @@ The tool will walk you through:
 4. **Confirm and migrate** — flags are created in Datadog and enabled in the mapped environments. A progress bar tracks migration status in real time
 
 API keys are read from environment variables (see [Credentials](#credentials-youll-need)).
-For scripted runs or non-US sites, pass `--datadog-site=<site>` to set the Datadog site without using the prompt.
+Pass `--datadog-site=<site>` to set the Datadog site without a prompt. For fully scripted runs, see [Non-interactive mode](#non-interactive-mode) below.
 
-When the migration completes, a record is saved to `~/.dd-flag-migration/migration-<timestamp>.json`. You can optionally export results to an `.xlsx` file.
+When the migration completes, a record is saved to `~/.dd-flag-migration/migration-<timestamp>.json`. In interactive mode you'll be prompted to export results to an `.xlsx` file; in non-interactive mode pass `--export=true` to generate one.
 
 ### Large migrations
 
@@ -166,6 +166,65 @@ LaunchDarkly SDK keys are **project-scoped** — each project has its own set of
 For larger migrations with multiple projects, a good practice is to create **Datadog sub-organizations** so that each project's flags live in an independent org. Sub-organizations have their own API keys, environments, and flag namespaces, which avoids key conflicts entirely.
 
 To create and manage sub-organizations, see [Multi-Organization Accounts](https://docs.datadoghq.com/account_management/multi_organization/). When using sub-organizations, generate separate Datadog API and Application keys for each sub-org and run the migration tool once per org.
+
+### Non-interactive mode
+
+Pass `--interactive=false` to run the migration entirely from CLI arguments, with no prompts. This is useful for scripted or CI environments.
+
+Non-interactive migrations write a JSON result document to stdout. Status messages, progress output, and export messages are written to stderr so stdout can be piped into tools such as `jq`.
+
+**Required flags**
+
+| Flag | Description |
+|---|---|
+| `--provider <Eppo\|LaunchDarkly>` | Source provider (case-insensitive) |
+| `--datadog-site <site>` | Datadog site (e.g. `datadoghq.com`) |
+| `--env-map <source,target>` | Map a source environment to a Datadog environment. Repeat for each environment |
+| `--feature-flag <key>` | Flag key to migrate. Repeat for each flag. For LaunchDarkly, use `<source-key>,<datadog-key>` to rename the Datadog flag |
+| `--project <key>` | LaunchDarkly project key *(LaunchDarkly only)* |
+
+**Optional flags**
+
+| Flag | Description |
+|---|---|
+| `--dry-run` | Preview changes without writing to Datadog |
+| `--export=<bool>` | Export results to an `.xlsx` file after migration (default: `false`) |
+
+**Examples**
+
+Migrate two LaunchDarkly flags across two environments:
+
+```bash
+npx @datadog/dd-flag-migration migrate --interactive=false \
+  --provider LaunchDarkly \
+  --project my-ld-project \
+  --datadog-site datadoghq.com \
+  --env-map Production,Production \
+  --env-map Staging,QA \
+  --feature-flag flag-one \
+  --feature-flag flag-two
+```
+
+Rename a LaunchDarkly flag while migrating it:
+
+```bash
+npx @datadog/dd-flag-migration migrate --interactive=false \
+  --provider LaunchDarkly \
+  --project my-ld-project \
+  --datadog-site datadoghq.com \
+  --env-map Production,Production \
+  --feature-flag my-flag-1,my-renamed-flag-1
+```
+
+Migrate Eppo flags (no project key required):
+
+```bash
+npx @datadog/dd-flag-migration migrate --interactive=false \
+  --provider Eppo \
+  --datadog-site datadoghq.com \
+  --env-map production,Production \
+  --feature-flag my-flag
+```
 
 ### Dry run
 
