@@ -1151,6 +1151,8 @@ async function main(): Promise<void> {
 						ddFlagsForCase,
 						ddFlagKeys,
 						datadogFlagKey,
+						tc.contextAttributes,
+						tc.ldUserAttributes,
 					);
 					testResults.push({
 						testCase: tc,
@@ -1174,6 +1176,8 @@ async function main(): Promise<void> {
 						ddFlagsForCase,
 						ddFlagKeys,
 						datadogFlagKey,
+						tc.contextAttributes,
+						tc.ldUserAttributes,
 					);
 					testResults.push({
 						testCase: tc,

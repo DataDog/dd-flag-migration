@@ -68,7 +68,7 @@ export interface LDEnvironmentConfig {
 	on: boolean;
 	archived: boolean;
 	targets: LDTarget[];
-	contextTargets: unknown[];
+	contextTargets: LDTarget[];
 	rules: LDRule[];
 	fallthrough: {
 		variation?: number;

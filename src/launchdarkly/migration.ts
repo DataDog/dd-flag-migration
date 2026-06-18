@@ -314,9 +314,12 @@ export function buildTargetingRules(
 		} else {
 			const result = mapOperator(clause.op, clause.negate, clause.values);
 			if ('skip' in result) return null; // unsupported non-segment op (safety net)
+			const ck = clause.contextKind ?? 'user';
+			const attribute =
+				ck === 'user' ? clause.attribute : `${ck}.${clause.attribute}`;
 			inlineConditions.push({
 				operator: result.operator,
-				attribute: clause.attribute,
+				attribute,
 				value: result.values,
 			});
 		}
@@ -430,6 +433,35 @@ export function buildAllocations(
 				environment_id: ddEnv.id,
 				name: `${flag.key} target ${ti + 1}`,
 				key: `${flag.key}-${envSlug}-target-${ti}`,
+				type: 'FEATURE_GATE',
+				variant_weights: variantWeights,
+				targeting_rules: targetingRules,
+			});
+		}
+
+		// 1b. Non-user context targets (contextTargets)
+		for (let ti = 0; ti < envConfig.contextTargets.length; ti++) {
+			const target = envConfig.contextTargets[ti];
+			if (target.values.length === 0) continue;
+
+			const variantWeights = buildVariantWeights(flag, target.variation);
+			const targetAttribute = `${target.contextKind}.key`;
+			const targetingRules: DatadogTargetingRule[] = [
+				{
+					conditions: [
+						{
+							operator: 'ONE_OF',
+							attribute: targetAttribute,
+							value: target.values,
+						},
+					],
+				},
+			];
+
+			allocations.push({
+				environment_id: ddEnv.id,
+				name: `${flag.key} ${target.contextKind} target ${ti + 1}`,
+				key: `${flag.key}-${envSlug}-ctx-target-${ti}`,
 				type: 'FEATURE_GATE',
 				variant_weights: variantWeights,
 				targeting_rules: targetingRules,

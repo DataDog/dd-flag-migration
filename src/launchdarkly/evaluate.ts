@@ -136,6 +136,21 @@ export function generateLDTestCases(flag: LDFlag, envKey: string): TestCase[] {
 		}
 	}
 
+	// Generate test cases from contextTargets (non-user individual targets)
+	if (extra.length < 4) {
+		for (const ctxTarget of envConfig.contextTargets ?? []) {
+			if (ctxTarget.values.length === 0) continue;
+			const targetKey = ctxTarget.values[0];
+			const ck = ctxTarget.contextKind;
+			extra.push({
+				label: `${ck} key=${targetKey}`,
+				attributes: { [`${ck}.key`]: targetKey },
+				contextAttributes: { [ck]: { key: targetKey } },
+			});
+			if (extra.length >= 4) break;
+		}
+	}
+
 	// Generate test cases from rules
 	if (extra.length < 4) {
 		for (const rule of envConfig.rules ?? []) {
@@ -145,6 +160,10 @@ export function generateLDTestCases(flag: LDFlag, envKey: string): TestCase[] {
 
 			const matchAttrs: SubjectAttributes = {};
 			const nonMatchAttrs: SubjectAttributes = {};
+			const matchContextAttrs: Record<string, SubjectAttributes> = {};
+			const nonMatchContextAttrs: Record<string, SubjectAttributes> = {};
+			const matchLdUserAttrs: SubjectAttributes = {};
+			const nonMatchLdUserAttrs: SubjectAttributes = {};
 			let canMatch = true;
 			let canNonMatch = true;
 			let matchSubjectIdOverride: string | undefined;
@@ -154,21 +173,38 @@ export function generateLDTestCases(flag: LDFlag, envKey: string): TestCase[] {
 				if (clause.op === 'segmentMatch') continue;
 				const mv = generateLDMatchingValue(clause);
 				const nv = generateLDNonMatchingValue(clause);
+				const ck = clause.contextKind ?? 'user';
 
 				if (mv === undefined) {
 					canMatch = false;
-				} else if (clause.attribute === 'key') {
-					// LD treats 'key' as the identity, not a custom attribute
+				} else if (ck === 'user' && clause.attribute === 'key') {
 					matchSubjectIdOverride = String(mv);
 				} else {
-					matchAttrs[clause.attribute] = mv;
+					const flatKey =
+						ck === 'user' ? clause.attribute : `${ck}.${clause.attribute}`;
+					matchAttrs[flatKey] = mv;
+					if (ck !== 'user') {
+						matchContextAttrs[ck] ??= {};
+						matchContextAttrs[ck][clause.attribute] = mv;
+					} else {
+						matchLdUserAttrs[clause.attribute] = mv;
+					}
 				}
+
 				if (nv === undefined) {
 					canNonMatch = false;
-				} else if (clause.attribute === 'key') {
+				} else if (ck === 'user' && clause.attribute === 'key') {
 					nonMatchSubjectIdOverride = String(nv);
 				} else {
-					nonMatchAttrs[clause.attribute] = nv;
+					const flatKey =
+						ck === 'user' ? clause.attribute : `${ck}.${clause.attribute}`;
+					nonMatchAttrs[flatKey] = nv;
+					if (ck !== 'user') {
+						nonMatchContextAttrs[ck] ??= {};
+						nonMatchContextAttrs[ck][clause.attribute] = nv;
+					} else {
+						nonMatchLdUserAttrs[clause.attribute] = nv;
+					}
 				}
 			}
 
@@ -189,6 +225,12 @@ export function generateLDTestCases(flag: LDFlag, envKey: string): TestCase[] {
 					...(matchSubjectIdOverride !== undefined && {
 						subjectIdOverride: matchSubjectIdOverride,
 					}),
+					...(Object.keys(matchContextAttrs).length > 0 && {
+						contextAttributes: matchContextAttrs,
+					}),
+					...(Object.keys(matchLdUserAttrs).length > 0 && {
+						ldUserAttributes: matchLdUserAttrs,
+					}),
 				});
 			}
 			if (
@@ -208,20 +250,95 @@ export function generateLDTestCases(flag: LDFlag, envKey: string): TestCase[] {
 					...(nonMatchSubjectIdOverride !== undefined && {
 						subjectIdOverride: nonMatchSubjectIdOverride,
 					}),
+					...(Object.keys(nonMatchContextAttrs).length > 0 && {
+						contextAttributes: nonMatchContextAttrs,
+					}),
+					...(Object.keys(nonMatchLdUserAttrs).length > 0 && {
+						ldUserAttributes: nonMatchLdUserAttrs,
+					}),
 				});
 			}
 			if (extra.length >= 4) break;
 		}
 	}
 
-	// Deduplicate by attribute set JSON
+	// Deduplicate by full evaluation identity (not just flat attributes)
 	const seen = new Set<string>();
 	return [...base, ...extra].filter((tc) => {
-		const k = JSON.stringify(tc.attributes);
+		const k = JSON.stringify({
+			a: tc.attributes,
+			s: tc.subjectIdOverride,
+			c: tc.contextAttributes,
+			u: tc.ldUserAttributes,
+		});
 		if (seen.has(k)) return false;
 		seen.add(k);
 		return true;
 	});
+}
+
+// ─── Context Building ─────────────────────────────────────────────────────────
+
+const USER_SKIP = new Set(['key', 'kind']);
+
+/**
+ * Build an LD evaluation context. Returns kind="user" when contextAttributes
+ * is absent or empty; returns kind="multi" otherwise.
+ *
+ * When ldUserAttributes is provided (synthetic mode), uses it directly for the
+ * LD user subcontext — no heuristic needed, provenance is known.
+ *
+ * When ldUserAttributes is absent (CSV / advanced mode), falls back to the
+ * prefix-filter heuristic on attributes: filters keys whose dot-prefix matches
+ * a present non-user context kind.
+ */
+export function buildLDContext(
+	subjectId: string,
+	attributes: SubjectAttributes,
+	contextAttributes?: Record<string, SubjectAttributes>,
+	ldUserAttributes?: SubjectAttributes,
+): object {
+	let userAttrs: Record<string, unknown>;
+
+	if (ldUserAttributes !== undefined) {
+		userAttrs = Object.fromEntries(
+			Object.entries(ldUserAttributes).filter(
+				([k, v]) => !USER_SKIP.has(k) && v !== null,
+			),
+		);
+	} else {
+		const nonUserPrefixes = new Set(
+			Object.keys(contextAttributes ?? {}).map((ck) => `${ck}.`),
+		);
+		const isNonUserKey = (k: string): boolean => {
+			const dot = k.indexOf('.');
+			if (dot === -1) return false;
+			return nonUserPrefixes.has(k.slice(0, dot + 1));
+		};
+		userAttrs = Object.fromEntries(
+			Object.entries(attributes).filter(
+				([k, v]) => !USER_SKIP.has(k) && !isNonUserKey(k) && v !== null,
+			),
+		);
+	}
+
+	if (!contextAttributes || Object.keys(contextAttributes).length === 0) {
+		return { kind: 'user', key: subjectId, ...userAttrs };
+	}
+
+	const multi: Record<string, unknown> = {
+		kind: 'multi',
+		user: { key: subjectId, ...userAttrs },
+	};
+	for (const [ck, ckAttrs] of Object.entries(contextAttributes)) {
+		const { key, ...rest } = ckAttrs;
+		const ckKey = key != null ? String(key) : 'synthetic';
+		const filteredRest = Object.fromEntries(
+			Object.entries(rest).filter(([, v]) => v !== null),
+		);
+		multi[ck] = { key: ckKey, ...filteredRest };
+	}
+	return multi;
 }
 
 // ─── SDK Initialization ───────────────────────────────────────────────────────
@@ -277,6 +394,8 @@ export async function evaluateLDFlag(
 	ddFlags: Record<string, DDFlagValue>,
 	ddFlagKeys: Set<string>,
 	datadogFlagKey = flag.key,
+	contextAttributes?: Record<string, SubjectAttributes>,
+	ldUserAttributes?: SubjectAttributes,
 ): Promise<EvaluationResult> {
 	const vtype = mapFlagType(flag);
 	const ddFlag = ddFlags[datadogFlagKey];
@@ -288,14 +407,12 @@ export async function evaluateLDFlag(
 				: 'not-in-dd';
 
 	try {
-		// Build LD context from subject ID + attributes
-		const context: { kind: string; key: string; [attr: string]: unknown } = {
-			kind: 'user',
-			key: subjectId,
-		};
-		for (const [k, v] of Object.entries(attributes)) {
-			if (v !== null && k !== 'key') context[k] = v;
-		}
+		const context = buildLDContext(
+			subjectId,
+			attributes,
+			contextAttributes,
+			ldUserAttributes,
+		);
 
 		let providerResult: string;
 		let ddResult: string;
@@ -309,7 +426,11 @@ export async function evaluateLDFlag(
 						? {}
 						: '';
 
-		const ldValue = await ldClient.variation(flag.key, context, defaultValue);
+		const ldValue = await ldClient.variation(
+			flag.key,
+			context as LDSdk.LDContext,
+			defaultValue,
+		);
 
 		if (vtype === 'JSON') {
 			providerResult = JSON.stringify(sortKeys(ldValue));
@@ -342,6 +463,8 @@ export async function evaluateLDFlagAdvanced(
 	ddFlags: Record<string, DDFlagValue>,
 	ddFlagKeys: Set<string>,
 	datadogFlagKey = flagKey,
+	contextAttributes?: Record<string, SubjectAttributes>,
+	ldUserAttributes?: SubjectAttributes,
 ): Promise<
 	EvaluationResult & { providerStatus: 'found' | 'not-found' | 'error' }
 > {
@@ -353,13 +476,12 @@ export async function evaluateLDFlagAdvanced(
 				? 'not-assigned'
 				: 'not-in-dd';
 
-	const context: { kind: string; key: string; [attr: string]: unknown } = {
-		kind: 'user',
-		key: subjectId,
-	};
-	for (const [k, v] of Object.entries(attributes)) {
-		if (v !== null && k !== 'key' && k !== 'kind') context[k] = v;
-	}
+	const context = buildLDContext(
+		subjectId,
+		attributes,
+		contextAttributes,
+		ldUserAttributes,
+	);
 
 	// Pick a default value matching the flag's declared type. The LD SDK uses the
 	// default for type-mismatch detection; passing a typed default avoids spurious
@@ -375,7 +497,7 @@ export async function evaluateLDFlagAdvanced(
 	try {
 		const detail = await ldClient.variationDetail(
 			flagKey,
-			context,
+			context as LDSdk.LDContext,
 			defaultValue,
 		);
 

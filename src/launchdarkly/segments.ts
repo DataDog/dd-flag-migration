@@ -71,13 +71,17 @@ export function discoverSegmentRefs(
  * attribute:key) with no excluded or included lists.
  */
 export function getCreationType(segment: LDSegment): 'RULES' | 'LIST' {
+	const clause = segment.rules[0]?.clauses[0];
 	if (
 		segment.excluded.length === 0 &&
 		segment.included.length === 0 &&
 		segment.rules.length === 1 &&
 		segment.rules[0].clauses.length === 1 &&
-		segment.rules[0].clauses[0].op === 'in' &&
-		segment.rules[0].clauses[0].attribute === 'key'
+		clause?.op === 'in' &&
+		clause?.attribute === 'key' &&
+		(clause.contextKind == null ||
+			clause.contextKind === '' ||
+			clause.contextKind === 'user')
 	) {
 		return 'LIST';
 	}
@@ -164,9 +168,12 @@ export function buildNonNegatedRules(
 		for (const clause of rule.clauses) {
 			const mapped = mapOperator(clause.op, clause.negate, clause.values);
 			if ('skip' in mapped) return null;
+			const ck = clause.contextKind ?? 'user';
+			const attribute =
+				ck === 'user' ? clause.attribute : `${ck}.${clause.attribute}`;
 			conditions.push({
 				operator: mapped.operator,
-				attribute: clause.attribute,
+				attribute,
 				value: mapped.values,
 			});
 		}
@@ -229,9 +236,12 @@ export function buildNegatedRules(
 			for (const clause of rule.clauses) {
 				const mapped = mapOperator(clause.op, clause.negate, clause.values);
 				if ('skip' in mapped) return null;
+				const ck = clause.contextKind ?? 'user';
+				const attribute =
+					ck === 'user' ? clause.attribute : `${ck}.${clause.attribute}`;
 				conditions.push({
 					operator: mapped.operator,
-					attribute: clause.attribute,
+					attribute,
 					value: mapped.values,
 				});
 			}

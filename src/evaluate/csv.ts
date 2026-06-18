@@ -176,7 +176,31 @@ export function validateHeader(
 		}
 		seen.add(name);
 
-		if (provider === 'launchdarkly' && LD_RESERVED_ATTRS.has(name)) {
+		const dotIdx = name.indexOf('.');
+		if (dotIdx !== -1) {
+			const contextKind = name.slice(0, dotIdx);
+			const attrName = name.slice(dotIdx + 1);
+			if (contextKind === '') {
+				throw new Error(
+					`Header validation failed: empty context kind in column "${name}" at line 1`,
+				);
+			}
+			if (attrName === '') {
+				throw new Error(
+					`Header validation failed: empty attribute name in column "${name}" at line 1`,
+				);
+			}
+			if (provider === 'launchdarkly' && contextKind === 'user') {
+				throw new Error(
+					`Header validation failed: context kind "user" is reserved — use a plain column name for user-context attributes (column "${name}") at line 1`,
+				);
+			}
+			if (provider === 'launchdarkly' && contextKind === 'kind') {
+				throw new Error(
+					`Header validation failed: context kind "kind" is reserved for LaunchDarkly (column "${name}") at line 1`,
+				);
+			}
+		} else if (provider === 'launchdarkly' && LD_RESERVED_ATTRS.has(name)) {
 			throw new Error(
 				`Header validation failed: attribute name "${name}" is reserved for LaunchDarkly at line 1`,
 			);
@@ -233,6 +257,26 @@ export function csvRowsToFlagTestCases(
 	header: string[],
 	rows: string[][],
 ): FlagTestCaseEntry[] {
+	type ColInfo =
+		| { kind: 'user'; name: string }
+		| {
+				kind: 'context';
+				contextKind: string;
+				attr: string;
+				fullName: string;
+		  };
+
+	const colInfos: ColInfo[] = header.slice(2).map((name) => {
+		const dotIdx = name.indexOf('.');
+		if (dotIdx === -1) return { kind: 'user', name };
+		return {
+			kind: 'context',
+			contextKind: name.slice(0, dotIdx),
+			attr: name.slice(dotIdx + 1),
+			fullName: name,
+		};
+	});
+
 	const map = new Map<string, FlagTestCaseEntry>();
 	const warnings: string[] = [];
 
@@ -261,27 +305,34 @@ export function csvRowsToFlagTestCases(
 			continue;
 		}
 
-		// Build attributes from positions 2+
 		const attributes: SubjectAttributes = {};
 		const labelParts: string[] = [`subjectKey=${subjectKey}`];
+		let contextAttributes: Record<string, SubjectAttributes> | undefined;
 
 		for (let col = 2; col < header.length; col++) {
-			const attrName = header[col];
-			const rawValue = row[col];
-			const coerced = coerceCell(rawValue);
+			const colInfo = colInfos[col - 2];
+			const coerced = coerceCell(row[col]);
+			if (coerced === undefined) continue;
 
-			if (coerced !== undefined) {
-				attributes[attrName] = coerced;
-				labelParts.push(`${attrName}=${String(coerced)}`);
+			if (colInfo.kind === 'user') {
+				attributes[colInfo.name] = coerced;
+				labelParts.push(`${colInfo.name}=${String(coerced)}`);
+			} else {
+				// Context keys are always strings in LD; stringify to keep LD/DD in sync.
+				const stored = colInfo.attr === 'key' ? String(coerced) : coerced;
+				attributes[colInfo.fullName] = stored;
+				contextAttributes ??= {};
+				contextAttributes[colInfo.contextKind] ??= {};
+				contextAttributes[colInfo.contextKind][colInfo.attr] = stored;
+				labelParts.push(`${colInfo.fullName}=${String(stored)}`);
 			}
 		}
 
-		const label = labelParts.join(', ');
-
 		const testCase: TestCase = {
-			label,
+			label: labelParts.join(', '),
 			attributes,
 			subjectIdOverride: subjectKey,
+			...(contextAttributes !== undefined && { contextAttributes }),
 		};
 
 		const existing = map.get(flagKey);
@@ -316,17 +367,33 @@ export function csvRowsToFlagTestCases(
 export function formatExampleTable(provider: 'launchdarkly' | 'eppo'): string {
 	const attrNote =
 		provider === 'launchdarkly'
-			? '  - Attribute names "key" and "kind" are reserved and cannot be used.\n  - All evaluations use context kind="user". Multi-context projects (device, org, etc.) are not supported.'
+			? '  - Attribute names "key" and "kind" are reserved and cannot be used as plain column names.\n' +
+				'  - To supply non-user context attributes (device, org, app), use dotted column names: e.g. "ld_application.versionName".\n' +
+				'  - Use "contextKind.key" to set the identity key for that context (e.g. "org.key").\n' +
+				'  - The context kinds "user" and "kind" are reserved; use a plain column name for user-context attributes.'
 			: '  - Any attribute names are allowed.';
+
+	const exampleRows =
+		provider === 'launchdarkly'
+			? [
+					'  flagKey     | subjectKey | country | plan | ld_application.versionName',
+					'  ------------|------------|---------|------|---------------------------',
+					'  my-flag     | user-1     | US      | pro  | 4.9.0',
+					'  my-flag     | user-2     | GB      | free | 4.8.0',
+					'  other-flag  | user-1     | US      | pro  |',
+				]
+			: [
+					'  flagKey     | subjectKey | country | plan',
+					'  ------------|------------|---------|-----',
+					'  my-flag     | user-1     | US      | pro',
+					'  my-flag     | user-2     | GB      | free',
+					'  other-flag  | user-1     | US      | pro',
+				];
 
 	return [
 		'Example CSV layout (header row required):',
 		'',
-		'  flagKey     | subjectKey | country | plan',
-		'  ------------|------------|---------|-----',
-		'  my-flag     | user-1     | US      | pro',
-		'  my-flag     | user-2     | GB      | free',
-		'  other-flag  | user-1     | US      | pro',
+		...exampleRows,
 		'',
 		'Columns:',
 		'  - Column 1 (flagKey):    The feature flag key to evaluate.',
