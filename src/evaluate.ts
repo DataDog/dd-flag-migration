@@ -423,14 +423,19 @@ async function fetchDDFlagData(
 	const limit = 200;
 	try {
 		while (true) {
-			const resp = await ddClient.get<{ data: DDFlagListItem[] }>(
-				`${baseUrl}/api/v2/feature-flags`,
-				{
-					headers: { 'DD-API-KEY': apiKey, 'DD-APPLICATION-KEY': appKey },
-					params: { limit, offset, is_archived: false },
+			const resp = await ddClient.get<{
+				data: DDFlagListItem[];
+				meta?: { page?: { total_count?: number } };
+			}>(`${baseUrl}/api/v2/feature-flags`, {
+				headers: { 'DD-API-KEY': apiKey, 'DD-APPLICATION-KEY': appKey },
+				params: {
+					'page[limit]': limit,
+					'page[offset]': offset,
+					is_archived: false,
 				},
-			);
+			});
 			const flags = resp.data.data ?? [];
+			const total = resp.data.meta?.page?.total_count;
 			for (const f of flags) {
 				keys.add(f.attributes.key);
 				const envEntry = (f.attributes.feature_flag_environments ?? []).find(
@@ -446,8 +451,9 @@ async function fetchDDFlagData(
 						f.attributes.migration_metadata,
 					);
 			}
-			if (flags.length < limit) break;
-			offset += limit;
+			offset += flags.length;
+			if (flags.length < limit || (total !== undefined && offset >= total))
+				break;
 		}
 	} catch (err) {
 		if (axios.isAxiosError(err) && err.response?.status === 403) {
