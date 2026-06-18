@@ -158,6 +158,11 @@ type JsonApiFlag = {
 	};
 };
 
+type JsonApiFlagListResponse = {
+	data: JsonApiFlag[];
+	meta?: { page?: { total_count?: number } };
+};
+
 export async function fetchDatadogFlagKeys(
 	apiKey: string,
 	appKey: string,
@@ -168,17 +173,22 @@ export async function fetchDatadogFlagKeys(
 	let offset = 0;
 	const limit = 200;
 	while (true) {
-		const response = await ddClient.get<{ data: JsonApiFlag[] }>(
+		const response = await ddClient.get<JsonApiFlagListResponse>(
 			`${baseUrl}/api/v2/feature-flags`,
 			{
 				headers: ddHeaders(apiKey, appKey),
-				params: { limit, offset, is_archived: false },
+				params: {
+					'page[limit]': limit,
+					'page[offset]': offset,
+					is_archived: false,
+				},
 			},
 		);
 		const flags = response.data.data ?? [];
+		const total = response.data.meta?.page?.total_count;
 		for (const f of flags) keys.set(f.attributes.key, f.id);
-		if (flags.length < limit) break;
-		offset += limit;
+		offset += flags.length;
+		if (flags.length < limit || (total !== undefined && offset >= total)) break;
 	}
 	return keys;
 }
@@ -189,29 +199,34 @@ export async function fetchDatadogFlags(
 	site = 'datadoghq.com',
 ): Promise<DatadogFlagEntry[]> {
 	const baseUrl = `https://api.${site}`;
-	const flags: DatadogFlagEntry[] = [];
+	const allFlags: DatadogFlagEntry[] = [];
 	let offset = 0;
 	const limit = 200;
 	while (true) {
-		const response = await ddClient.get<{ data: JsonApiFlag[] }>(
+		const response = await ddClient.get<JsonApiFlagListResponse>(
 			`${baseUrl}/api/v2/feature-flags`,
 			{
 				headers: ddHeaders(apiKey, appKey),
-				params: { limit, offset, is_archived: false },
+				params: {
+					'page[limit]': limit,
+					'page[offset]': offset,
+					is_archived: false,
+				},
 			},
 		);
 		const data = response.data.data ?? [];
+		const total = response.data.meta?.page?.total_count;
 		for (const f of data) {
-			flags.push({
+			allFlags.push({
 				id: f.id,
 				key: f.attributes.key,
 				migration_metadata: f.attributes.migration_metadata,
 			});
 		}
-		if (data.length < limit) break;
-		offset += limit;
+		offset += data.length;
+		if (data.length < limit || (total !== undefined && offset >= total)) break;
 	}
-	return flags;
+	return allFlags;
 }
 
 export async function createFeatureFlag(

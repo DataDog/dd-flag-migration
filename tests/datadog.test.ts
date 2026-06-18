@@ -198,15 +198,19 @@ describe('fetchDatadogFlagKeys', () => {
 
 		mock
 			.onGet(`${BASE}/api/v2/feature-flags`, {
-				params: { limit, offset: 0, is_archived: false },
+				params: { 'page[limit]': limit, 'page[offset]': 0, is_archived: false },
 			})
-			.reply(200, { data: page1 });
+			.reply(200, { data: page1, meta: { page: { total_count: 201 } } });
 
 		mock
 			.onGet(`${BASE}/api/v2/feature-flags`, {
-				params: { limit, offset: 200, is_archived: false },
+				params: {
+					'page[limit]': limit,
+					'page[offset]': 200,
+					is_archived: false,
+				},
 			})
-			.reply(200, { data: page2 });
+			.reply(200, { data: page2, meta: { page: { total_count: 201 } } });
 
 		const result = await fetchDatadogFlagKeys(API_KEY, APP_KEY, SITE);
 		expect(result.size).toBe(201);
@@ -337,15 +341,19 @@ describe('fetchDatadogFlags', () => {
 
 		mock
 			.onGet(`${BASE}/api/v2/feature-flags`, {
-				params: { limit, offset: 0, is_archived: false },
+				params: { 'page[limit]': limit, 'page[offset]': 0, is_archived: false },
 			})
-			.reply(200, { data: page1 });
+			.reply(200, { data: page1, meta: { page: { total_count: 201 } } });
 
 		mock
 			.onGet(`${BASE}/api/v2/feature-flags`, {
-				params: { limit, offset: 200, is_archived: false },
+				params: {
+					'page[limit]': limit,
+					'page[offset]': 200,
+					is_archived: false,
+				},
 			})
-			.reply(200, { data: page2 });
+			.reply(200, { data: page2, meta: { page: { total_count: 201 } } });
 
 		const result = await fetchDatadogFlags(API_KEY, APP_KEY, SITE);
 		expect(result).toHaveLength(201);
