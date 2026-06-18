@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.2] — 2026-06-18
+
+### Evaluate
+
+- Fix: `yarn evaluate` would hang indefinitely on orgs with many flags (#83)
+  - The Datadog feature flags list API changed its pagination parameters from `limit`/`offset` to `page[limit]`/`page[offset]`; with the old params ignored by the API, every page request returned the same first page, causing an infinite loop
+  - Also adds `meta.page.total_count` as a secondary termination guard so pagination stops as soon as all flags have been fetched
+
 ## [1.0.1] — 2026-06-15
 
 ### Migration — LaunchDarkly
