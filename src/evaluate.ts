@@ -26,7 +26,7 @@ import {
 	SyntheticSource,
 	type TestCaseSource,
 } from './evaluate/test-case-sources.js';
-import { fetchEnvironmentSdkKey } from './launchdarkly/api.js';
+import { fetchEnvironmentSdkKey, findSdkKeyOwner } from './launchdarkly/api.js';
 import {
 	evaluateLDFlag,
 	evaluateLDFlagAdvanced,
@@ -102,19 +102,19 @@ async function validateLDSdkKey(
 	const ldApiKey = process.env.LAUNCHDARKLY_API_KEY?.trim();
 	if (ldApiKey) {
 		try {
-			const expectedSdkKey = await fetchEnvironmentSdkKey(
-				ldApiKey,
-				migration.projectKey,
-				sourceEnvName,
-			);
+			const [expectedSdkKey, owner] = await Promise.all([
+				fetchEnvironmentSdkKey(ldApiKey, migration.projectKey, sourceEnvName),
+				findSdkKeyOwner(ldApiKey, sdkKey),
+			]);
 			if (expectedSdkKey && expectedSdkKey !== sdkKey) {
 				const tail = sdkKey.slice(-4);
-				process.stderr.write(
-					chalk.red(
-						`\nLAUNCHDARKLY_SDK_KEY (ending in "${tail}") does not match the\n` +
-							`expected SDK key for project "${migration.projectName}" / environment "${sourceEnvName}".\n`,
-					),
-				);
+				let msg =
+					`\nLAUNCHDARKLY_SDK_KEY (ending in "${tail}") does not match the\n` +
+					`expected SDK key for project "${migration.projectName}" / environment "${sourceEnvName}".\n`;
+				if (owner) {
+					msg += `  It appears to belong to: project "${owner.projectName}" / environment "${owner.envName}".\n`;
+				}
+				process.stderr.write(chalk.red(msg));
 				process.stderr.write(
 					chalk.gray(
 						`  Update it with:\n` +

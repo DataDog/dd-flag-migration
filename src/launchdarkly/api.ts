@@ -177,6 +177,51 @@ export async function fetchEnvironmentSdkKey(
 	return response.data.apiKey ?? undefined;
 }
 
+/**
+ * Search all projects/environments to find which one a given SDK key belongs to.
+ * Returns the matching project and environment names, or undefined if not found.
+ */
+export async function findSdkKeyOwner(
+	apiKey: string,
+	sdkKey: string,
+): Promise<
+	| { projectKey: string; projectName: string; envKey: string; envName: string }
+	| undefined
+> {
+	const projects = await fetchProjects(apiKey);
+
+	const results = await Promise.all(
+		projects.map(async (project) => {
+			try {
+				const response = await ldClient.get<{
+					environments:
+						| { items: Array<{ key: string; name: string; apiKey?: string }> }
+						| Array<{ key: string; name: string; apiKey?: string }>;
+				}>(`${LD_BASE_URL}/api/v2/projects/${project.key}`, {
+					headers: ldHeaders(apiKey),
+					params: { expand: 'environments' },
+				});
+				const rawEnvs = response.data.environments;
+				const envs = Array.isArray(rawEnvs) ? rawEnvs : (rawEnvs?.items ?? []);
+				const match = envs.find((e) => e.apiKey === sdkKey);
+				if (match) {
+					return {
+						projectKey: project.key,
+						projectName: project.name,
+						envKey: match.key,
+						envName: match.name,
+					};
+				}
+			} catch {
+				// Ignore per-project errors — keep searching
+			}
+			return undefined;
+		}),
+	);
+
+	return results.find((r) => r !== undefined);
+}
+
 /** Fetch environments for a project from the LD API. */
 export async function fetchProjectEnvironments(
 	apiKey: string,
