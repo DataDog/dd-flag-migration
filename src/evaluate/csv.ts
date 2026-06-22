@@ -177,7 +177,7 @@ export function validateHeader(
 		seen.add(name);
 
 		const dotIdx = name.indexOf('.');
-		if (dotIdx !== -1) {
+		if (provider === 'launchdarkly' && dotIdx !== -1) {
 			const contextKind = name.slice(0, dotIdx);
 			const attrName = name.slice(dotIdx + 1);
 			if (contextKind === '') {
@@ -190,12 +190,12 @@ export function validateHeader(
 					`Header validation failed: empty attribute name in column "${name}" at line 1`,
 				);
 			}
-			if (provider === 'launchdarkly' && contextKind === 'user') {
+			if (contextKind === 'user') {
 				throw new Error(
 					`Header validation failed: context kind "user" is reserved — use a plain column name for user-context attributes (column "${name}") at line 1`,
 				);
 			}
-			if (provider === 'launchdarkly' && contextKind === 'kind') {
+			if (contextKind === 'kind') {
 				throw new Error(
 					`Header validation failed: context kind "kind" is reserved for LaunchDarkly (column "${name}") at line 1`,
 				);
@@ -256,6 +256,7 @@ export function coerceCell(raw: string): string | number | boolean | undefined {
 export function csvRowsToFlagTestCases(
 	header: string[],
 	rows: string[][],
+	provider?: 'launchdarkly' | 'eppo',
 ): FlagTestCaseEntry[] {
 	type ColInfo =
 		| { kind: 'user'; name: string }
@@ -266,9 +267,10 @@ export function csvRowsToFlagTestCases(
 				fullName: string;
 		  };
 
+	const parseContextColumns = provider === 'launchdarkly';
 	const colInfos: ColInfo[] = header.slice(2).map((name) => {
 		const dotIdx = name.indexOf('.');
-		if (dotIdx === -1) return { kind: 'user', name };
+		if (!parseContextColumns || dotIdx === -1) return { kind: 'user', name };
 		return {
 			kind: 'context',
 			contextKind: name.slice(0, dotIdx),

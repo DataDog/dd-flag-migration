@@ -344,6 +344,17 @@ describe('buildLDContext', () => {
 		expect(ctx.empty).toBeUndefined();
 	});
 
+	it('expands slash-prefixed user attribute references into nested LD attributes', () => {
+		const ctx = buildLDContext('user-1', {
+			'/os/name': 'Android',
+		}) as Record<string, unknown>;
+		const os = ctx.os as Record<string, unknown>;
+
+		expect(ctx.kind).toBe('user');
+		expect(os.name).toBe('Android');
+		expect(ctx['/os/name']).toBeUndefined();
+	});
+
 	it('filters non-user-context dotted keys from user subcontext (heuristic path, no ldUserAttributes)', () => {
 		const ctx = buildLDContext(
 			'user-1',
@@ -354,6 +365,22 @@ describe('buildLDContext', () => {
 		const user = ctx.user as Record<string, unknown>;
 		expect(user['ld_application.versionName']).toBeUndefined();
 		expect(user['app.version']).toBe('2.0');
+	});
+
+	it('expands slash-prefixed non-user attribute references into nested LD attributes', () => {
+		const ctx = buildLDContext(
+			'user-1',
+			{ 'ld_device./os/name': 'Android' },
+			{ ld_device: { '/os/name': 'Android' } },
+		) as Record<string, unknown>;
+		const user = ctx.user as Record<string, unknown>;
+		const device = ctx.ld_device as Record<string, unknown>;
+		const os = device.os as Record<string, unknown>;
+
+		expect(ctx.kind).toBe('multi');
+		expect(user['ld_device./os/name']).toBeUndefined();
+		expect(os.name).toBe('Android');
+		expect(device['/os/name']).toBeUndefined();
 	});
 
 	it('uses ldUserAttributes for user subcontext, preserving dotted user attr even when prefix matches a context kind', () => {

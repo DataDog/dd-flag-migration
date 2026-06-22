@@ -281,6 +281,67 @@ export function generateLDTestCases(flag: LDFlag, envKey: string): TestCase[] {
 
 const USER_SKIP = new Set(['key', 'kind']);
 
+function unescapeAttributeReferenceComponent(component: string): string {
+	// Match the LD SDK AttributeReference behavior exactly.
+	return component.indexOf('~')
+		? component.replace(/~1/g, '/').replace(/~0/g, '~')
+		: component;
+}
+
+function attributeReferenceComponents(attribute: string): string[] | null {
+	if (
+		attribute === '' ||
+		attribute === '/' ||
+		/\/\/|(^\/.*~[^0|^1])|~$/.test(attribute)
+	) {
+		return null;
+	}
+	if (!attribute.startsWith('/')) return [attribute];
+	if (attribute.indexOf('/', 1) < 0) {
+		return [unescapeAttributeReferenceComponent(attribute.slice(1))];
+	}
+	return attribute
+		.slice(1)
+		.split('/')
+		.map((component) => unescapeAttributeReferenceComponent(component));
+}
+
+function setLDContextAttribute(
+	target: Record<string, unknown>,
+	attribute: string,
+	value: unknown,
+): void {
+	const components = attributeReferenceComponents(attribute);
+	if (components === null || components.length === 0) return;
+
+	let current = target;
+	for (let i = 0; i < components.length - 1; i++) {
+		const component = components[i];
+		const existing = current[component];
+		if (
+			existing === null ||
+			typeof existing !== 'object' ||
+			Array.isArray(existing)
+		) {
+			current[component] = {};
+		}
+		current = current[component] as Record<string, unknown>;
+	}
+	current[components[components.length - 1]] = value;
+}
+
+function buildLDContextAttributes(
+	attributes: SubjectAttributes,
+	skip = USER_SKIP,
+): Record<string, unknown> {
+	const built: Record<string, unknown> = {};
+	for (const [k, v] of Object.entries(attributes)) {
+		if (skip.has(k) || v === null) continue;
+		setLDContextAttribute(built, k, v);
+	}
+	return built;
+}
+
 /**
  * Build an LD evaluation context. Returns kind="user" when contextAttributes
  * is absent or empty; returns kind="multi" otherwise.
@@ -301,11 +362,7 @@ export function buildLDContext(
 	let userAttrs: Record<string, unknown>;
 
 	if (ldUserAttributes !== undefined) {
-		userAttrs = Object.fromEntries(
-			Object.entries(ldUserAttributes).filter(
-				([k, v]) => !USER_SKIP.has(k) && v !== null,
-			),
-		);
+		userAttrs = buildLDContextAttributes(ldUserAttributes);
 	} else {
 		const nonUserPrefixes = new Set(
 			Object.keys(contextAttributes ?? {}).map((ck) => `${ck}.`),
@@ -315,9 +372,9 @@ export function buildLDContext(
 			if (dot === -1) return false;
 			return nonUserPrefixes.has(k.slice(0, dot + 1));
 		};
-		userAttrs = Object.fromEntries(
-			Object.entries(attributes).filter(
-				([k, v]) => !USER_SKIP.has(k) && !isNonUserKey(k) && v !== null,
+		userAttrs = buildLDContextAttributes(
+			Object.fromEntries(
+				Object.entries(attributes).filter(([k]) => !isNonUserKey(k)),
 			),
 		);
 	}
@@ -333,9 +390,7 @@ export function buildLDContext(
 	for (const [ck, ckAttrs] of Object.entries(contextAttributes)) {
 		const { key, ...rest } = ckAttrs;
 		const ckKey = key != null ? String(key) : 'synthetic';
-		const filteredRest = Object.fromEntries(
-			Object.entries(rest).filter(([, v]) => v !== null),
-		);
+		const filteredRest = buildLDContextAttributes(rest, new Set());
 		multi[ck] = { key: ckKey, ...filteredRest };
 	}
 	return multi;

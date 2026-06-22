@@ -504,13 +504,25 @@ describe('validateHeader — dotted columns (LD provider)', () => {
 	});
 });
 
+describe('validateHeader — dotted columns (Eppo provider)', () => {
+	it('accepts dotted names that are invalid LD context columns', () => {
+		expect(() =>
+			validateHeader(
+				['flagKey', 'subjectKey', '.plan', 'ld_application.'],
+				[['flag-a', 'user-1', 'pro', '4.9.0']],
+				'eppo',
+			),
+		).not.toThrow();
+	});
+});
+
 // ─── csvRowsToFlagTestCases — dotted columns ─────────────────────────────────
 
 describe('csvRowsToFlagTestCases — dotted columns', () => {
 	it('populates contextAttributes for ld_application.versionName', () => {
 		const header = ['flagKey', 'subjectKey', 'ld_application.versionName'];
 		const rows = [['flag-a', 'user-1', '4.9.0']];
-		const result = csvRowsToFlagTestCases(header, rows);
+		const result = csvRowsToFlagTestCases(header, rows, 'launchdarkly');
 		const tc = result[0].testCases[0];
 		expect(tc.contextAttributes?.ld_application?.versionName).toBe('4.9.0');
 	});
@@ -518,7 +530,7 @@ describe('csvRowsToFlagTestCases — dotted columns', () => {
 	it('stores dotted attr under full dotted name in flat attributes', () => {
 		const header = ['flagKey', 'subjectKey', 'ld_application.versionName'];
 		const rows = [['flag-a', 'user-1', '4.9.0']];
-		const result = csvRowsToFlagTestCases(header, rows);
+		const result = csvRowsToFlagTestCases(header, rows, 'launchdarkly');
 		const tc = result[0].testCases[0];
 		expect(tc.attributes['ld_application.versionName']).toBe('4.9.0');
 		expect(tc.attributes.versionName).toBeUndefined();
@@ -527,7 +539,7 @@ describe('csvRowsToFlagTestCases — dotted columns', () => {
 	it('stores contextKind.key in flat attributes as full dotted name AND in contextAttributes as key', () => {
 		const header = ['flagKey', 'subjectKey', 'org.key'];
 		const rows = [['flag-a', 'user-1', 'org-abc']];
-		const result = csvRowsToFlagTestCases(header, rows);
+		const result = csvRowsToFlagTestCases(header, rows, 'launchdarkly');
 		const tc = result[0].testCases[0];
 		expect(tc.attributes['org.key']).toBe('org-abc');
 		expect(tc.contextAttributes?.org?.key).toBe('org-abc');
@@ -537,7 +549,7 @@ describe('csvRowsToFlagTestCases — dotted columns', () => {
 	it('stringifies numeric-looking contextKind.key values so LD and DD agree', () => {
 		const header = ['flagKey', 'subjectKey', 'org.key'];
 		const rows = [['flag-a', 'user-1', '42']];
-		const result = csvRowsToFlagTestCases(header, rows);
+		const result = csvRowsToFlagTestCases(header, rows, 'launchdarkly');
 		const tc = result[0].testCases[0];
 		expect(typeof tc.attributes['org.key']).toBe('string');
 		expect(tc.attributes['org.key']).toBe('42');
@@ -547,7 +559,7 @@ describe('csvRowsToFlagTestCases — dotted columns', () => {
 	it('includes dotted column name in the test case label', () => {
 		const header = ['flagKey', 'subjectKey', 'ld_application.versionName'];
 		const rows = [['flag-a', 'user-1', '4.9.0']];
-		const result = csvRowsToFlagTestCases(header, rows);
+		const result = csvRowsToFlagTestCases(header, rows, 'launchdarkly');
 		expect(result[0].testCases[0].label).toContain(
 			'ld_application.versionName=4.9.0',
 		);
@@ -561,7 +573,7 @@ describe('csvRowsToFlagTestCases — dotted columns', () => {
 			'ld_application.versionName',
 		];
 		const rows = [['flag-a', 'user-1', 'pro', '4.9.0']];
-		const result = csvRowsToFlagTestCases(header, rows);
+		const result = csvRowsToFlagTestCases(header, rows, 'launchdarkly');
 		const tc = result[0].testCases[0];
 		expect(tc.attributes.plan).toBe('pro');
 		expect(tc.attributes['ld_application.versionName']).toBe('4.9.0');
@@ -572,7 +584,7 @@ describe('csvRowsToFlagTestCases — dotted columns', () => {
 	it('coerces dotted column values the same as plain columns', () => {
 		const header = ['flagKey', 'subjectKey', 'ld_application.buildNumber'];
 		const rows = [['flag-a', 'user-1', '42']];
-		const result = csvRowsToFlagTestCases(header, rows);
+		const result = csvRowsToFlagTestCases(header, rows, 'launchdarkly');
 		const tc = result[0].testCases[0];
 		expect(tc.contextAttributes?.ld_application?.buildNumber).toBe(42);
 		expect(tc.attributes['ld_application.buildNumber']).toBe(42);
@@ -581,7 +593,7 @@ describe('csvRowsToFlagTestCases — dotted columns', () => {
 	it('skips dotted column when cell is empty', () => {
 		const header = ['flagKey', 'subjectKey', 'ld_application.versionName'];
 		const rows = [['flag-a', 'user-1', '']];
-		const result = csvRowsToFlagTestCases(header, rows);
+		const result = csvRowsToFlagTestCases(header, rows, 'launchdarkly');
 		const tc = result[0].testCases[0];
 		expect(tc.contextAttributes).toBeUndefined();
 		expect(tc.attributes['ld_application.versionName']).toBeUndefined();
@@ -591,6 +603,15 @@ describe('csvRowsToFlagTestCases — dotted columns', () => {
 		const header = ['flagKey', 'subjectKey', 'plan'];
 		const rows = [['flag-a', 'user-1', 'pro']];
 		const tc = csvRowsToFlagTestCases(header, rows)[0].testCases[0];
+		expect(tc.contextAttributes).toBeUndefined();
+	});
+
+	it('treats dotted Eppo columns as literal attributes', () => {
+		const header = ['flagKey', 'subjectKey', 'org.key'];
+		const rows = [['flag-a', 'user-1', '42']];
+		const tc = csvRowsToFlagTestCases(header, rows, 'eppo')[0].testCases[0];
+
+		expect(tc.attributes['org.key']).toBe(42);
 		expect(tc.contextAttributes).toBeUndefined();
 	});
 });
