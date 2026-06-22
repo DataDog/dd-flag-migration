@@ -26,6 +26,7 @@ import {
 	SyntheticSource,
 	type TestCaseSource,
 } from './evaluate/test-case-sources.js';
+import { fetchEnvironmentSdkKey } from './launchdarkly/api.js';
 import {
 	evaluateLDFlag,
 	evaluateLDFlagAdvanced,
@@ -66,6 +67,71 @@ function printHeader(): void {
 	);
 	console.log(purple('╚══════════════════════════════════════════╝'));
 	console.log();
+}
+
+// ─── LD SDK Key Validation ────────────────────────────────────────────────────
+
+/**
+ * Validates that LAUNCHDARKLY_SDK_KEY is set and, if LAUNCHDARKLY_API_KEY is
+ * also available, verifies it matches the expected environment in the migration.
+ * Exits with a clear error message on failure.
+ */
+async function validateLDSdkKey(
+	migration: LDMigrationFile,
+	sourceEnvName: string,
+): Promise<string> {
+	const sdkKey = process.env.LAUNCHDARKLY_SDK_KEY?.trim();
+
+	if (!sdkKey) {
+		process.stderr.write(chalk.red('\nLAUNCHDARKLY_SDK_KEY is not set.\n'));
+		process.stderr.write(
+			chalk.gray(
+				`  Set it to the Server-Side SDK key for the "${sourceEnvName}" environment\n` +
+					`  of project "${migration.projectName}" (${migration.projectKey}).\n\n` +
+					`  Find it in LaunchDarkly:\n` +
+					`    Account Settings → Projects → ${migration.projectKey} → ${sourceEnvName} → SDK keys\n\n` +
+					`  Then run:\n` +
+					`    export LAUNCHDARKLY_SDK_KEY=sdk-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx\n\n`,
+			),
+		);
+		process.exit(1);
+	}
+
+	// If the management API key is available, verify the SDK key matches the
+	// expected environment so users don't silently evaluate the wrong environment.
+	const ldApiKey = process.env.LAUNCHDARKLY_API_KEY?.trim();
+	if (ldApiKey) {
+		try {
+			const expectedSdkKey = await fetchEnvironmentSdkKey(
+				ldApiKey,
+				migration.projectKey,
+				sourceEnvName,
+			);
+			if (expectedSdkKey && expectedSdkKey !== sdkKey) {
+				const tail = sdkKey.slice(-4);
+				process.stderr.write(
+					chalk.red(
+						`\nLAUNCHDARKLY_SDK_KEY (ending in "${tail}") does not match the\n` +
+							`expected SDK key for project "${migration.projectName}" / environment "${sourceEnvName}".\n`,
+					),
+				);
+				process.stderr.write(
+					chalk.gray(
+						`  Update it with:\n` +
+							`    export LAUNCHDARKLY_SDK_KEY="${expectedSdkKey}"\n\n` +
+							`  Or find it in LaunchDarkly:\n` +
+							`    Account Settings → Projects → ${migration.projectKey} → ${sourceEnvName} → SDK keys\n\n`,
+					),
+				);
+				process.exit(1);
+			}
+		} catch {
+			// Ignore API errors during verification — wrong API key scope, network
+			// issues, etc. The SDK initialization will surface real auth failures.
+		}
+	}
+
+	return sdkKey;
 }
 
 // ─── Arg Parsing ──────────────────────────────────────────────────────────────
@@ -872,11 +938,12 @@ async function main(): Promise<void> {
 	// 3. Select Datadog environment (resolved via API)
 	const isLD = migration.provider === 'launchdarkly';
 
-	// Validate provider SDK env var now that we know which provider the
-	// migration came from.
-	const providerSdkEnvVar = isLD ? 'LAUNCHDARKLY_SDK_KEY' : 'EPPO_SDK_KEY';
-	const providerEnv = requireEnvVars([providerSdkEnvVar]);
-	const providerSdkKey = providerEnv[providerSdkEnvVar];
+	// Validate that the Eppo SDK key is present before going further (Eppo only —
+	// LD SDK key is validated after environment selection so we can include context).
+	if (!isLD) {
+		requireEnvVars(['EPPO_SDK_KEY']);
+	}
+
 	const {
 		ddEnvName: ddEnv,
 		envId: ddEnvId,
@@ -890,7 +957,17 @@ async function main(): Promise<void> {
 	);
 	console.log();
 
-	// 4a. Provider SDK key already loaded from env var (see above).
+	// 4a. Validate provider SDK key now that we know the source environment.
+	let providerSdkKey: string;
+	if (isLD) {
+		providerSdkKey = await validateLDSdkKey(
+			migration as unknown as LDMigrationFile,
+			sourceEnvName,
+		);
+	} else {
+		const eppoEnv = requireEnvVars(['EPPO_SDK_KEY']);
+		providerSdkKey = eppoEnv.EPPO_SDK_KEY;
+	}
 
 	// 4b. Prompt for test subject ID (only in Basic mode)
 	let subjectId: string;

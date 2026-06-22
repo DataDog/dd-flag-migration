@@ -161,6 +161,22 @@ export async function fetchProjects(apiKey: string): Promise<LDProject[]> {
 
 // ─── Environments ────────────────────────────────────────────────────────────
 
+/**
+ * Fetch the server-side SDK key for a single LD environment.
+ * Returns undefined if the key cannot be retrieved (e.g. insufficient scope).
+ */
+export async function fetchEnvironmentSdkKey(
+	apiKey: string,
+	projectKey: string,
+	environmentKey: string,
+): Promise<string | undefined> {
+	const response = await ldClient.get<{ apiKey?: string }>(
+		`${LD_BASE_URL}/api/v2/projects/${projectKey}/environments/${environmentKey}`,
+		{ headers: ldHeaders(apiKey) },
+	);
+	return response.data.apiKey ?? undefined;
+}
+
 /** Fetch environments for a project from the LD API. */
 export async function fetchProjectEnvironments(
 	apiKey: string,
