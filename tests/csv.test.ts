@@ -419,3 +419,213 @@ describe('formatExampleTable', () => {
 		expect(result).toContain('Any attribute names are allowed');
 	});
 });
+
+// ─── validateHeader — dotted columns ────────────────────────────────────────
+
+describe('validateHeader — dotted columns (LD provider)', () => {
+	it('accepts "ld_application.versionName"', () => {
+		expect(() =>
+			validateHeader(
+				['flagKey', 'subjectKey', 'ld_application.versionName'],
+				[['flag-a', 'user-1', '4.9.0']],
+				'launchdarkly',
+			),
+		).not.toThrow();
+	});
+
+	it('accepts "contextKind.key" (context identity key)', () => {
+		expect(() =>
+			validateHeader(
+				['flagKey', 'subjectKey', 'org.key'],
+				[['flag-a', 'user-1', 'org-abc']],
+				'launchdarkly',
+			),
+		).not.toThrow();
+	});
+
+	it('rejects "ld_application." — empty attribute name', () => {
+		expect(() =>
+			validateHeader(
+				['flagKey', 'subjectKey', 'ld_application.'],
+				[['flag-a', 'user-1', '4.9.0']],
+				'launchdarkly',
+			),
+		).toThrow(/empty attribute name/i);
+	});
+
+	it('rejects ".plan" — empty context kind', () => {
+		expect(() =>
+			validateHeader(
+				['flagKey', 'subjectKey', '.plan'],
+				[['flag-a', 'user-1', 'pro']],
+				'launchdarkly',
+			),
+		).toThrow(/empty context kind/i);
+	});
+
+	it('rejects "user.plan" — user context kind reserved', () => {
+		expect(() =>
+			validateHeader(
+				['flagKey', 'subjectKey', 'user.plan'],
+				[['flag-a', 'user-1', 'pro']],
+				'launchdarkly',
+			),
+		).toThrow(/reserved.*plain column/i);
+	});
+
+	it('rejects "kind.foo" — kind is the LD discriminator field', () => {
+		expect(() =>
+			validateHeader(
+				['flagKey', 'subjectKey', 'kind.foo'],
+				[['flag-a', 'user-1', 'bar']],
+				'launchdarkly',
+			),
+		).toThrow(/reserved/i);
+	});
+
+	it('still rejects undotted "key" for launchdarkly provider', () => {
+		expect(() =>
+			validateHeader(
+				['flagKey', 'subjectKey', 'key'],
+				[['flag-a', 'user-1', 'abc']],
+				'launchdarkly',
+			),
+		).toThrow(/reserved/i);
+	});
+
+	it('still rejects undotted "kind" for launchdarkly provider', () => {
+		expect(() =>
+			validateHeader(
+				['flagKey', 'subjectKey', 'kind'],
+				[['flag-a', 'user-1', 'user']],
+				'launchdarkly',
+			),
+		).toThrow(/reserved/i);
+	});
+});
+
+describe('validateHeader — dotted columns (Eppo provider)', () => {
+	it('accepts dotted names that are invalid LD context columns', () => {
+		expect(() =>
+			validateHeader(
+				['flagKey', 'subjectKey', '.plan', 'ld_application.'],
+				[['flag-a', 'user-1', 'pro', '4.9.0']],
+				'eppo',
+			),
+		).not.toThrow();
+	});
+});
+
+// ─── csvRowsToFlagTestCases — dotted columns ─────────────────────────────────
+
+describe('csvRowsToFlagTestCases — dotted columns', () => {
+	it('populates contextAttributes for ld_application.versionName', () => {
+		const header = ['flagKey', 'subjectKey', 'ld_application.versionName'];
+		const rows = [['flag-a', 'user-1', '4.9.0']];
+		const result = csvRowsToFlagTestCases(header, rows, 'launchdarkly');
+		const tc = result[0].testCases[0];
+		expect(tc.contextAttributes?.ld_application?.versionName).toBe('4.9.0');
+	});
+
+	it('stores dotted attr under full dotted name in flat attributes', () => {
+		const header = ['flagKey', 'subjectKey', 'ld_application.versionName'];
+		const rows = [['flag-a', 'user-1', '4.9.0']];
+		const result = csvRowsToFlagTestCases(header, rows, 'launchdarkly');
+		const tc = result[0].testCases[0];
+		expect(tc.attributes['ld_application.versionName']).toBe('4.9.0');
+		expect(tc.attributes.versionName).toBeUndefined();
+	});
+
+	it('stores contextKind.key in flat attributes as full dotted name AND in contextAttributes as key', () => {
+		const header = ['flagKey', 'subjectKey', 'org.key'];
+		const rows = [['flag-a', 'user-1', 'org-abc']];
+		const result = csvRowsToFlagTestCases(header, rows, 'launchdarkly');
+		const tc = result[0].testCases[0];
+		expect(tc.attributes['org.key']).toBe('org-abc');
+		expect(tc.contextAttributes?.org?.key).toBe('org-abc');
+		expect(tc.attributes.key).toBeUndefined();
+	});
+
+	it('stringifies numeric-looking contextKind.key values so LD and DD agree', () => {
+		const header = ['flagKey', 'subjectKey', 'org.key'];
+		const rows = [['flag-a', 'user-1', '42']];
+		const result = csvRowsToFlagTestCases(header, rows, 'launchdarkly');
+		const tc = result[0].testCases[0];
+		expect(typeof tc.attributes['org.key']).toBe('string');
+		expect(tc.attributes['org.key']).toBe('42');
+		expect(tc.contextAttributes?.org?.key).toBe('42');
+	});
+
+	it('includes dotted column name in the test case label', () => {
+		const header = ['flagKey', 'subjectKey', 'ld_application.versionName'];
+		const rows = [['flag-a', 'user-1', '4.9.0']];
+		const result = csvRowsToFlagTestCases(header, rows, 'launchdarkly');
+		expect(result[0].testCases[0].label).toContain(
+			'ld_application.versionName=4.9.0',
+		);
+	});
+
+	it('handles both user and non-user columns in the same row', () => {
+		const header = [
+			'flagKey',
+			'subjectKey',
+			'plan',
+			'ld_application.versionName',
+		];
+		const rows = [['flag-a', 'user-1', 'pro', '4.9.0']];
+		const result = csvRowsToFlagTestCases(header, rows, 'launchdarkly');
+		const tc = result[0].testCases[0];
+		expect(tc.attributes.plan).toBe('pro');
+		expect(tc.attributes['ld_application.versionName']).toBe('4.9.0');
+		expect(tc.contextAttributes?.ld_application?.versionName).toBe('4.9.0');
+		expect(tc.contextAttributes?.ld_application?.plan).toBeUndefined();
+	});
+
+	it('coerces dotted column values the same as plain columns', () => {
+		const header = ['flagKey', 'subjectKey', 'ld_application.buildNumber'];
+		const rows = [['flag-a', 'user-1', '42']];
+		const result = csvRowsToFlagTestCases(header, rows, 'launchdarkly');
+		const tc = result[0].testCases[0];
+		expect(tc.contextAttributes?.ld_application?.buildNumber).toBe(42);
+		expect(tc.attributes['ld_application.buildNumber']).toBe(42);
+	});
+
+	it('skips dotted column when cell is empty', () => {
+		const header = ['flagKey', 'subjectKey', 'ld_application.versionName'];
+		const rows = [['flag-a', 'user-1', '']];
+		const result = csvRowsToFlagTestCases(header, rows, 'launchdarkly');
+		const tc = result[0].testCases[0];
+		expect(tc.contextAttributes).toBeUndefined();
+		expect(tc.attributes['ld_application.versionName']).toBeUndefined();
+	});
+
+	it('does not set contextAttributes when no dotted columns have values', () => {
+		const header = ['flagKey', 'subjectKey', 'plan'];
+		const rows = [['flag-a', 'user-1', 'pro']];
+		const tc = csvRowsToFlagTestCases(header, rows)[0].testCases[0];
+		expect(tc.contextAttributes).toBeUndefined();
+	});
+
+	it('treats dotted Eppo columns as literal attributes', () => {
+		const header = ['flagKey', 'subjectKey', 'org.key'];
+		const rows = [['flag-a', 'user-1', '42']];
+		const tc = csvRowsToFlagTestCases(header, rows, 'eppo')[0].testCases[0];
+
+		expect(tc.attributes['org.key']).toBe(42);
+		expect(tc.contextAttributes).toBeUndefined();
+	});
+});
+
+// ─── formatExampleTable LD note ──────────────────────────────────────────────
+
+describe('formatExampleTable — LD dotted column note', () => {
+	it('mentions dotted column syntax', () => {
+		expect(formatExampleTable('launchdarkly')).toMatch(
+			/ld_application\.versionName/,
+		);
+	});
+
+	it('mentions contextKind.key', () => {
+		expect(formatExampleTable('launchdarkly')).toMatch(/contextKind\.key/);
+	});
+});

@@ -133,6 +133,8 @@ export interface TestCase {
 	label: string;
 	attributes: SubjectAttributes;
 	subjectIdOverride?: string;
+	contextAttributes?: Record<string, SubjectAttributes>;
+	ldUserAttributes?: SubjectAttributes;
 }
 
 export type DDFlagValue = { variationValue: unknown; variationType: string };

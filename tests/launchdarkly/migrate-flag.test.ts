@@ -671,7 +671,51 @@ describe('migrate a flag with semver operators', () => {
 			result.request?.allocations?.[0].targeting_rules?.[0].conditions[0];
 		expect(cond?.operator).toBe('SEMVER_LT');
 		expect(cond?.value).toEqual(['5.0.0']);
-		expect(cond?.attribute).toBe('versionName');
+		expect(cond?.attribute).toBe('ld_application.versionName');
+	});
+});
+
+describe('migrate a flag with a non-user contextTarget', () => {
+	const flag: LDFlag = {
+		name: 'Org Target Flag',
+		kind: 'boolean',
+		key: 'org-target-flag',
+		variations: [
+			{ _id: 'v0', value: true, name: 'on' },
+			{ _id: 'v1', value: false, name: 'off' },
+		],
+		defaults: { onVariation: 0, offVariation: 1 },
+		environments: {
+			production: makeEnv({
+				_environmentName: 'Production',
+				on: true,
+				targets: [],
+				contextTargets: [
+					{ values: ['org-abc'], variation: 0, contextKind: 'org' },
+				],
+				rules: [],
+				fallthrough: { variation: 1 },
+			}),
+		},
+		tags: [],
+		archived: false,
+		deprecated: false,
+		temporary: false,
+	};
+
+	const envMapping = new Map([['production', ddProd]]);
+	const result = migrateFlag(flag, envMapping, ['production']);
+
+	it('produces an allocation with attribute "org.key" for the contextTarget', () => {
+		const allocs = result.request?.allocations ?? [];
+		const targetAlloc = allocs.find(
+			(a) => a.targeting_rules && a.targeting_rules.length > 0,
+		);
+		expect(targetAlloc).toBeDefined();
+		const cond = targetAlloc?.targeting_rules?.[0]?.conditions[0];
+		expect(cond?.operator).toBe('ONE_OF');
+		expect(cond?.attribute).toBe('org.key');
+		expect(cond?.value).toEqual(['org-abc']);
 	});
 });
 

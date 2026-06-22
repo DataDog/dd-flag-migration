@@ -232,6 +232,23 @@ describe('getCreationType', () => {
 		const seg = makeSegment({ key: 's', included: ['u1', 'u2'] });
 		expect(getCreationType(seg)).toBe('RULES');
 	});
+
+	it('returns RULES (not LIST) for a non-user contextKind key clause', () => {
+		const seg = makeSegment({
+			key: 's',
+			rules: [
+				makeRule([
+					makeClause({
+						op: 'in',
+						attribute: 'key',
+						values: ['org-1'],
+						contextKind: 'org',
+					}),
+				]),
+			],
+		});
+		expect(getCreationType(seg)).toBe('RULES');
+	});
 });
 
 // ─── renderSavedFilterName ────────────────────────────────────────────────────
@@ -333,6 +350,32 @@ describe('buildNonNegatedRules', () => {
 			attribute: 'tenant',
 			value: ['acme'],
 		});
+	});
+
+	it('prefixes non-user contextKind on clause attribute', () => {
+		const seg = makeSegment({
+			key: 's',
+			rules: [
+				{
+					_id: 'r1',
+					clauses: [
+						makeClause({
+							attribute: 'plan',
+							op: 'in',
+							values: ['enterprise'],
+							contextKind: 'org',
+						}),
+					],
+					trackEvents: false,
+				},
+			],
+		});
+		const rules = buildNonNegatedRules(seg);
+		expect(rules).not.toBeNull();
+		const cond = rules?.[0].conditions[0];
+		expect(cond?.attribute).toBe('org.plan');
+		expect(cond?.operator).toBe('ONE_OF');
+		expect(cond?.value).toEqual(['enterprise']);
 	});
 
 	it('multi-rule segment → one targeting rule per rule (OR semantics)', () => {

@@ -26,6 +26,7 @@ import {
 	SyntheticSource,
 	type TestCaseSource,
 } from './evaluate/test-case-sources.js';
+import { fetchEnvironmentSdkKey, findSdkKeyOwner } from './launchdarkly/api.js';
 import {
 	evaluateLDFlag,
 	evaluateLDFlagAdvanced,
@@ -66,6 +67,87 @@ function printHeader(): void {
 	);
 	console.log(purple('╚══════════════════════════════════════════╝'));
 	console.log();
+}
+
+// ─── LD SDK Key Validation ────────────────────────────────────────────────────
+
+/**
+ * Resolves the LaunchDarkly SDK key to use for evaluation.
+ *
+ * Priority:
+ *   1. If LAUNCHDARKLY_API_KEY is set, auto-fetch the correct SDK key for the
+ *      selected project/environment — no need to set LAUNCHDARKLY_SDK_KEY.
+ *   2. Otherwise fall back to LAUNCHDARKLY_SDK_KEY.
+ *   3. If neither is set, exit with instructions for both options.
+ *
+ * When both are set but disagree, emits a warning and proceeds with the
+ * auto-fetched key (which is guaranteed correct).
+ */
+async function validateLDSdkKey(
+	migration: LDMigrationFile,
+	sourceEnvName: string,
+): Promise<string> {
+	const ldApiKey = process.env.LAUNCHDARKLY_API_KEY?.trim();
+	const manualSdkKey = process.env.LAUNCHDARKLY_SDK_KEY?.trim();
+
+	// Auto-fetch path: use LAUNCHDARKLY_API_KEY to retrieve the right SDK key.
+	if (ldApiKey) {
+		try {
+			const fetchedSdkKey = await fetchEnvironmentSdkKey(
+				ldApiKey,
+				migration.projectKey,
+				sourceEnvName,
+			);
+			if (fetchedSdkKey) {
+				console.log(
+					chalk.gray(
+						`  SDK key for "${sourceEnvName}" fetched via LAUNCHDARKLY_API_KEY\n`,
+					),
+				);
+
+				// Warn if LAUNCHDARKLY_SDK_KEY is also set but points elsewhere.
+				if (manualSdkKey && manualSdkKey !== fetchedSdkKey) {
+					const tail = manualSdkKey.slice(-4);
+					try {
+						const owner = await findSdkKeyOwner(ldApiKey, manualSdkKey);
+						let warn =
+							`  ⚠ LAUNCHDARKLY_SDK_KEY (ending in "${tail}") doesn't match ` +
+							`"${sourceEnvName}"`;
+						if (owner) {
+							warn += ` — it belongs to project "${owner.projectName}" / environment "${owner.envName}"`;
+						}
+						console.log(chalk.yellow(`${warn}. Using auto-fetched key.\n`));
+					} catch {
+						// Owner lookup failed — still proceed with fetched key
+					}
+				}
+
+				return fetchedSdkKey;
+			}
+		} catch {
+			// Fetch failed (wrong API key scope, network error, etc.) — fall through
+			// to manual key so we degrade gracefully instead of blocking evaluation.
+		}
+	}
+
+	// Manual key path: use LAUNCHDARKLY_SDK_KEY as-is.
+	if (manualSdkKey) {
+		return manualSdkKey;
+	}
+
+	// Neither key available.
+	process.stderr.write(chalk.red('\nCannot determine LaunchDarkly SDK key.\n'));
+	process.stderr.write(
+		chalk.gray(
+			`  Option 1 — set LAUNCHDARKLY_API_KEY (already required for migrate):\n` +
+				`    The correct SDK key will be fetched automatically.\n\n` +
+				`  Option 2 — set LAUNCHDARKLY_SDK_KEY directly:\n` +
+				`    Find it in LaunchDarkly:\n` +
+				`    Account Settings → Projects → ${migration.projectKey} → ${sourceEnvName} → SDK keys\n` +
+				`    export LAUNCHDARKLY_SDK_KEY=sdk-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx\n\n`,
+		),
+	);
+	process.exit(1);
 }
 
 // ─── Arg Parsing ──────────────────────────────────────────────────────────────
@@ -872,11 +954,12 @@ async function main(): Promise<void> {
 	// 3. Select Datadog environment (resolved via API)
 	const isLD = migration.provider === 'launchdarkly';
 
-	// Validate provider SDK env var now that we know which provider the
-	// migration came from.
-	const providerSdkEnvVar = isLD ? 'LAUNCHDARKLY_SDK_KEY' : 'EPPO_SDK_KEY';
-	const providerEnv = requireEnvVars([providerSdkEnvVar]);
-	const providerSdkKey = providerEnv[providerSdkEnvVar];
+	// Validate that the Eppo SDK key is present before going further (Eppo only —
+	// LD SDK key is validated after environment selection so we can include context).
+	if (!isLD) {
+		requireEnvVars(['EPPO_SDK_KEY']);
+	}
+
 	const {
 		ddEnvName: ddEnv,
 		envId: ddEnvId,
@@ -890,7 +973,17 @@ async function main(): Promise<void> {
 	);
 	console.log();
 
-	// 4a. Provider SDK key already loaded from env var (see above).
+	// 4a. Validate provider SDK key now that we know the source environment.
+	let providerSdkKey: string;
+	if (isLD) {
+		providerSdkKey = await validateLDSdkKey(
+			migration as unknown as LDMigrationFile,
+			sourceEnvName,
+		);
+	} else {
+		const eppoEnv = requireEnvVars(['EPPO_SDK_KEY']);
+		providerSdkKey = eppoEnv.EPPO_SDK_KEY;
+	}
 
 	// 4b. Prompt for test subject ID (only in Basic mode)
 	let subjectId: string;
@@ -1151,6 +1244,8 @@ async function main(): Promise<void> {
 						ddFlagsForCase,
 						ddFlagKeys,
 						datadogFlagKey,
+						tc.contextAttributes,
+						tc.ldUserAttributes,
 					);
 					testResults.push({
 						testCase: tc,
@@ -1174,6 +1269,8 @@ async function main(): Promise<void> {
 						ddFlagsForCase,
 						ddFlagKeys,
 						datadogFlagKey,
+						tc.contextAttributes,
+						tc.ldUserAttributes,
 					);
 					testResults.push({
 						testCase: tc,

@@ -70,7 +70,7 @@ export class CsvSource implements TestCaseSource {
 			migration.provider === 'launchdarkly' ? 'launchdarkly' : 'eppo';
 		validateHeader(header, rows, provider);
 
-		const groups = csvRowsToFlagTestCases(header, rows);
+		const groups = csvRowsToFlagTestCases(header, rows, provider);
 
 		// Build enrichment map from migration flags
 		const infoMap = new Map<string, { name: string; team: string }>();

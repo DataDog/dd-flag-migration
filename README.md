@@ -50,15 +50,11 @@ Your LaunchDarkly access token needs **Reader** role permissions (or a custom ro
 
 ### Required for `evaluate`
 
-Everything above, plus the SDK key for the source environment you're evaluating against and a Datadog client token:
-
 | Variable | Required when | Where to find it |
 |---|---|---|
 | `DD_CLIENT_TOKEN` | always | Datadog → Organization Settings → Client Tokens |
 | `EPPO_SDK_KEY` | migration was from Eppo | Eppo → SDK Keys (server SDK key, one per environment) |
-| `LAUNCHDARKLY_SDK_KEY` | migration was from LaunchDarkly | LaunchDarkly → Account settings → Authorization → SDK keys (server-side, one per environment) |
-
-> SDK keys in both Eppo and LaunchDarkly are **scoped to a single environment**. Make sure the value you export matches the environment you intend to evaluate against — `evaluate` will surface a reminder if it sees mismatched results.
+| `LAUNCHDARKLY_API_KEY` | migration was from LaunchDarkly *(preferred)* | LaunchDarkly → Account settings → Authorization → Access tokens |
 
 ### Datadog Application Key permissions
 
@@ -111,11 +107,24 @@ npx @datadog/dd-flag-migration migrate
 
 **Evaluate a LaunchDarkly migration**
 
+If `LAUNCHDARKLY_API_KEY` is already set (from running `migrate`), the SDK key is fetched automatically:
+
 ```bash
 export DD_API_KEY=...
 export DD_APP_KEY=...
 export DD_CLIENT_TOKEN=...
-export LAUNCHDARKLY_SDK_KEY=...
+export LAUNCHDARKLY_API_KEY=...   # SDK key fetched automatically
+
+npx @datadog/dd-flag-migration evaluate
+```
+
+Or set the SDK key directly if you don't have the API key available:
+
+```bash
+export DD_API_KEY=...
+export DD_APP_KEY=...
+export DD_CLIENT_TOKEN=...
+export LAUNCHDARKLY_SDK_KEY=...   # server-side key, scoped to one environment
 
 npx @datadog/dd-flag-migration evaluate
 ```
@@ -158,14 +167,6 @@ When migrating from LaunchDarkly, the tool adds these steps:
 4. **Select flags** — flags already in Datadog are shown with a checkmark and will have their targeting synced for new environments rather than being re-created
 
 The tool translates LaunchDarkly targeting rules, individual user targets, percentage rollouts, and fallthrough variations into equivalent Datadog targeting filters. Flags that use unsupported operators (`segmentMatch`, `before`, `after`) are automatically skipped with an explanation. Flags with prerequisites are migrated with a warning, since Datadog does not enforce prerequisites.
-
-#### SDK key considerations
-
-LaunchDarkly SDK keys are **project-scoped** — each project has its own set of SDK keys per environment. If you are migrating multiple LaunchDarkly projects that share the same flag keys, the flags will collide within a single Datadog organization.
-
-For larger migrations with multiple projects, a good practice is to create **Datadog sub-organizations** so that each project's flags live in an independent org. Sub-organizations have their own API keys, environments, and flag namespaces, which avoids key conflicts entirely.
-
-To create and manage sub-organizations, see [Multi-Organization Accounts](https://docs.datadoghq.com/account_management/multi_organization/). When using sub-organizations, generate separate Datadog API and Application keys for each sub-org and run the migration tool once per org.
 
 ### Non-interactive mode
 
@@ -344,3 +345,7 @@ Archived flags and flags using unsupported operators (`segmentMatch`, `before`, 
 The evaluation tool generates test cases automatically from each flag's targeting rules — producing inputs that should match each rule and inputs that should not. It then calls the source provider's SDK and the Datadog feature flag CDN with the same subject ID and attributes, and compares the results.
 
 This lets you verify that flag targeting logic was translated correctly before you cut over your application.
+
+#### LaunchDarkly — mobile context kinds
+
+Flags that target `ld_application` or `ld_device` context kinds (auto-populated by LaunchDarkly's mobile client SDKs) cannot be evaluated via the Node.js server-side SDK used by this tool. Test cases for those rules are shown as **not evaluated** (dimmed) with an explanatory note. The migration itself is correct — the targeting rules are translated into Datadog using the same prefixed attribute format (e.g. `ld_application.versionName`).
