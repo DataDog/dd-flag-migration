@@ -406,6 +406,47 @@ describe('buildLDContext', () => {
 		expect(org.plan).toBe('enterprise');
 		expect(org.tier).toBeUndefined();
 	});
+
+	it('unescapes ~1 at the start of a path component (indexOf === 0 edge case)', () => {
+		// "/~1foo" → component "~1foo" → indexOf('~') = 0 (falsy before fix) → must unescape to "/foo"
+		const ctx = buildLDContext('user-1', { '/~1foo': 'bar' }) as Record<
+			string,
+			unknown
+		>;
+		expect(ctx['/foo']).toBe('bar');
+		expect(ctx['~1foo']).toBeUndefined();
+	});
+
+	it('unescapes ~0 at the start of a path component (indexOf === 0 edge case)', () => {
+		// "/~0foo" → component "~0foo" → indexOf('~') = 0 (falsy before fix) → must unescape to "~foo"
+		const ctx = buildLDContext('user-1', { '/~0foo': 'baz' }) as Record<
+			string,
+			unknown
+		>;
+		expect(ctx['~foo']).toBe('baz');
+		expect(ctx['~0foo']).toBeUndefined();
+	});
+
+	it('rejects attribute references with invalid ~| tilde sequence (character class fix)', () => {
+		// "/path~|sub" — the old [^0|^1] treated | as in-class, so ~| was not rejected
+		// The fixed [^01] correctly identifies ~| as invalid → nothing set in context
+		const ctx = buildLDContext('user-1', { '/path~|sub': 'val' }) as Record<
+			string,
+			unknown
+		>;
+		expect(ctx['path~|sub']).toBeUndefined();
+		expect(ctx.path).toBeUndefined();
+	});
+
+	it('rejects attribute references with invalid ~^ tilde sequence (character class fix)', () => {
+		// The old [^0|^1] treated ^ as in-class, so ~^ was not rejected
+		const ctx = buildLDContext('user-1', { '/path~^sub': 'val' }) as Record<
+			string,
+			unknown
+		>;
+		expect(ctx['path~^sub']).toBeUndefined();
+		expect(ctx.path).toBeUndefined();
+	});
 });
 
 describe('evaluateLDFlagAdvanced with contextAttributes', () => {

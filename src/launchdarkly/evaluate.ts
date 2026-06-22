@@ -283,7 +283,7 @@ const USER_SKIP = new Set(['key', 'kind']);
 
 function unescapeAttributeReferenceComponent(component: string): string {
 	// Match the LD SDK AttributeReference behavior exactly.
-	return component.indexOf('~')
+	return component.indexOf('~') >= 0
 		? component.replace(/~1/g, '/').replace(/~0/g, '~')
 		: component;
 }
@@ -292,7 +292,7 @@ function attributeReferenceComponents(attribute: string): string[] | null {
 	if (
 		attribute === '' ||
 		attribute === '/' ||
-		/\/\/|(^\/.*~[^0|^1])|~$/.test(attribute)
+		/\/\/|(^\/.*~[^01])|~$/.test(attribute)
 	) {
 		return null;
 	}
