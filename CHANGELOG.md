@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.3] — 2026-06-22
+
+### Migration — LaunchDarkly
+
+- Feat: preserve multi-context `contextKind` through migration and evaluation (#85)
+  - Non-user context attributes are now prefixed with `contextKind.` in all emitted Datadog targeting conditions (flag rules, individual context targets, segment saved-filter rules) so Datadog targeting correctly matches LaunchDarkly multi-context semantics
+  - CSV test case import supports dotted `contextKind.attr` column headers; reserved kinds are validated and context keys are automatically stringified
+
+### Evaluation — LaunchDarkly
+
+- Feat: auto-fetch the SDK key via `LAUNCHDARKLY_API_KEY` during evaluation (#85)
+  - If `LAUNCHDARKLY_API_KEY` is set, the correct server-side SDK key is fetched automatically for the selected project/environment — `LAUNCHDARKLY_SDK_KEY` is no longer required
+  - Falls back to the manually supplied key when the API key is absent or the fetch fails
+  - Warns when both are set but disagree, and identifies which project/environment the manual key belongs to so mismatches are easy to fix
+- Feat: validate `LAUNCHDARKLY_SDK_KEY` against the migration project/environment before evaluation starts (#85)
+  - Fails fast with a descriptive error naming the expected project and environment; prints the correct key when a mismatch is detected
+
 ## [1.0.2] — 2026-06-18
 
 ### Evaluate
