@@ -55,13 +55,6 @@ Your LaunchDarkly access token needs **Reader** role permissions (or a custom ro
 | `DD_CLIENT_TOKEN` | always | Datadog → Organization Settings → Client Tokens |
 | `EPPO_SDK_KEY` | migration was from Eppo | Eppo → SDK Keys (server SDK key, one per environment) |
 | `LAUNCHDARKLY_API_KEY` | migration was from LaunchDarkly *(preferred)* | LaunchDarkly → Account settings → Authorization → Access tokens |
-| `LAUNCHDARKLY_SDK_KEY` | migration was from LaunchDarkly, `LAUNCHDARKLY_API_KEY` not set | LaunchDarkly → Account settings → Authorization → SDK keys (server-side, one per environment) |
-
-**LaunchDarkly SDK key — auto-fetch vs manual**
-
-If `LAUNCHDARKLY_API_KEY` is set (it already must be for `migrate`), the tool fetches the correct server-side SDK key for the selected environment automatically. You do not need to set `LAUNCHDARKLY_SDK_KEY` separately.
-
-If `LAUNCHDARKLY_API_KEY` is not available, set `LAUNCHDARKLY_SDK_KEY` directly. SDK keys are scoped to a single environment, so make sure the value matches the environment you intend to evaluate. The tool will tell you which project and environment the key belongs to if it detects a mismatch.
 
 ### Datadog Application Key permissions
 
@@ -174,14 +167,6 @@ When migrating from LaunchDarkly, the tool adds these steps:
 4. **Select flags** — flags already in Datadog are shown with a checkmark and will have their targeting synced for new environments rather than being re-created
 
 The tool translates LaunchDarkly targeting rules, individual user targets, percentage rollouts, and fallthrough variations into equivalent Datadog targeting filters. Flags that use unsupported operators (`segmentMatch`, `before`, `after`) are automatically skipped with an explanation. Flags with prerequisites are migrated with a warning, since Datadog does not enforce prerequisites.
-
-#### SDK key considerations
-
-LaunchDarkly SDK keys are **project- and environment-scoped**. If you are migrating multiple LaunchDarkly projects that share the same flag keys, the flags will collide within a single Datadog organization.
-
-For larger migrations with multiple projects, a good practice is to create **Datadog sub-organizations** so that each project's flags live in an independent org. Sub-organizations have their own API keys, environments, and flag namespaces, which avoids key conflicts entirely.
-
-To create and manage sub-organizations, see [Multi-Organization Accounts](https://docs.datadoghq.com/account_management/multi_organization/). When using sub-organizations, generate separate Datadog API and Application keys for each sub-org and run the migration tool once per org.
 
 ### Non-interactive mode
 
