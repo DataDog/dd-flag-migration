@@ -72,66 +72,82 @@ function printHeader(): void {
 // ─── LD SDK Key Validation ────────────────────────────────────────────────────
 
 /**
- * Validates that LAUNCHDARKLY_SDK_KEY is set and, if LAUNCHDARKLY_API_KEY is
- * also available, verifies it matches the expected environment in the migration.
- * Exits with a clear error message on failure.
+ * Resolves the LaunchDarkly SDK key to use for evaluation.
+ *
+ * Priority:
+ *   1. If LAUNCHDARKLY_API_KEY is set, auto-fetch the correct SDK key for the
+ *      selected project/environment — no need to set LAUNCHDARKLY_SDK_KEY.
+ *   2. Otherwise fall back to LAUNCHDARKLY_SDK_KEY.
+ *   3. If neither is set, exit with instructions for both options.
+ *
+ * When both are set but disagree, emits a warning and proceeds with the
+ * auto-fetched key (which is guaranteed correct).
  */
 async function validateLDSdkKey(
 	migration: LDMigrationFile,
 	sourceEnvName: string,
 ): Promise<string> {
-	const sdkKey = process.env.LAUNCHDARKLY_SDK_KEY?.trim();
-
-	if (!sdkKey) {
-		process.stderr.write(chalk.red('\nLAUNCHDARKLY_SDK_KEY is not set.\n'));
-		process.stderr.write(
-			chalk.gray(
-				`  Set it to the Server-Side SDK key for the "${sourceEnvName}" environment\n` +
-					`  of project "${migration.projectName}" (${migration.projectKey}).\n\n` +
-					`  Find it in LaunchDarkly:\n` +
-					`    Account Settings → Projects → ${migration.projectKey} → ${sourceEnvName} → SDK keys\n\n` +
-					`  Then run:\n` +
-					`    export LAUNCHDARKLY_SDK_KEY=sdk-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx\n\n`,
-			),
-		);
-		process.exit(1);
-	}
-
-	// If the management API key is available, verify the SDK key matches the
-	// expected environment so users don't silently evaluate the wrong environment.
 	const ldApiKey = process.env.LAUNCHDARKLY_API_KEY?.trim();
+	const manualSdkKey = process.env.LAUNCHDARKLY_SDK_KEY?.trim();
+
+	// Auto-fetch path: use LAUNCHDARKLY_API_KEY to retrieve the right SDK key.
 	if (ldApiKey) {
 		try {
-			const [expectedSdkKey, owner] = await Promise.all([
-				fetchEnvironmentSdkKey(ldApiKey, migration.projectKey, sourceEnvName),
-				findSdkKeyOwner(ldApiKey, sdkKey),
-			]);
-			if (expectedSdkKey && expectedSdkKey !== sdkKey) {
-				const tail = sdkKey.slice(-4);
-				let msg =
-					`\nLAUNCHDARKLY_SDK_KEY (ending in "${tail}") does not match the\n` +
-					`expected SDK key for project "${migration.projectName}" / environment "${sourceEnvName}".\n`;
-				if (owner) {
-					msg += `  It appears to belong to: project "${owner.projectName}" / environment "${owner.envName}".\n`;
-				}
-				process.stderr.write(chalk.red(msg));
-				process.stderr.write(
+			const fetchedSdkKey = await fetchEnvironmentSdkKey(
+				ldApiKey,
+				migration.projectKey,
+				sourceEnvName,
+			);
+			if (fetchedSdkKey) {
+				console.log(
 					chalk.gray(
-						`  Update it with:\n` +
-							`    export LAUNCHDARKLY_SDK_KEY="${expectedSdkKey}"\n\n` +
-							`  Or find it in LaunchDarkly:\n` +
-							`    Account Settings → Projects → ${migration.projectKey} → ${sourceEnvName} → SDK keys\n\n`,
+						`  SDK key for "${sourceEnvName}" fetched via LAUNCHDARKLY_API_KEY\n`,
 					),
 				);
-				process.exit(1);
+
+				// Warn if LAUNCHDARKLY_SDK_KEY is also set but points elsewhere.
+				if (manualSdkKey && manualSdkKey !== fetchedSdkKey) {
+					const tail = manualSdkKey.slice(-4);
+					try {
+						const owner = await findSdkKeyOwner(ldApiKey, manualSdkKey);
+						let warn =
+							`  ⚠ LAUNCHDARKLY_SDK_KEY (ending in "${tail}") doesn't match ` +
+							`"${sourceEnvName}"`;
+						if (owner) {
+							warn += ` — it belongs to project "${owner.projectName}" / environment "${owner.envName}"`;
+						}
+						console.log(chalk.yellow(`${warn}. Using auto-fetched key.\n`));
+					} catch {
+						// Owner lookup failed — still proceed with fetched key
+					}
+				}
+
+				return fetchedSdkKey;
 			}
 		} catch {
-			// Ignore API errors during verification — wrong API key scope, network
-			// issues, etc. The SDK initialization will surface real auth failures.
+			// Fetch failed (wrong API key scope, network error, etc.) — fall through
+			// to manual key so we degrade gracefully instead of blocking evaluation.
 		}
 	}
 
-	return sdkKey;
+	// Manual key path: use LAUNCHDARKLY_SDK_KEY as-is.
+	if (manualSdkKey) {
+		return manualSdkKey;
+	}
+
+	// Neither key available.
+	process.stderr.write(chalk.red('\nCannot determine LaunchDarkly SDK key.\n'));
+	process.stderr.write(
+		chalk.gray(
+			`  Option 1 — set LAUNCHDARKLY_API_KEY (already required for migrate):\n` +
+				`    The correct SDK key will be fetched automatically.\n\n` +
+				`  Option 2 — set LAUNCHDARKLY_SDK_KEY directly:\n` +
+				`    Find it in LaunchDarkly:\n` +
+				`    Account Settings → Projects → ${migration.projectKey} → ${sourceEnvName} → SDK keys\n` +
+				`    export LAUNCHDARKLY_SDK_KEY=sdk-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx\n\n`,
+		),
+	);
+	process.exit(1);
 }
 
 // ─── Arg Parsing ──────────────────────────────────────────────────────────────
