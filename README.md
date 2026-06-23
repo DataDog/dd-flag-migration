@@ -65,7 +65,7 @@ Your Datadog Application Key must have the following scopes enabled:
 | `feature_flag_config_read` | View Feature Flag Configurations |
 | `feature_flag_config_write` | Edit Feature Flag Configurations |
 | `feature_flag_environment_config_read` | Ability to view Feature Flag Environment settings |
-| `feature_flag_environment_config_write` | Ability to modify Feature Flag Environment settings |
+| `feature_flag_approvals_override` | Ability to bypass Feature Flag approval requirements |
 | `restriction_policies_read` | Read restriction policies *(required for team-based access controls)* |
 | `restriction_policies_write` | Write restriction policies *(required for team-based access controls)* |
 | `teams_read` | View Teams *(required for team-based access controls)* |
