@@ -539,6 +539,49 @@ export async function applyRestrictionPolicy(
 	);
 }
 
+// ─── Permissions ─────────────────────────────────────────────────────────────
+
+type JsonApiCurrentUserResponse = {
+	data: {
+		relationships: {
+			roles: {
+				data: Array<{ id: string }>;
+			};
+		};
+	};
+};
+
+type JsonApiRolePermissionsResponse = {
+	data: Array<{
+		attributes: { name: string };
+	}>;
+};
+
+export async function fetchCurrentUserPermissions(
+	apiKey: string,
+	appKey: string,
+	site = 'datadoghq.com',
+): Promise<string[]> {
+	const baseUrl = `https://api.${site}`;
+	const userRes = await ddClient.get<JsonApiCurrentUserResponse>(
+		`${baseUrl}/api/v2/current_user`,
+		{ headers: ddHeaders(apiKey, appKey) },
+	);
+	const roles = userRes.data.data.relationships?.roles?.data ?? [];
+	const permissionResponses = await Promise.all(
+		roles.map((role) =>
+			ddClient.get<JsonApiRolePermissionsResponse>(
+				`${baseUrl}/api/v2/roles/${role.id}/permissions`,
+				{ headers: ddHeaders(apiKey, appKey) },
+			),
+		),
+	);
+	const names = permissionResponses.flatMap(
+		(r) => r.data.data?.map((p) => p.attributes.name) ?? [],
+	);
+	return [...new Set(names)];
+}
+
 // ─── Saved Filters ───────────────────────────────────────────────────────────
 
 export async function createSavedFilter(

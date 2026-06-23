@@ -8,10 +8,21 @@ import {
 	parseMigrateArgs,
 } from './args.js';
 import { getDatadogSite, saveDatadogSite } from './config.js';
+import { fetchCurrentUserPermissions } from './datadog.js';
 import { requireEnvVars } from './env.js';
 import { withConsoleLogToStderr } from './output.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
+
+const ALL_REQUIRED_PERMISSIONS = [
+	'feature_flag_config_read',
+	'feature_flag_config_write',
+	'feature_flag_environment_config_read',
+	'feature_flag_approvals_override',
+	'restriction_policies_read',
+	'restriction_policies_write',
+	'teams_read',
+] as const;
 
 const PROVIDERS = [
 	{ name: 'Eppo', value: 'eppo' },
@@ -106,6 +117,38 @@ async function promptForDatadogSite(
 	return trimmed;
 }
 
+// ─── Permission Check ─────────────────────────────────────────────────────────
+
+async function checkRequiredPermissions(
+	apiKey: string,
+	appKey: string,
+	site: string,
+): Promise<void> {
+	let actual: string[];
+	try {
+		actual = await fetchCurrentUserPermissions(apiKey, appKey, site);
+	} catch (err) {
+		const detail = err instanceof Error ? err.message : String(err);
+		console.error(
+			chalk.red(`\nFailed to verify Datadog permissions: ${detail}\n`),
+		);
+		process.exit(1);
+	}
+	const missing = ALL_REQUIRED_PERMISSIONS.filter((p) => !actual.includes(p));
+	if (missing.length > 0) {
+		console.error(chalk.red('\nMissing required Datadog permissions:'));
+		for (const p of missing) {
+			console.error(chalk.red(`  • ${p}`));
+		}
+		console.error(
+			chalk.red(
+				'\nEnsure your Datadog application key has the required permissions and try again.\n',
+			),
+		);
+		process.exit(1);
+	}
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -130,6 +173,7 @@ async function main(): Promise<void> {
 			// Already validated upstream.
 			// biome-ignore lint/style/noNonNullAssertion: validated in parseMigrateArgs
 			const ddSite = args.datadogSite!;
+			await checkRequiredPermissions(ddApiKey, ddAppKey, ddSite);
 
 			if (ni.provider === 'launchdarkly') {
 				const { runLaunchDarklyMigration } = await import(
@@ -172,6 +216,9 @@ async function main(): Promise<void> {
 		);
 	}
 
+	const ddSite = await promptForDatadogSite(args.datadogSite);
+	await checkRequiredPermissions(ddApiKey, ddAppKey, ddSite);
+
 	const provider = await selectProvider();
 
 	console.log();
@@ -186,8 +233,6 @@ async function main(): Promise<void> {
 	} else {
 		requireEnvVars(['LAUNCHDARKLY_API_KEY']);
 	}
-
-	const ddSite = await promptForDatadogSite(args.datadogSite);
 
 	if (provider === 'launchdarkly') {
 		const { runLaunchDarklyMigration } = await import(

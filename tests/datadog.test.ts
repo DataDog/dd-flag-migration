@@ -13,6 +13,7 @@ import {
 	createFeatureFlag,
 	ddClient,
 	enableFeatureFlagEnvironment,
+	fetchCurrentUserPermissions,
 	fetchDatadogEnvironments,
 	fetchDatadogFlagKeys,
 	fetchDatadogFlags,
@@ -1200,6 +1201,139 @@ describe('applyRestrictionPolicy', () => {
 		expect(editorBinding?.principals).toEqual(
 			expect.arrayContaining(['team:creator-team', 'team:platform']),
 		);
+	});
+});
+
+// ─── fetchCurrentUserPermissions ─────────────────────────────────────────────
+
+describe('fetchCurrentUserPermissions', () => {
+	let mock: AxiosMockAdapter;
+
+	beforeEach(() => {
+		mock = new AxiosMockAdapter(ddClient as never);
+	});
+
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('returns deduplicated permission names across all roles', async () => {
+		mock.onGet(`${BASE}/api/v2/current_user`).reply(200, {
+			data: {
+				relationships: {
+					roles: {
+						data: [{ id: 'role-1' }, { id: 'role-2' }],
+					},
+				},
+			},
+		});
+		mock.onGet(`${BASE}/api/v2/roles/role-1/permissions`).reply(200, {
+			data: [
+				{ attributes: { name: 'feature_flag_config_read' } },
+				{ attributes: { name: 'feature_flag_config_write' } },
+			],
+		});
+		mock.onGet(`${BASE}/api/v2/roles/role-2/permissions`).reply(200, {
+			data: [
+				{ attributes: { name: 'feature_flag_config_write' } },
+				{ attributes: { name: 'teams_read' } },
+			],
+		});
+
+		const result = await fetchCurrentUserPermissions(API_KEY, APP_KEY, SITE);
+		expect(result).toEqual(
+			expect.arrayContaining([
+				'feature_flag_config_read',
+				'feature_flag_config_write',
+				'teams_read',
+			]),
+		);
+		expect(result).toHaveLength(3);
+	});
+
+	it('returns empty array when user has no roles', async () => {
+		mock.onGet(`${BASE}/api/v2/current_user`).reply(200, {
+			data: {
+				relationships: {
+					roles: { data: [] },
+				},
+			},
+		});
+
+		const result = await fetchCurrentUserPermissions(API_KEY, APP_KEY, SITE);
+		expect(result).toEqual([]);
+	});
+
+	it('returns empty array when roles relationship is absent', async () => {
+		mock.onGet(`${BASE}/api/v2/current_user`).reply(200, {
+			data: { relationships: {} },
+		});
+
+		const result = await fetchCurrentUserPermissions(API_KEY, APP_KEY, SITE);
+		expect(result).toEqual([]);
+	});
+
+	it('sends auth headers on all requests', async () => {
+		const headers: Record<string, unknown>[] = [];
+		mock.onGet(`${BASE}/api/v2/current_user`).reply((config) => {
+			headers.push(config.headers as Record<string, unknown>);
+			return [
+				200,
+				{
+					data: {
+						relationships: { roles: { data: [{ id: 'role-1' }] } },
+					},
+				},
+			];
+		});
+		mock.onGet(`${BASE}/api/v2/roles/role-1/permissions`).reply((config) => {
+			headers.push(config.headers as Record<string, unknown>);
+			return [200, { data: [] }];
+		});
+
+		await fetchCurrentUserPermissions(API_KEY, APP_KEY, SITE);
+		for (const h of headers) {
+			expect(h['dd-api-key']).toBe(API_KEY);
+			expect(h['dd-application-key']).toBe(APP_KEY);
+		}
+	});
+
+	it('throws when the current_user call fails', async () => {
+		mock.onGet(`${BASE}/api/v2/current_user`).reply(403);
+
+		await expect(
+			fetchCurrentUserPermissions(API_KEY, APP_KEY, SITE),
+		).rejects.toThrow();
+	});
+
+	it('throws when a role permissions call fails', async () => {
+		mock.onGet(`${BASE}/api/v2/current_user`).reply(200, {
+			data: {
+				relationships: { roles: { data: [{ id: 'role-bad' }] } },
+			},
+		});
+		mock.onGet(`${BASE}/api/v2/roles/role-bad/permissions`).reply(500);
+
+		await expect(
+			fetchCurrentUserPermissions(API_KEY, APP_KEY, SITE),
+		).rejects.toThrow();
+	});
+
+	it('uses the site parameter in all request URLs', async () => {
+		const eu = 'datadoghq.eu';
+		mock.onGet(`https://api.${eu}/api/v2/current_user`).reply(200, {
+			data: {
+				relationships: { roles: { data: [{ id: 'role-eu' }] } },
+			},
+		});
+		mock
+			.onGet(`https://api.${eu}/api/v2/roles/role-eu/permissions`)
+			.reply(200, {
+				data: [{ attributes: { name: 'feature_flag_config_read' } }],
+			});
+
+		const result = await fetchCurrentUserPermissions(API_KEY, APP_KEY, eu);
+		expect(result).toEqual(['feature_flag_config_read']);
 	});
 });
 
