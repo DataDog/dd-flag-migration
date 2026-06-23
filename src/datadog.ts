@@ -557,6 +557,39 @@ type JsonApiRolePermissionsResponse = {
 	}>;
 };
 
+// Permissions that may not appear in RBAC role listings for some users (e.g. those with
+// unscoped app keys), even though the underlying APIs are accessible. We probe these
+// directly so that the upfront check doesn't produce false negatives.
+const PROBE_PERMISSIONS: ReadonlyMap<string, string> = new Map([
+	[
+		'restriction_policies_read',
+		'/api/v2/restriction_policy/feature-flag:probe',
+	],
+	[
+		'restriction_policies_write',
+		'/api/v2/restriction_policy/feature-flag:probe',
+	],
+	['teams_read', '/api/v2/teams'],
+]);
+
+async function probePermission(
+	url: string,
+	apiKey: string,
+	appKey: string,
+): Promise<boolean> {
+	try {
+		await ddClient.get(url, { headers: ddHeaders(apiKey, appKey) });
+		return true;
+	} catch (err) {
+		if (axios.isAxiosError(err) && err.response?.status === 404) {
+			// Endpoint reachable but resource absent → permission is present
+			return true;
+		}
+		// 403 = explicitly forbidden; network errors and 5xx → don't assume permission
+		return false;
+	}
+}
+
 export async function fetchCurrentUserPermissions(
 	apiKey: string,
 	appKey: string,
@@ -579,7 +612,33 @@ export async function fetchCurrentUserPermissions(
 	const names = permissionResponses.flatMap(
 		(r) => r.data.data?.map((p) => p.attributes.name) ?? [],
 	);
-	return [...new Set(names)];
+	const rolePermissions = new Set(names);
+
+	// For permissions not found via roles, fall back to probing the actual API endpoint.
+	const probeUrlsNeeded = new Set<string>();
+	for (const [permission, probeUrl] of PROBE_PERMISSIONS) {
+		if (!rolePermissions.has(permission)) probeUrlsNeeded.add(probeUrl);
+	}
+	const probeResults = await Promise.all(
+		[...probeUrlsNeeded].map(async (probeUrl) => {
+			const accessible = await probePermission(
+				`${baseUrl}${probeUrl}`,
+				apiKey,
+				appKey,
+			);
+			return { probeUrl, accessible };
+		}),
+	);
+	const accessibleProbeUrls = new Set(
+		probeResults.filter((r) => r.accessible).map((r) => r.probeUrl),
+	);
+	for (const [permission, probeUrl] of PROBE_PERMISSIONS) {
+		if (!rolePermissions.has(permission) && accessibleProbeUrls.has(probeUrl)) {
+			rolePermissions.add(permission);
+		}
+	}
+
+	return [...rolePermissions];
 }
 
 // ─── Saved Filters ───────────────────────────────────────────────────────────

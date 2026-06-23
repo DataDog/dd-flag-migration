@@ -1239,6 +1239,10 @@ describe('fetchCurrentUserPermissions', () => {
 				{ attributes: { name: 'teams_read' } },
 			],
 		});
+		// restriction_policies are not in these roles; probe should be blocked
+		mock
+			.onGet(`${BASE}/api/v2/restriction_policy/feature-flag:probe`)
+			.reply(403);
 
 		const result = await fetchCurrentUserPermissions(API_KEY, APP_KEY, SITE);
 		expect(result).toEqual(
@@ -1259,6 +1263,10 @@ describe('fetchCurrentUserPermissions', () => {
 				},
 			},
 		});
+		mock
+			.onGet(`${BASE}/api/v2/restriction_policy/feature-flag:probe`)
+			.reply(403);
+		mock.onGet(`${BASE}/api/v2/teams`).reply(403);
 
 		const result = await fetchCurrentUserPermissions(API_KEY, APP_KEY, SITE);
 		expect(result).toEqual([]);
@@ -1268,6 +1276,10 @@ describe('fetchCurrentUserPermissions', () => {
 		mock.onGet(`${BASE}/api/v2/current_user`).reply(200, {
 			data: { relationships: {} },
 		});
+		mock
+			.onGet(`${BASE}/api/v2/restriction_policy/feature-flag:probe`)
+			.reply(403);
+		mock.onGet(`${BASE}/api/v2/teams`).reply(403);
 
 		const result = await fetchCurrentUserPermissions(API_KEY, APP_KEY, SITE);
 		expect(result).toEqual([]);
@@ -1290,6 +1302,10 @@ describe('fetchCurrentUserPermissions', () => {
 			headers.push(config.headers as Record<string, unknown>);
 			return [200, { data: [] }];
 		});
+		mock
+			.onGet(`${BASE}/api/v2/restriction_policy/feature-flag:probe`)
+			.reply(403);
+		mock.onGet(`${BASE}/api/v2/teams`).reply(403);
 
 		await fetchCurrentUserPermissions(API_KEY, APP_KEY, SITE);
 		for (const h of headers) {
@@ -1331,9 +1347,96 @@ describe('fetchCurrentUserPermissions', () => {
 			.reply(200, {
 				data: [{ attributes: { name: 'feature_flag_config_read' } }],
 			});
+		mock
+			.onGet(`https://api.${eu}/api/v2/restriction_policy/feature-flag:probe`)
+			.reply(403);
+		mock.onGet(`https://api.${eu}/api/v2/teams`).reply(403);
 
 		const result = await fetchCurrentUserPermissions(API_KEY, APP_KEY, eu);
 		expect(result).toEqual(['feature_flag_config_read']);
+	});
+
+	it('adds restriction_policies_read and restriction_policies_write via probe when missing from roles', async () => {
+		mock.onGet(`${BASE}/api/v2/current_user`).reply(200, {
+			data: { relationships: { roles: { data: [{ id: 'role-1' }] } } },
+		});
+		mock.onGet(`${BASE}/api/v2/roles/role-1/permissions`).reply(200, {
+			data: [{ attributes: { name: 'feature_flag_config_read' } }],
+		});
+		mock
+			.onGet(`${BASE}/api/v2/restriction_policy/feature-flag:probe`)
+			.reply(200, { data: { attributes: { bindings: [] } } });
+
+		const result = await fetchCurrentUserPermissions(API_KEY, APP_KEY, SITE);
+		expect(result).toContain('restriction_policies_read');
+		expect(result).toContain('restriction_policies_write');
+	});
+
+	it('adds teams_read via probe when missing from roles', async () => {
+		mock.onGet(`${BASE}/api/v2/current_user`).reply(200, {
+			data: { relationships: { roles: { data: [{ id: 'role-1' }] } } },
+		});
+		mock.onGet(`${BASE}/api/v2/roles/role-1/permissions`).reply(200, {
+			data: [{ attributes: { name: 'feature_flag_config_read' } }],
+		});
+		mock.onGet(`${BASE}/api/v2/teams`).reply(200, { data: [] });
+
+		const result = await fetchCurrentUserPermissions(API_KEY, APP_KEY, SITE);
+		expect(result).toContain('teams_read');
+	});
+
+	it('counts probe 404 as accessible (resource absent but endpoint reachable)', async () => {
+		mock.onGet(`${BASE}/api/v2/current_user`).reply(200, {
+			data: { relationships: { roles: { data: [] } } },
+		});
+		mock
+			.onGet(`${BASE}/api/v2/restriction_policy/feature-flag:probe`)
+			.reply(404);
+		mock.onGet(`${BASE}/api/v2/teams`).reply(404);
+
+		const result = await fetchCurrentUserPermissions(API_KEY, APP_KEY, SITE);
+		expect(result).toContain('restriction_policies_read');
+		expect(result).toContain('restriction_policies_write');
+		expect(result).toContain('teams_read');
+	});
+
+	it('does not add probe permissions when probe returns 403', async () => {
+		mock.onGet(`${BASE}/api/v2/current_user`).reply(200, {
+			data: { relationships: { roles: { data: [] } } },
+		});
+		mock
+			.onGet(`${BASE}/api/v2/restriction_policy/feature-flag:probe`)
+			.reply(403);
+		mock.onGet(`${BASE}/api/v2/teams`).reply(403);
+
+		const result = await fetchCurrentUserPermissions(API_KEY, APP_KEY, SITE);
+		expect(result).not.toContain('restriction_policies_read');
+		expect(result).not.toContain('restriction_policies_write');
+		expect(result).not.toContain('teams_read');
+	});
+
+	it('does not probe for permissions already present in roles', async () => {
+		mock.onGet(`${BASE}/api/v2/current_user`).reply(200, {
+			data: {
+				relationships: {
+					roles: { data: [{ id: 'role-1' }] },
+				},
+			},
+		});
+		mock.onGet(`${BASE}/api/v2/roles/role-1/permissions`).reply(200, {
+			data: [
+				{ attributes: { name: 'restriction_policies_read' } },
+				{ attributes: { name: 'restriction_policies_write' } },
+				{ attributes: { name: 'teams_read' } },
+			],
+		});
+		// Probe endpoints are not stubbed — if probes were called they'd get network errors
+		// and the test would still pass, but we verify the permissions are present from roles.
+
+		const result = await fetchCurrentUserPermissions(API_KEY, APP_KEY, SITE);
+		expect(result).toContain('restriction_policies_read');
+		expect(result).toContain('restriction_policies_write');
+		expect(result).toContain('teams_read');
 	});
 });
 
