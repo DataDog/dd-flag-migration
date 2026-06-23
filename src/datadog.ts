@@ -557,9 +557,21 @@ type JsonApiRolePermissionsResponse = {
 	}>;
 };
 
-// Permissions that may not appear in RBAC role listings for some users (e.g. those with
-// unscoped app keys), even though the underlying APIs are accessible. We probe these
-// directly so that the upfront check doesn't produce false negatives.
+type JsonApiApplicationKeysResponse = {
+	data: Array<{
+		id: string;
+		attributes: {
+			key?: string;
+			last4?: string;
+			scopes?: string[];
+		};
+	}>;
+	meta?: { page?: { total_filtered_count?: number | string } };
+};
+
+// Permissions that may not appear in RBAC role listings for some users (e.g.
+// unscoped app keys), even though the underlying APIs are accessible. We probe
+// these directly so that the upfront check doesn't produce false negatives.
 const PROBE_PERMISSIONS: ReadonlyMap<string, string> = new Map([
 	[
 		'restriction_policies_read',
@@ -569,8 +581,77 @@ const PROBE_PERMISSIONS: ReadonlyMap<string, string> = new Map([
 		'restriction_policies_write',
 		'/api/v2/restriction_policy/feature-flag:probe',
 	],
-	['teams_read', '/api/v2/teams'],
+	['teams_read', '/api/v2/team'],
 ]);
+
+function findCurrentApplicationKey(
+	keys: JsonApiApplicationKeysResponse['data'],
+	appKey: string,
+): JsonApiApplicationKeysResponse['data'][number] {
+	const exactMatches = keys.filter((k) => k.attributes.key === appKey);
+	if (exactMatches.length === 1) return exactMatches[0];
+	if (exactMatches.length > 1) {
+		throw new Error('Could not uniquely identify the Datadog application key');
+	}
+
+	const last4 = appKey.slice(-4);
+	const last4Matches = keys.filter((k) => k.attributes.last4 === last4);
+	if (last4Matches.length === 1) return last4Matches[0];
+	if (last4Matches.length > 1) {
+		throw new Error(
+			`Could not uniquely identify the Datadog application key; multiple keys end in ${last4}`,
+		);
+	}
+
+	throw new Error('Could not find the Datadog application key for this user');
+}
+
+async function fetchCurrentApplicationKeyScopes(
+	apiKey: string,
+	appKey: string,
+	site: string,
+): Promise<Set<string> | undefined> {
+	const baseUrl = `https://api.${site}`;
+	const pageSize = 100;
+	let pageNumber = 0;
+	const keys: JsonApiApplicationKeysResponse['data'] = [];
+
+	while (true) {
+		const response = await ddClient.get<JsonApiApplicationKeysResponse>(
+			`${baseUrl}/api/v2/current_user/application_keys`,
+			{
+				headers: ddHeaders(apiKey, appKey),
+				params: {
+					'page[size]': pageSize,
+					'page[number]': pageNumber,
+				},
+			},
+		);
+		const data = response.data.data ?? [];
+		keys.push(...data);
+
+		const totalRaw = response.data.meta?.page?.total_filtered_count;
+		const total =
+			totalRaw === undefined
+				? undefined
+				: typeof totalRaw === 'number'
+					? totalRaw
+					: Number(totalRaw);
+		if (
+			data.length < pageSize ||
+			(total !== undefined && Number.isFinite(total) && keys.length >= total)
+		) {
+			break;
+		}
+		pageNumber++;
+	}
+
+	const currentKey = findCurrentApplicationKey(keys, appKey);
+	const scopes = currentKey.attributes.scopes;
+	return scopes === undefined || scopes.length === 0
+		? undefined
+		: new Set(scopes);
+}
 
 async function probePermission(
 	url: string,
@@ -596,6 +677,11 @@ export async function fetchCurrentUserPermissions(
 	site = 'datadoghq.com',
 ): Promise<string[]> {
 	const baseUrl = `https://api.${site}`;
+	const appKeyScopes = await fetchCurrentApplicationKeyScopes(
+		apiKey,
+		appKey,
+		site,
+	);
 	const userRes = await ddClient.get<JsonApiCurrentUserResponse>(
 		`${baseUrl}/api/v2/current_user`,
 		{ headers: ddHeaders(apiKey, appKey) },
@@ -613,11 +699,20 @@ export async function fetchCurrentUserPermissions(
 		(r) => r.data.data?.map((p) => p.attributes.name) ?? [],
 	);
 	const rolePermissions = new Set(names);
+	const effectivePermissions =
+		appKeyScopes === undefined
+			? rolePermissions
+			: new Set([...rolePermissions].filter((p) => appKeyScopes.has(p)));
 
 	// For permissions not found via roles, fall back to probing the actual API endpoint.
 	const probeUrlsNeeded = new Set<string>();
 	for (const [permission, probeUrl] of PROBE_PERMISSIONS) {
-		if (!rolePermissions.has(permission)) probeUrlsNeeded.add(probeUrl);
+		if (
+			!effectivePermissions.has(permission) &&
+			(appKeyScopes === undefined || appKeyScopes.has(permission))
+		) {
+			probeUrlsNeeded.add(probeUrl);
+		}
 	}
 	const probeResults = await Promise.all(
 		[...probeUrlsNeeded].map(async (probeUrl) => {
@@ -633,12 +728,15 @@ export async function fetchCurrentUserPermissions(
 		probeResults.filter((r) => r.accessible).map((r) => r.probeUrl),
 	);
 	for (const [permission, probeUrl] of PROBE_PERMISSIONS) {
-		if (!rolePermissions.has(permission) && accessibleProbeUrls.has(probeUrl)) {
-			rolePermissions.add(permission);
+		if (
+			!effectivePermissions.has(permission) &&
+			accessibleProbeUrls.has(probeUrl)
+		) {
+			effectivePermissions.add(permission);
 		}
 	}
 
-	return [...rolePermissions];
+	return [...effectivePermissions];
 }
 
 // ─── Saved Filters ───────────────────────────────────────────────────────────
