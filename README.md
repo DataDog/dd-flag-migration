@@ -9,7 +9,6 @@ A CLI tool for migrating feature flags from your current provider into [Datadog 
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) v18 or later
-- [Yarn](https://yarnpkg.com/) (`npm install -g yarn`)
 
 ---
 
