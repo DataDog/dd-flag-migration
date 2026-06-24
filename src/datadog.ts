@@ -573,14 +573,6 @@ type JsonApiApplicationKeysResponse = {
 // unscoped app keys), even though the underlying APIs are accessible. We probe
 // these directly so that the upfront check doesn't produce false negatives.
 const PROBE_PERMISSIONS: ReadonlyMap<string, string> = new Map([
-	[
-		'restriction_policies_read',
-		'/api/v2/restriction_policy/feature-flag:probe',
-	],
-	[
-		'restriction_policies_write',
-		'/api/v2/restriction_policy/feature-flag:probe',
-	],
 	['teams_read', '/api/v2/team'],
 ]);
 
@@ -707,10 +699,7 @@ export async function fetchCurrentUserPermissions(
 	// For permissions not found via roles, fall back to probing the actual API endpoint.
 	const probeUrlsNeeded = new Set<string>();
 	for (const [permission, probeUrl] of PROBE_PERMISSIONS) {
-		if (
-			!effectivePermissions.has(permission) &&
-			(appKeyScopes === undefined || appKeyScopes.has(permission))
-		) {
+		if (!effectivePermissions.has(permission)) {
 			probeUrlsNeeded.add(probeUrl);
 		}
 	}
