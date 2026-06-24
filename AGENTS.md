@@ -63,6 +63,31 @@ Saved-filter updates and variant changes are the two known backend gaps that hav
 2. Audit the dual-run divergence implication — what state does the new API let us reconcile that we couldn't before?
 3. Wire it through both sources, both branches, both dry-run and live paths, with tests.
 
+## Sync ordering invariants
+
+Datadog allocations reference variants by **UUID**, not by key. That makes
+variants write-after-references: any reordering that lets an allocation
+reference a removed variant causes either a server-side delete rejection or a
+dangling reference.
+
+Two rules follow:
+
+1. **Variant deletes run last.** In `syncVariants`, creates and updates fire
+   before deletes. When a caller has its own allocation rewrites to interleave,
+   it should call `syncVariantsCreatesAndUpdates` first, then
+   `syncAllocationsForEnvironment`, then `applyVariantDeletes` — in that order.
+2. **Variant key is immutable; UUID is the contract.** A source-side rename
+   changes the slugified key but the matching DD variant's `key` stays put;
+   only `name`, `value`, and `migration_metadata` move. `planVariantSync`
+   matches on `migration_metadata.source_id` first (survives renames), then
+   falls back to key (for legacy variants migrated before `source_id` was
+   recorded).
+
+The `envsToEnable.length === 0` re-migration sub-branch does **not** rewrite
+allocations, so it must **skip variant deletes** entirely — a delete there
+would orphan UUID references that no code path is going to clean up. Tags and
+restriction policy still sync; variants only get creates and updates.
+
 ## Required verification
 
 Per `CLAUDE.md`: `yarn typecheck && yarn lint:fix && yarn test` must pass before claiming a change complete. Do not skip.

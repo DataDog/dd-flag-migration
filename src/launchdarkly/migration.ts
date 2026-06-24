@@ -236,7 +236,7 @@ export function shouldSkipFlag(flag: LDFlag, envNames: string[]): SkipResult {
 /** Convert LD variations → DD variant list */
 export function buildVariants(
 	flag: LDFlag,
-): Array<{ key: string; name: string; value: string }> {
+): Array<{ key: string; name: string; value: string; sourceId: string }> {
 	return flag.variations.map((v, i) => {
 		const key = slugify(v.name ?? `variation-${i}`);
 		const name = v.name ?? `Variation ${i}`;
@@ -249,7 +249,8 @@ export function buildVariants(
 			: typeof rawValue === 'object'
 				? JSON.stringify(rawValue)
 				: rawValue;
-		return { key, name, value };
+		// LDVariation._id is the stable identifier — survives renames.
+		return { key, name, value, sourceId: v._id };
 	});
 }
 

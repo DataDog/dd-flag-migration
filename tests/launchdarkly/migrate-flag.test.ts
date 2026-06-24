@@ -156,8 +156,8 @@ describe('migrate a simple boolean flag (on in one env, off in another)', () => 
 
 	it('has two variants with slugified keys', () => {
 		expect(result.request?.variants).toEqual([
-			{ key: 'enabled', name: 'Enabled', value: 'true' },
-			{ key: 'disabled', name: 'Disabled', value: 'false' },
+			{ key: 'enabled', name: 'Enabled', value: 'true', sourceId: 'v0' },
+			{ key: 'disabled', name: 'Disabled', value: 'false', sourceId: 'v1' },
 		]);
 	});
 

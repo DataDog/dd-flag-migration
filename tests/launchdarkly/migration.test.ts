@@ -527,8 +527,8 @@ describe('buildVariants', () => {
 		const flag = makeFlag({ key: 'test' });
 		const variants = buildVariants(flag);
 		expect(variants).toEqual([
-			{ key: 'true', name: 'true', value: 'true' },
-			{ key: 'false', name: 'false', value: 'false' },
+			{ key: 'true', name: 'true', value: 'true', sourceId: 'v0' },
+			{ key: 'false', name: 'false', value: 'false', sourceId: 'v1' },
 		]);
 	});
 

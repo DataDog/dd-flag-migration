@@ -6,6 +6,7 @@ import chalk from 'chalk';
 import { CONFIG_DIR } from '../config.js';
 import {
 	applyRestrictionPolicy,
+	applyVariantDeletes,
 	buildVariantSyncDryRunRequests,
 	createFeatureFlag,
 	type DatadogTeam,
@@ -17,7 +18,7 @@ import {
 	fetchFlagDetail,
 	fetchRestrictionPolicy,
 	syncAllocationsForEnvironment,
-	syncVariants,
+	syncVariantsCreatesAndUpdates,
 	updateFlagTags,
 } from '../datadog.js';
 import {
@@ -1114,6 +1115,10 @@ async function executeMigration(
 
 				if (envsToEnable.length === 0) {
 					// Always sync tags and restriction policy even when no new environments need enabling.
+					// Variant deletes are intentionally SKIPPED in this branch: this
+					// path performs no allocation rewrite, so deleting a variant
+					// could orphan existing DD allocation references (allocations
+					// reference variants by UUID). Creates+updates are safe.
 					let variantCounts = { added: 0, updated: 0, deleted: 0 };
 					if (dryRun) {
 						const { variants: existingVariants } = await fetchFlagDetail(
@@ -1122,17 +1127,19 @@ async function executeMigration(
 							existingFlagId,
 							ddSite,
 						);
-						const variantReqs = buildVariantSyncDryRunRequests(
+						const { createUpdateRequests } = buildVariantSyncDryRunRequests(
 							existingFlagId,
 							variants,
 							existingVariants,
 							'launchdarkly',
 						);
-						for (const r of variantReqs) dryRunRequests.push(r);
+						for (const r of createUpdateRequests) dryRunRequests.push(r);
 						variantCounts = {
-							added: variantReqs.filter((r) => r.method === 'POST').length,
-							updated: variantReqs.filter((r) => r.method === 'PUT').length,
-							deleted: variantReqs.filter((r) => r.method === 'DELETE').length,
+							added: createUpdateRequests.filter((r) => r.method === 'POST')
+								.length,
+							updated: createUpdateRequests.filter((r) => r.method === 'PUT')
+								.length,
+							deleted: 0,
 						};
 						dryRunRequests.push({
 							method: 'PUT',
@@ -1160,7 +1167,7 @@ async function executeMigration(
 							);
 						}
 					} else {
-						const result = await syncVariants(
+						const result = await syncVariantsCreatesAndUpdates(
 							ddApiKey,
 							ddAppKey,
 							existingFlagId,
@@ -1168,7 +1175,7 @@ async function executeMigration(
 							'launchdarkly',
 							ddSite,
 						);
-						variantCounts = result.counts;
+						variantCounts = { ...result.counts, deleted: 0 };
 						await updateFlagTags(
 							ddApiKey,
 							ddAppKey,
@@ -1215,17 +1222,21 @@ async function executeMigration(
 						existingFlagId,
 						ddSite,
 					);
-					const variantReqs = buildVariantSyncDryRunRequests(
-						existingFlagId,
-						variants,
-						existingVariantsDry,
-						'launchdarkly',
-					);
-					for (const r of variantReqs) dryRunRequests.push(r);
+					const { createUpdateRequests, deleteRequests } =
+						buildVariantSyncDryRunRequests(
+							existingFlagId,
+							variants,
+							existingVariantsDry,
+							'launchdarkly',
+						);
+					// Variant creates+updates precede allocation PUTs.
+					for (const r of createUpdateRequests) dryRunRequests.push(r);
 					const variantCountsDry = {
-						added: variantReqs.filter((r) => r.method === 'POST').length,
-						updated: variantReqs.filter((r) => r.method === 'PUT').length,
-						deleted: variantReqs.filter((r) => r.method === 'DELETE').length,
+						added: createUpdateRequests.filter((r) => r.method === 'POST')
+							.length,
+						updated: createUpdateRequests.filter((r) => r.method === 'PUT')
+							.length,
+						deleted: deleteRequests.length,
 					};
 					let syncFilterCount = 0;
 					let syncRuleCount = 0;
@@ -1247,6 +1258,8 @@ async function executeMigration(
 							body: {},
 						});
 					}
+					// Variant deletes go AFTER allocation PUTs.
+					for (const r of deleteRequests) dryRunRequests.push(r);
 					dryRunRequests.push({
 						method: 'PUT',
 						path: `/api/v2/feature-flags/${existingFlagId}`,
@@ -1293,8 +1306,11 @@ async function executeMigration(
 					progressBar?.update(flag.key, { created, skipped, failed: errored });
 				} else {
 					try {
-						// Sync variants first so allocation variant_id resolution sees the updated set.
-						const variantSyncResult = await syncVariants(
+						// Apply variant creates+updates first so allocation
+						// variant_id resolution sees new variants. Deletes are
+						// deferred until AFTER allocation sync so we never remove
+						// a variant while an allocation may still reference it.
+						const variantSyncResult = await syncVariantsCreatesAndUpdates(
 							ddApiKey,
 							ddAppKey,
 							existingFlagId,
@@ -1321,6 +1337,15 @@ async function executeMigration(
 								0,
 							);
 						}
+
+						// Now safe to delete: allocations no longer reference these.
+						await applyVariantDeletes(
+							ddApiKey,
+							ddAppKey,
+							existingFlagId,
+							variantSyncResult.pendingDeletes,
+							ddSite,
+						);
 
 						// Update tags on existing flag (replace so removals propagate)
 						await updateFlagTags(
