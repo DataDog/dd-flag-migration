@@ -66,10 +66,9 @@ Your Datadog Application Key must have the following scopes enabled:
 | `feature_flag_config_read` | View Feature Flag Configurations |
 | `feature_flag_config_write` | Edit Feature Flag Configurations |
 | `feature_flag_environment_config_read` | Ability to view Feature Flag Environment settings |
-| `user_access_manage` | Manage restriction policies *(required for team-based access controls)* |
 | `teams_read` | View Teams *(required for team-based access controls)* |
 
-To set these permissions, go to **Organization Settings → Application Keys**, select your key, and enable the scopes listed above. The feature flag scopes are under the **Feature Flags** section; `user_access_manage` and `teams_read` are under **Access Management** and **Teams** respectively.
+To set these permissions, go to **Organization Settings → Application Keys**, select your key, and enable the scopes listed above. The feature flag scopes are under the **Feature Flags** section; `teams_read` is under **Teams**.
 
 ### Examples
 
