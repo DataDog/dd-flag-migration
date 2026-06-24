@@ -1211,10 +1211,10 @@ describe('fetchCurrentUserPermissions', () => {
 
 	function mockCurrentApplicationKey(
 		baseUrl = BASE,
-		scopes?: string[],
+		scopes?: string[] | null,
 		appKey = APP_KEY,
 	): void {
-		const attributes: { last4: string; scopes?: string[] } = {
+		const attributes: { last4: string; scopes?: string[] | null } = {
 			last4: appKey.slice(-4),
 		};
 		if (scopes !== undefined) attributes.scopes = scopes;
@@ -1425,6 +1425,20 @@ describe('fetchCurrentUserPermissions', () => {
 
 		const result = await fetchCurrentUserPermissions(API_KEY, APP_KEY, SITE);
 		expect(result).toEqual(['feature_flag_config_read']);
+	});
+
+	it('treats null application key scopes as unscoped', async () => {
+		mockCurrentApplicationKey(BASE, null);
+		mock.onGet(`${BASE}/api/v2/current_user`).reply(200, {
+			data: { relationships: { roles: { data: [{ id: 'role-1' }] } } },
+		});
+		mock.onGet(`${BASE}/api/v2/roles/role-1/permissions`).reply(200, {
+			data: [{ attributes: { name: 'feature_flag_config_write' } }],
+		});
+		mock.onGet(`${BASE}/api/v2/team`).reply(403);
+
+		const result = await fetchCurrentUserPermissions(API_KEY, APP_KEY, SITE);
+		expect(result).toEqual(['feature_flag_config_write']);
 	});
 
 	it('treats empty application key scopes as unscoped', async () => {

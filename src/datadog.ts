@@ -563,7 +563,7 @@ type JsonApiApplicationKeysResponse = {
 		attributes: {
 			key?: string;
 			last4?: string;
-			scopes?: string[];
+			scopes?: string[] | null;
 		};
 	}>;
 	meta?: { page?: { total_filtered_count?: number | string } };
@@ -640,9 +640,7 @@ async function fetchCurrentApplicationKeyScopes(
 
 	const currentKey = findCurrentApplicationKey(keys, appKey);
 	const scopes = currentKey.attributes.scopes;
-	return scopes === undefined || scopes.length === 0
-		? undefined
-		: new Set(scopes);
+	return scopes == null || scopes.length === 0 ? undefined : new Set(scopes);
 }
 
 async function probePermission(
