@@ -6,6 +6,7 @@ import chalk from 'chalk';
 import { CONFIG_DIR } from '../config.js';
 import {
 	applyRestrictionPolicy,
+	buildVariantSyncDryRunRequests,
 	createFeatureFlag,
 	type DatadogTeam,
 	type DDRestrictionBinding,
@@ -13,8 +14,10 @@ import {
 	fetchDatadogEnvironments,
 	fetchDatadogFlags,
 	fetchDatadogTeams,
+	fetchFlagDetail,
 	fetchRestrictionPolicy,
 	syncAllocationsForEnvironment,
+	syncVariants,
 	updateFlagTags,
 } from '../datadog.js';
 import {
@@ -88,6 +91,18 @@ function ddEnvLabel(env: DatadogEnvironment): string {
 		? `  ${chalk.bgHex('#632CA6').white(' Prod ')}`
 		: '';
 	return `${env.name}${prodBadge}`;
+}
+
+function formatVariantLabel(counts: {
+	added: number;
+	updated: number;
+	deleted: number;
+}): string {
+	const parts: string[] = [];
+	if (counts.added > 0) parts.push(`${counts.added} variant(s) added`);
+	if (counts.updated > 0) parts.push(`${counts.updated} variant(s) updated`);
+	if (counts.deleted > 0) parts.push(`${counts.deleted} variant(s) deleted`);
+	return parts.length > 0 ? `, ${parts.join(', ')}` : '';
 }
 
 function formatAxiosError(err: unknown): string {
@@ -1099,7 +1114,26 @@ async function executeMigration(
 
 				if (envsToEnable.length === 0) {
 					// Always sync tags and restriction policy even when no new environments need enabling.
+					let variantCounts = { added: 0, updated: 0, deleted: 0 };
 					if (dryRun) {
+						const { variants: existingVariants } = await fetchFlagDetail(
+							ddApiKey,
+							ddAppKey,
+							existingFlagId,
+							ddSite,
+						);
+						const variantReqs = buildVariantSyncDryRunRequests(
+							existingFlagId,
+							variants,
+							existingVariants,
+							'launchdarkly',
+						);
+						for (const r of variantReqs) dryRunRequests.push(r);
+						variantCounts = {
+							added: variantReqs.filter((r) => r.method === 'POST').length,
+							updated: variantReqs.filter((r) => r.method === 'PUT').length,
+							deleted: variantReqs.filter((r) => r.method === 'DELETE').length,
+						};
 						dryRunRequests.push({
 							method: 'PUT',
 							path: `/api/v2/feature-flags/${existingFlagId}`,
@@ -1126,6 +1160,15 @@ async function executeMigration(
 							);
 						}
 					} else {
+						const result = await syncVariants(
+							ddApiKey,
+							ddAppKey,
+							existingFlagId,
+							variants,
+							'launchdarkly',
+							ddSite,
+						);
+						variantCounts = result.counts;
 						await updateFlagTags(
 							ddApiKey,
 							ddAppKey,
@@ -1148,10 +1191,11 @@ async function executeMigration(
 					const policyLabel =
 						editorTeamIds.length > 0 ? ' (permissions refreshed)' : '';
 					const tagLabel = `${syncTags.length} tag(s)`;
+					const variantLabel = formatVariantLabel(variantCounts);
 					spinner.succeed(
 						dryRun
-							? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (${tagLabel}${policyLabel})`
-							: `Synced ${chalk.cyan(flag.key)} (${tagLabel}${policyLabel})`,
+							? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (${tagLabel}${variantLabel}${policyLabel})`
+							: `Synced ${chalk.cyan(flag.key)} (${tagLabel}${variantLabel}${policyLabel})`,
 					);
 					syncedFlagKeys.push(flag.key);
 					synced++;
@@ -1165,6 +1209,24 @@ async function executeMigration(
 				spinner = createSpinner(`Migrating ${chalk.cyan(flag.key)}…`).start();
 
 				if (dryRun) {
+					const { variants: existingVariantsDry } = await fetchFlagDetail(
+						ddApiKey,
+						ddAppKey,
+						existingFlagId,
+						ddSite,
+					);
+					const variantReqs = buildVariantSyncDryRunRequests(
+						existingFlagId,
+						variants,
+						existingVariantsDry,
+						'launchdarkly',
+					);
+					for (const r of variantReqs) dryRunRequests.push(r);
+					const variantCountsDry = {
+						added: variantReqs.filter((r) => r.method === 'POST').length,
+						updated: variantReqs.filter((r) => r.method === 'PUT').length,
+						deleted: variantReqs.filter((r) => r.method === 'DELETE').length,
+					};
 					let syncFilterCount = 0;
 					let syncRuleCount = 0;
 					for (const ddEnv of envsToEnable) {
@@ -1217,19 +1279,30 @@ async function executeMigration(
 						syncTags.length > 0
 							? `, ${syncTags.length} tag(s)`
 							: ', tags cleared';
+					const variantLabel = formatVariantLabel(variantCountsDry);
 					const enableLabel =
 						envsToEnable.length > 0
 							? `, would enable in ${envsToEnable.map((e) => e.name).join(', ')}`
 							: '';
 					spinner.succeed(
 						`${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} ` +
-							`(${syncFilterLabel}${syncRuleLabel}${tagLabel}${enableLabel})`,
+							`(${syncFilterLabel}${syncRuleLabel}${variantLabel}${tagLabel}${enableLabel})`,
 					);
 					syncedFlagKeys.push(flag.key);
 					synced++;
 					progressBar?.update(flag.key, { created, skipped, failed: errored });
 				} else {
 					try {
+						// Sync variants first so allocation variant_id resolution sees the updated set.
+						const variantSyncResult = await syncVariants(
+							ddApiKey,
+							ddAppKey,
+							existingFlagId,
+							variants,
+							'launchdarkly',
+							ddSite,
+						);
+						const variantCounts = variantSyncResult.counts;
 						let syncedAllocCount = 0;
 						let syncedRuleCount = 0;
 						for (const ddEnv of envsToEnable) {
@@ -1298,10 +1371,11 @@ async function executeMigration(
 							syncTags.length > 0
 								? `, ${syncTags.length} tag(s)`
 								: ', tags cleared';
+						const variantLabel = formatVariantLabel(variantCounts);
 						const enableLabel =
 							enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
 						spinner.succeed(
-							`Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${tagLabel}${enableLabel})`,
+							`Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${variantLabel}${tagLabel}${enableLabel})`,
 						);
 						syncedFlagKeys.push(flag.key);
 						synced++;

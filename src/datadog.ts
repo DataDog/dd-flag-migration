@@ -348,13 +348,20 @@ type JsonApiFlagDetail = {
 	id: string;
 	type: string;
 	attributes: {
-		variants: Array<{ id: string; key: string }>;
+		variants: Array<{ id: string; key: string; name: string; value: string }>;
 		feature_flag_environments: Array<{
 			environment_id: string;
 			allocations: Array<{ id: string; key: string }> | null;
 		}>;
 	};
 };
+
+export interface DatadogVariantDetail {
+	id: string;
+	key: string;
+	name: string;
+	value: string;
+}
 
 export async function fetchFlagDetail(
 	apiKey: string,
@@ -363,6 +370,7 @@ export async function fetchFlagDetail(
 	site = 'datadoghq.com',
 ): Promise<{
 	variantKeyToId: Map<string, string>;
+	variants: DatadogVariantDetail[];
 	allocationKeyToIdByEnv: Map<string, Map<string, string>>;
 }> {
 	const baseUrl = `https://api.${site}`;
@@ -373,8 +381,15 @@ export async function fetchFlagDetail(
 	const { variants, feature_flag_environments } = response.data.data.attributes;
 
 	const variantKeyToId = new Map<string, string>();
+	const variantDetails: DatadogVariantDetail[] = [];
 	for (const v of variants ?? []) {
 		variantKeyToId.set(v.key, v.id);
+		variantDetails.push({
+			id: v.id,
+			key: v.key,
+			name: v.name,
+			value: v.value,
+		});
 	}
 
 	const allocationKeyToIdByEnv = new Map<string, Map<string, string>>();
@@ -386,7 +401,292 @@ export async function fetchFlagDetail(
 		allocationKeyToIdByEnv.set(env.environment_id, allocKeyToId);
 	}
 
-	return { variantKeyToId, allocationKeyToIdByEnv };
+	return {
+		variantKeyToId,
+		variants: variantDetails,
+		allocationKeyToIdByEnv,
+	};
+}
+
+// ─── Variants ────────────────────────────────────────────────────────────────
+
+export interface VariantMigrationMetadata {
+	provider: 'launchdarkly' | 'eppo';
+	source_key: string;
+}
+
+export interface SourceVariant {
+	key: string;
+	name: string;
+	value: string;
+}
+
+export async function createVariant(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	variant: {
+		key: string;
+		name: string;
+		value: string;
+		migrationMetadata?: VariantMigrationMetadata;
+	},
+	site = 'datadoghq.com',
+): Promise<DatadogVariantDetail> {
+	const baseUrl = `https://api.${site}`;
+	const body = {
+		data: {
+			type: 'variants',
+			attributes: {
+				key: variant.key,
+				name: variant.name,
+				value: variant.value,
+				...(variant.migrationMetadata !== undefined
+					? { migration_metadata: variant.migrationMetadata }
+					: {}),
+			},
+		},
+	};
+	const response = await ddClient.post<{
+		data: {
+			id: string;
+			attributes: { key: string; name: string; value: string };
+		};
+	}>(`${baseUrl}/api/v2/feature-flags/${flagId}/variants`, body, {
+		headers: {
+			...ddHeaders(apiKey, appKey),
+			'Content-Type': 'application/vnd.api+json',
+		},
+	});
+	return {
+		id: response.data.data.id,
+		key: response.data.data.attributes.key,
+		name: response.data.data.attributes.name,
+		value: response.data.data.attributes.value,
+	};
+}
+
+export async function updateVariant(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	variantId: string,
+	variant: {
+		name: string;
+		value: string;
+		migrationMetadata?: VariantMigrationMetadata;
+	},
+	site = 'datadoghq.com',
+): Promise<void> {
+	const baseUrl = `https://api.${site}`;
+	const body = {
+		data: {
+			type: 'variants',
+			id: variantId,
+			attributes: {
+				name: variant.name,
+				value: variant.value,
+				...(variant.migrationMetadata !== undefined
+					? { migration_metadata: variant.migrationMetadata }
+					: {}),
+			},
+		},
+	};
+	await ddClient.put(
+		`${baseUrl}/api/v2/feature-flags/${flagId}/variants/${variantId}`,
+		body,
+		{
+			headers: {
+				...ddHeaders(apiKey, appKey),
+				'Content-Type': 'application/vnd.api+json',
+			},
+		},
+	);
+}
+
+export async function deleteVariant(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	variantId: string,
+	site = 'datadoghq.com',
+): Promise<void> {
+	const baseUrl = `https://api.${site}`;
+	await ddClient.delete(
+		`${baseUrl}/api/v2/feature-flags/${flagId}/variants/${variantId}`,
+		{ headers: ddHeaders(apiKey, appKey) },
+	);
+}
+
+export interface VariantSyncCounts {
+	added: number;
+	updated: number;
+	deleted: number;
+}
+
+export interface VariantSyncPlan {
+	toCreate: SourceVariant[];
+	toUpdate: Array<{ id: string; key: string; name: string; value: string }>;
+	toDelete: Array<{ id: string; key: string }>;
+}
+
+export function planVariantSync(
+	sourceVariants: SourceVariant[],
+	existingVariants: DatadogVariantDetail[],
+): VariantSyncPlan {
+	const existingByKey = new Map(existingVariants.map((v) => [v.key, v]));
+	const sourceByKey = new Map(sourceVariants.map((v) => [v.key, v]));
+
+	const toCreate: SourceVariant[] = [];
+	const toUpdate: Array<{
+		id: string;
+		key: string;
+		name: string;
+		value: string;
+	}> = [];
+	const toDelete: Array<{ id: string; key: string }> = [];
+
+	for (const sv of sourceVariants) {
+		const existing = existingByKey.get(sv.key);
+		if (!existing) {
+			toCreate.push(sv);
+		} else if (existing.name !== sv.name || existing.value !== sv.value) {
+			toUpdate.push({
+				id: existing.id,
+				key: sv.key,
+				name: sv.name,
+				value: sv.value,
+			});
+		}
+	}
+	for (const ev of existingVariants) {
+		if (!sourceByKey.has(ev.key)) {
+			toDelete.push({ id: ev.id, key: ev.key });
+		}
+	}
+	return { toCreate, toUpdate, toDelete };
+}
+
+export async function syncVariants(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	sourceVariants: SourceVariant[],
+	provider: 'launchdarkly' | 'eppo',
+	site = 'datadoghq.com',
+): Promise<{
+	variantKeyToId: Map<string, string>;
+	counts: VariantSyncCounts;
+}> {
+	const { variants: existingVariants } = await fetchFlagDetail(
+		apiKey,
+		appKey,
+		flagId,
+		site,
+	);
+	const plan = planVariantSync(sourceVariants, existingVariants);
+
+	const variantKeyToId = new Map<string, string>();
+	for (const v of existingVariants) variantKeyToId.set(v.key, v.id);
+
+	for (const v of plan.toDelete) {
+		await deleteVariant(apiKey, appKey, flagId, v.id, site);
+		variantKeyToId.delete(v.key);
+	}
+	for (const v of plan.toUpdate) {
+		await updateVariant(
+			apiKey,
+			appKey,
+			flagId,
+			v.id,
+			{
+				name: v.name,
+				value: v.value,
+				migrationMetadata: { provider, source_key: v.key },
+			},
+			site,
+		);
+	}
+	for (const v of plan.toCreate) {
+		const created = await createVariant(
+			apiKey,
+			appKey,
+			flagId,
+			{
+				key: v.key,
+				name: v.name,
+				value: v.value,
+				migrationMetadata: { provider, source_key: v.key },
+			},
+			site,
+		);
+		variantKeyToId.set(created.key, created.id);
+	}
+
+	return {
+		variantKeyToId,
+		counts: {
+			added: plan.toCreate.length,
+			updated: plan.toUpdate.length,
+			deleted: plan.toDelete.length,
+		},
+	};
+}
+
+export function buildVariantSyncDryRunRequests(
+	flagId: string,
+	sourceVariants: SourceVariant[],
+	existingVariants: DatadogVariantDetail[],
+	provider: 'launchdarkly' | 'eppo',
+): Array<{ method: 'POST' | 'PUT' | 'DELETE'; path: string; body: unknown }> {
+	const plan = planVariantSync(sourceVariants, existingVariants);
+	const requests: Array<{
+		method: 'POST' | 'PUT' | 'DELETE';
+		path: string;
+		body: unknown;
+	}> = [];
+	for (const v of plan.toDelete) {
+		requests.push({
+			method: 'DELETE',
+			path: `/api/v2/feature-flags/${flagId}/variants/${v.id}`,
+			body: {},
+		});
+	}
+	for (const v of plan.toUpdate) {
+		requests.push({
+			method: 'PUT',
+			path: `/api/v2/feature-flags/${flagId}/variants/${v.id}`,
+			body: {
+				data: {
+					type: 'variants',
+					id: v.id,
+					attributes: {
+						name: v.name,
+						value: v.value,
+						migration_metadata: { provider, source_key: v.key },
+					},
+				},
+			},
+		});
+	}
+	for (const v of plan.toCreate) {
+		requests.push({
+			method: 'POST',
+			path: `/api/v2/feature-flags/${flagId}/variants`,
+			body: {
+				data: {
+					type: 'variants',
+					attributes: {
+						key: v.key,
+						name: v.name,
+						value: v.value,
+						migration_metadata: { provider, source_key: v.key },
+					},
+				},
+			},
+		});
+	}
+	return requests;
 }
 
 export async function syncAllocationsForEnvironment(
