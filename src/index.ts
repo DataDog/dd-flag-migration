@@ -14,13 +14,11 @@ import { withConsoleLogToStderr } from './output.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
+// Only read permissions are checked upfront — write permissions can't be probed
+// safely, so the migration surfaces missing write scopes at runtime.
 const ALL_REQUIRED_PERMISSIONS = [
 	'feature_flag_config_read',
-	'feature_flag_config_write',
 	'feature_flag_environment_config_read',
-	'feature_flag_approvals_override',
-	'restriction_policies_read',
-	'restriction_policies_write',
 	'teams_read',
 ] as const;
 
