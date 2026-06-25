@@ -535,7 +535,8 @@ describe('migrateAudiences', () => {
 		expect(result.stats.updated).toBe(1);
 		expect(result.savedFilterLookup.get(42)).toBe('sf-existing');
 
-		const body = JSON.parse(updateSpy.mock.calls[0][0].data);
+		const firstCall = updateSpy.mock.calls[0] as unknown as [{ data: string }];
+		const body = JSON.parse(firstCall[0].data);
 		expect(body.data.id).toBe('sf-existing');
 		expect(body.data.attributes.name).toBe('US Customers');
 		expect(body.data.attributes.targeting_rules[0].conditions[0].value).toEqual(

@@ -17,7 +17,6 @@ The source platform owns these end-to-end. On re-migration, make Datadog match e
 - Default variant (per environment)
 - Environment enablement
 - **Variants** (POST/PUT/DELETE via the `/feature-flags/{id}/variants` sub-resource)
-- **Saved-filter body** for LD segments / Eppo audiences (PUT-replace `name`, `targeting_rules`, `description`, `migration_metadata` on every matched re-run). Saved-filter id is stable so allocations referencing it stay valid. Deletes are intentionally out of scope — a single saved filter can be referenced by flags outside the current re-migration's selection.
 
 When introducing a new field in this tier: a missing value in the source must propagate as a removal in Datadog, not as a no-op.
 
@@ -26,6 +25,7 @@ When introducing a new field in this tier: a missing value in the source must pr
 Datadog-side state may exist that the source system doesn't know about, and clobbering it would be surprising. Merge: union with what's on Datadog, dedupe, preserve unrelated bindings.
 
 - **Restriction policies**: editor-team principals derived from RBAC walk are merged into existing editor bindings; non-editor bindings (e.g., viewer) are preserved.
+- **Saved filters** for LD segments / Eppo audiences: PUT-replace the body (`name`, `targeting_rules`, `description`, `migration_metadata`) of every matched filter so source-side edits propagate, but saved filters outside the current re-migration's selection are preserved. Deletes are intentionally out of scope — a saved filter can be referenced by flags outside the current selection, so deleting one would orphan those references.
 
 When introducing a new field in this tier: GET current state, compute union with source-derived state, PUT/POST merged result.
 
