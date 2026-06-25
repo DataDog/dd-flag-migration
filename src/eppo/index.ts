@@ -5,11 +5,15 @@ import axios from 'axios';
 import chalk from 'chalk';
 import { CONFIG_DIR } from '../config.js';
 import {
+	applyVariantDeletes,
+	buildVariantSyncDryRunRequests,
 	createFeatureFlag,
 	enableFeatureFlagEnvironment,
 	fetchDatadogEnvironments,
 	fetchDatadogFlagKeys,
+	fetchFlagDetail,
 	syncAllocationsForEnvironment,
+	syncVariantsCreatesAndUpdates,
 	updateFlagTags,
 } from '../datadog.js';
 import { filterableCheckbox } from '../filterable-checkbox.js';
@@ -74,6 +78,18 @@ function ddEnvLabel(env: DatadogEnvironment): string {
 function envLabel(env: EppoFlagEnvironment, flagCount: number): string {
 	const prodBadge = env.is_production ? `  ${chalk.bgRed.white(' Prod ')}` : '';
 	return `${env.name}${prodBadge}  ${chalk.gray(`(${flagCount} flags)`)}`;
+}
+
+function formatVariantLabel(counts: {
+	added: number;
+	updated: number;
+	deleted: number;
+}): string {
+	const parts: string[] = [];
+	if (counts.added > 0) parts.push(`${counts.added} variant(s) added`);
+	if (counts.updated > 0) parts.push(`${counts.updated} variant(s) updated`);
+	if (counts.deleted > 0) parts.push(`${counts.deleted} variant(s) deleted`);
+	return parts.length > 0 ? `, ${parts.join(', ')}` : '';
 }
 
 function formatAxiosError(err: unknown): string {
@@ -340,11 +356,17 @@ async function confirmMigration(
 		savedFilterLookup = audienceResult.savedFilterLookup;
 		dryRunRequests.push(...audienceResult.dryRunRequests);
 		if (audienceResult.stats.discovered > 0) {
-			const { created: ac, reused: ar, skipped: as_ } = audienceResult.stats;
+			const {
+				created: ac,
+				reused: ar,
+				updated: au,
+				skipped: as_,
+			} = audienceResult.stats;
 			const createdVerb = dryRun ? 'would be created' : 'created';
+			const updatedVerb = dryRun ? 'would update' : 'updated';
 			console.log(
 				chalk.gray(
-					`  Audiences: ${ac} ${createdVerb}, ${ar} reused, ${as_} skipped as saved filters`,
+					`  Audiences: ${ac} ${createdVerb}, ${ar} reused (${au} ${updatedVerb}), ${as_} skipped as saved filters`,
 				),
 			);
 			phase1Subheader =
@@ -352,7 +374,7 @@ async function confirmMigration(
 				chalk.green(String(ac)) +
 				chalk.gray(` ${createdVerb} · `) +
 				chalk.white(String(ar)) +
-				chalk.gray(' reused · ') +
+				chalk.gray(` reused (${au} ${updatedVerb}) · `) +
 				chalk.yellow(String(as_)) +
 				chalk.gray(' skipped as saved filters');
 		}
@@ -475,6 +497,8 @@ async function confirmMigration(
 				value: isJsonFlag
 					? normalizeJsonVariantValue(v.variant_key)
 					: v.variant_key,
+				// EppoFlagVariation.id is the stable identifier — survives renames.
+				sourceId: String(v.id),
 			}));
 			if (variants.length === 0) {
 				spinner.warn(`Skipped ${chalk.cyan(flag.key)} — no variants`);
@@ -512,7 +536,32 @@ async function confirmMigration(
 
 				if (envsToEnable.length === 0) {
 					// Always sync tags (even empty array, so removals propagate).
+					// Variant deletes are intentionally SKIPPED in this branch: this
+					// path performs no allocation rewrite, so deleting a variant
+					// could orphan existing DD allocation references (allocations
+					// reference variants by UUID). Creates+updates are safe.
+					let variantCounts = { added: 0, updated: 0, deleted: 0 };
 					if (dryRun) {
+						const { variants: existingVariants } = await fetchFlagDetail(
+							ddApiKey,
+							ddAppKey,
+							existingFlagId,
+							site,
+						);
+						const { createUpdateRequests } = buildVariantSyncDryRunRequests(
+							existingFlagId,
+							variants,
+							existingVariants,
+							'eppo',
+						);
+						for (const r of createUpdateRequests) dryRunRequests.push(r);
+						variantCounts = {
+							added: createUpdateRequests.filter((r) => r.method === 'POST')
+								.length,
+							updated: createUpdateRequests.filter((r) => r.method === 'PUT')
+								.length,
+							deleted: 0,
+						};
 						dryRunRequests.push({
 							method: 'PUT',
 							path: `/api/v2/feature-flags/${existingFlagId}`,
@@ -524,6 +573,15 @@ async function confirmMigration(
 							},
 						});
 					} else {
+						const result = await syncVariantsCreatesAndUpdates(
+							ddApiKey,
+							ddAppKey,
+							existingFlagId,
+							variants,
+							'eppo',
+							site,
+						);
+						variantCounts = { ...result.counts, deleted: 0 };
 						await updateFlagTags(
 							ddApiKey,
 							ddAppKey,
@@ -532,10 +590,11 @@ async function confirmMigration(
 							site,
 						);
 					}
+					const variantLabel = formatVariantLabel(variantCounts);
 					spinner.succeed(
 						dryRun
-							? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (${syncTags.length} tag(s))`
-							: `Synced ${chalk.cyan(flag.key)} (${syncTags.length} tag(s))`,
+							? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (${syncTags.length} tag(s)${variantLabel})`
+							: `Synced ${chalk.cyan(flag.key)} (${syncTags.length} tag(s)${variantLabel})`,
 					);
 					synced++;
 					progressBar?.update(flag.key, { created, skipped, failed: errored });
@@ -548,6 +607,29 @@ async function confirmMigration(
 				spinner = createSpinner(`Migrating ${chalk.cyan(flag.key)}…`).start();
 
 				if (dryRun) {
+					const { variants: existingVariantsDry } = await fetchFlagDetail(
+						ddApiKey,
+						ddAppKey,
+						existingFlagId,
+						site,
+					);
+					const { createUpdateRequests, deleteRequests } =
+						buildVariantSyncDryRunRequests(
+							existingFlagId,
+							variants,
+							existingVariantsDry,
+							'eppo',
+						);
+					// Variant creates+updates must precede allocation PUTs so that
+					// new variants exist when allocations reference them.
+					for (const r of createUpdateRequests) dryRunRequests.push(r);
+					const variantCounts = {
+						added: createUpdateRequests.filter((r) => r.method === 'POST')
+							.length,
+						updated: createUpdateRequests.filter((r) => r.method === 'PUT')
+							.length,
+						deleted: deleteRequests.length,
+					};
 					let syncFilterCount = 0;
 					let syncRuleCount = 0;
 					for (const ddEnv of envsToEnable) {
@@ -571,6 +653,9 @@ async function confirmMigration(
 							body: {},
 						});
 					}
+					// Variant deletes go AFTER allocation PUTs — allocations may have
+					// been pointing at variants slated for removal until just now.
+					for (const r of deleteRequests) dryRunRequests.push(r);
 					dryRunRequests.push({
 						method: 'PUT',
 						path: `/api/v2/feature-flags/${existingFlagId}`,
@@ -588,18 +673,32 @@ async function confirmMigration(
 						syncTags.length > 0
 							? `, ${syncTags.length} tag(s)`
 							: ', tags cleared';
+					const variantLabel = formatVariantLabel(variantCounts);
 					const enableLabel =
 						envsToEnable.length > 0
 							? `, would enable in ${envsToEnable.map((e) => e.name).join(', ')}`
 							: '';
 					spinner.succeed(
 						`${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} ` +
-							`(${syncFilterLabel}${syncRuleLabel}${tagLabel}${enableLabel})`,
+							`(${syncFilterLabel}${syncRuleLabel}${variantLabel}${tagLabel}${enableLabel})`,
 					);
 					synced++;
 					progressBar?.update(flag.key, { created, skipped, failed: errored });
 				} else {
 					try {
+						// Apply variant creates+updates first so allocation
+						// variant_id resolution sees new variants. Deletes are
+						// deferred until AFTER allocation sync so we never remove
+						// a variant while an allocation may still reference it.
+						const variantSyncResult = await syncVariantsCreatesAndUpdates(
+							ddApiKey,
+							ddAppKey,
+							existingFlagId,
+							variants,
+							'eppo',
+							site,
+						);
+						const variantCounts = variantSyncResult.counts;
 						// Sync targeting for each target environment
 						let syncedAllocCount = 0;
 						let syncedRuleCount = 0;
@@ -620,6 +719,15 @@ async function confirmMigration(
 								0,
 							);
 						}
+
+						// Now safe to delete: allocations no longer reference these.
+						await applyVariantDeletes(
+							ddApiKey,
+							ddAppKey,
+							existingFlagId,
+							variantSyncResult.pendingDeletes,
+							site,
+						);
 
 						// Update tags on existing flag (replace so removals propagate)
 						await updateFlagTags(
@@ -658,10 +766,11 @@ async function confirmMigration(
 							syncTags.length > 0
 								? `, ${syncTags.length} tag(s)`
 								: ', tags cleared';
+						const variantLabel = formatVariantLabel(variantCounts);
 						const enableLabel =
 							enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
 						spinner.succeed(
-							`Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${tagLabel}${enableLabel})`,
+							`Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${variantLabel}${tagLabel}${enableLabel})`,
 						);
 						synced++;
 						progressBar?.update(flag.key, {

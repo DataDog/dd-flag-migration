@@ -6,6 +6,8 @@ import chalk from 'chalk';
 import { CONFIG_DIR } from '../config.js';
 import {
 	applyRestrictionPolicy,
+	applyVariantDeletes,
+	buildVariantSyncDryRunRequests,
 	createFeatureFlag,
 	type DatadogTeam,
 	type DDRestrictionBinding,
@@ -13,8 +15,10 @@ import {
 	fetchDatadogEnvironments,
 	fetchDatadogFlags,
 	fetchDatadogTeams,
+	fetchFlagDetail,
 	fetchRestrictionPolicy,
 	syncAllocationsForEnvironment,
+	syncVariantsCreatesAndUpdates,
 	updateFlagTags,
 } from '../datadog.js';
 import {
@@ -88,6 +92,18 @@ function ddEnvLabel(env: DatadogEnvironment): string {
 		? `  ${chalk.bgHex('#632CA6').white(' Prod ')}`
 		: '';
 	return `${env.name}${prodBadge}`;
+}
+
+function formatVariantLabel(counts: {
+	added: number;
+	updated: number;
+	deleted: number;
+}): string {
+	const parts: string[] = [];
+	if (counts.added > 0) parts.push(`${counts.added} variant(s) added`);
+	if (counts.updated > 0) parts.push(`${counts.updated} variant(s) updated`);
+	if (counts.deleted > 0) parts.push(`${counts.deleted} variant(s) deleted`);
+	return parts.length > 0 ? `, ${parts.join(', ')}` : '';
 }
 
 function formatAxiosError(err: unknown): string {
@@ -841,13 +857,18 @@ async function executeMigration(
 			segmentConstantLookup = segmentResult.segmentConstantLookup;
 			segmentMigrationStats = segmentResult.stats;
 			if (segmentResult.stats.discovered > 0) {
-				const { created: sc, reused: sr, skipped: ss } = segmentResult.stats;
+				const {
+					created: sc,
+					reused: sr,
+					updated: su,
+					skipped: ss,
+				} = segmentResult.stats;
 				phase1Subheader =
 					chalk.gray('Phase 1 — Segments: ') +
 					chalk.green(String(sc)) +
 					chalk.gray(' created · ') +
 					chalk.white(String(sr)) +
-					chalk.gray(' reused · ') +
+					chalk.gray(` reused (${su} updated) · `) +
 					chalk.yellow(String(ss)) +
 					chalk.gray(' skipped as saved filters');
 			}
@@ -1099,7 +1120,32 @@ async function executeMigration(
 
 				if (envsToEnable.length === 0) {
 					// Always sync tags and restriction policy even when no new environments need enabling.
+					// Variant deletes are intentionally SKIPPED in this branch: this
+					// path performs no allocation rewrite, so deleting a variant
+					// could orphan existing DD allocation references (allocations
+					// reference variants by UUID). Creates+updates are safe.
+					let variantCounts = { added: 0, updated: 0, deleted: 0 };
 					if (dryRun) {
+						const { variants: existingVariants } = await fetchFlagDetail(
+							ddApiKey,
+							ddAppKey,
+							existingFlagId,
+							ddSite,
+						);
+						const { createUpdateRequests } = buildVariantSyncDryRunRequests(
+							existingFlagId,
+							variants,
+							existingVariants,
+							'launchdarkly',
+						);
+						for (const r of createUpdateRequests) dryRunRequests.push(r);
+						variantCounts = {
+							added: createUpdateRequests.filter((r) => r.method === 'POST')
+								.length,
+							updated: createUpdateRequests.filter((r) => r.method === 'PUT')
+								.length,
+							deleted: 0,
+						};
 						dryRunRequests.push({
 							method: 'PUT',
 							path: `/api/v2/feature-flags/${existingFlagId}`,
@@ -1126,6 +1172,15 @@ async function executeMigration(
 							);
 						}
 					} else {
+						const result = await syncVariantsCreatesAndUpdates(
+							ddApiKey,
+							ddAppKey,
+							existingFlagId,
+							variants,
+							'launchdarkly',
+							ddSite,
+						);
+						variantCounts = { ...result.counts, deleted: 0 };
 						await updateFlagTags(
 							ddApiKey,
 							ddAppKey,
@@ -1148,10 +1203,11 @@ async function executeMigration(
 					const policyLabel =
 						editorTeamIds.length > 0 ? ' (permissions refreshed)' : '';
 					const tagLabel = `${syncTags.length} tag(s)`;
+					const variantLabel = formatVariantLabel(variantCounts);
 					spinner.succeed(
 						dryRun
-							? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (${tagLabel}${policyLabel})`
-							: `Synced ${chalk.cyan(flag.key)} (${tagLabel}${policyLabel})`,
+							? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (${tagLabel}${variantLabel}${policyLabel})`
+							: `Synced ${chalk.cyan(flag.key)} (${tagLabel}${variantLabel}${policyLabel})`,
 					);
 					syncedFlagKeys.push(flag.key);
 					synced++;
@@ -1165,6 +1221,28 @@ async function executeMigration(
 				spinner = createSpinner(`Migrating ${chalk.cyan(flag.key)}…`).start();
 
 				if (dryRun) {
+					const { variants: existingVariantsDry } = await fetchFlagDetail(
+						ddApiKey,
+						ddAppKey,
+						existingFlagId,
+						ddSite,
+					);
+					const { createUpdateRequests, deleteRequests } =
+						buildVariantSyncDryRunRequests(
+							existingFlagId,
+							variants,
+							existingVariantsDry,
+							'launchdarkly',
+						);
+					// Variant creates+updates precede allocation PUTs.
+					for (const r of createUpdateRequests) dryRunRequests.push(r);
+					const variantCountsDry = {
+						added: createUpdateRequests.filter((r) => r.method === 'POST')
+							.length,
+						updated: createUpdateRequests.filter((r) => r.method === 'PUT')
+							.length,
+						deleted: deleteRequests.length,
+					};
 					let syncFilterCount = 0;
 					let syncRuleCount = 0;
 					for (const ddEnv of envsToEnable) {
@@ -1185,6 +1263,8 @@ async function executeMigration(
 							body: {},
 						});
 					}
+					// Variant deletes go AFTER allocation PUTs.
+					for (const r of deleteRequests) dryRunRequests.push(r);
 					dryRunRequests.push({
 						method: 'PUT',
 						path: `/api/v2/feature-flags/${existingFlagId}`,
@@ -1217,19 +1297,33 @@ async function executeMigration(
 						syncTags.length > 0
 							? `, ${syncTags.length} tag(s)`
 							: ', tags cleared';
+					const variantLabel = formatVariantLabel(variantCountsDry);
 					const enableLabel =
 						envsToEnable.length > 0
 							? `, would enable in ${envsToEnable.map((e) => e.name).join(', ')}`
 							: '';
 					spinner.succeed(
 						`${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} ` +
-							`(${syncFilterLabel}${syncRuleLabel}${tagLabel}${enableLabel})`,
+							`(${syncFilterLabel}${syncRuleLabel}${variantLabel}${tagLabel}${enableLabel})`,
 					);
 					syncedFlagKeys.push(flag.key);
 					synced++;
 					progressBar?.update(flag.key, { created, skipped, failed: errored });
 				} else {
 					try {
+						// Apply variant creates+updates first so allocation
+						// variant_id resolution sees new variants. Deletes are
+						// deferred until AFTER allocation sync so we never remove
+						// a variant while an allocation may still reference it.
+						const variantSyncResult = await syncVariantsCreatesAndUpdates(
+							ddApiKey,
+							ddAppKey,
+							existingFlagId,
+							variants,
+							'launchdarkly',
+							ddSite,
+						);
+						const variantCounts = variantSyncResult.counts;
 						let syncedAllocCount = 0;
 						let syncedRuleCount = 0;
 						for (const ddEnv of envsToEnable) {
@@ -1248,6 +1342,15 @@ async function executeMigration(
 								0,
 							);
 						}
+
+						// Now safe to delete: allocations no longer reference these.
+						await applyVariantDeletes(
+							ddApiKey,
+							ddAppKey,
+							existingFlagId,
+							variantSyncResult.pendingDeletes,
+							ddSite,
+						);
 
 						// Update tags on existing flag (replace so removals propagate)
 						await updateFlagTags(
@@ -1298,10 +1401,11 @@ async function executeMigration(
 							syncTags.length > 0
 								? `, ${syncTags.length} tag(s)`
 								: ', tags cleared';
+						const variantLabel = formatVariantLabel(variantCounts);
 						const enableLabel =
 							enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
 						spinner.succeed(
-							`Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${tagLabel}${enableLabel})`,
+							`Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${variantLabel}${tagLabel}${enableLabel})`,
 						);
 						syncedFlagKeys.push(flag.key);
 						synced++;

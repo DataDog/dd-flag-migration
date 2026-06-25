@@ -191,6 +191,7 @@ export interface LDMigrationFile {
 		created: number;
 		negated: number;
 		reused: number;
+		updated: number;
 		skipped: number;
 		failures: Array<{ segmentKey: string; envKey: string; error: string }>;
 	};

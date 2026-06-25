@@ -9,9 +9,12 @@ import {
 import AxiosMockAdapter from 'axios-mock-adapter';
 import {
 	applyRestrictionPolicy,
+	applyVariantDeletes,
 	createDDClient,
 	createFeatureFlag,
+	createVariant,
 	ddClient,
+	deleteVariant,
 	enableFeatureFlagEnvironment,
 	fetchCurrentUserPermissions,
 	fetchDatadogEnvironments,
@@ -20,8 +23,12 @@ import {
 	fetchDatadogTeams,
 	fetchFlagTags,
 	fetchRestrictionPolicy,
+	planVariantSync,
 	syncAllocationsForEnvironment,
+	syncVariants,
+	syncVariantsCreatesAndUpdates,
 	updateFlagTags,
+	updateVariant,
 } from '../src/datadog.js';
 import type {
 	DatadogAllocationSyncRequest,
@@ -1461,5 +1468,557 @@ describe('Datadog client rate-limit handling', () => {
 			client.get(`${BASE}/foo`),
 		]);
 		expect(warnSpy).toHaveBeenCalledTimes(1);
+	});
+});
+
+// ─── Variant CRUD ────────────────────────────────────────────────────────────
+
+describe('createVariant', () => {
+	let mock: AxiosMockAdapter;
+	beforeEach(() => {
+		mock = new AxiosMockAdapter(ddClient as never);
+	});
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('POSTs JSON:API body and returns parsed variant', async () => {
+		mock
+			.onPost(`${BASE}/api/v2/feature-flags/flag-1/variants`)
+			.reply((config) => {
+				const body = JSON.parse(config.data as string);
+				expect(body).toEqual({
+					data: {
+						type: 'variants',
+						attributes: {
+							key: 'red',
+							name: 'Red',
+							value: 'red',
+							migration_metadata: {
+								provider: 'eppo',
+								source_id: 'sid-red',
+								source_key: 'red',
+							},
+						},
+					},
+				});
+				expect(config.headers?.['Content-Type']).toBe(
+					'application/vnd.api+json',
+				);
+				return [
+					201,
+					{
+						data: {
+							id: 'var-uuid-1',
+							type: 'variants',
+							attributes: { key: 'red', name: 'Red', value: 'red' },
+						},
+					},
+				];
+			});
+
+		const result = await createVariant(
+			API_KEY,
+			APP_KEY,
+			'flag-1',
+			{
+				key: 'red',
+				name: 'Red',
+				value: 'red',
+				migrationMetadata: {
+					provider: 'eppo',
+					source_id: 'sid-red',
+					source_key: 'red',
+				},
+			},
+			SITE,
+		);
+		expect(result).toEqual({
+			id: 'var-uuid-1',
+			key: 'red',
+			name: 'Red',
+			value: 'red',
+		});
+	});
+});
+
+describe('updateVariant', () => {
+	let mock: AxiosMockAdapter;
+	beforeEach(() => {
+		mock = new AxiosMockAdapter(ddClient as never);
+	});
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('PUTs to the variant URL with the right body', async () => {
+		mock
+			.onPut(`${BASE}/api/v2/feature-flags/flag-1/variants/var-uuid-1`)
+			.reply((config) => {
+				const body = JSON.parse(config.data as string);
+				expect(body).toEqual({
+					data: {
+						type: 'variants',
+						id: 'var-uuid-1',
+						attributes: {
+							name: 'Crimson',
+							value: 'crimson',
+							migration_metadata: {
+								provider: 'launchdarkly',
+								source_id: 'sid-red',
+								source_key: 'red',
+							},
+						},
+					},
+				});
+				return [200, {}];
+			});
+
+		await updateVariant(
+			API_KEY,
+			APP_KEY,
+			'flag-1',
+			'var-uuid-1',
+			{
+				name: 'Crimson',
+				value: 'crimson',
+				migrationMetadata: {
+					provider: 'launchdarkly',
+					source_id: 'sid-red',
+					source_key: 'red',
+				},
+			},
+			SITE,
+		);
+	});
+});
+
+describe('deleteVariant', () => {
+	let mock: AxiosMockAdapter;
+	beforeEach(() => {
+		mock = new AxiosMockAdapter(ddClient as never);
+	});
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('DELETEs the variant URL', async () => {
+		let called = false;
+		mock
+			.onDelete(`${BASE}/api/v2/feature-flags/flag-1/variants/var-uuid-1`)
+			.reply(() => {
+				called = true;
+				return [204, {}];
+			});
+
+		await deleteVariant(API_KEY, APP_KEY, 'flag-1', 'var-uuid-1', SITE);
+		expect(called).toBe(true);
+	});
+});
+
+describe('syncVariants', () => {
+	let mock: AxiosMockAdapter;
+	beforeEach(() => {
+		mock = new AxiosMockAdapter(ddClient as never);
+	});
+	afterEach(() => {
+		mock.restore();
+	});
+
+	function mockFlagDetail(
+		flagId: string,
+		variants: Array<{
+			id: string;
+			key: string;
+			name: string;
+			value: string;
+		}>,
+	): void {
+		mock.onGet(`${BASE}/api/v2/feature-flags/${flagId}`).reply(200, {
+			data: {
+				id: flagId,
+				type: 'feature-flags',
+				attributes: {
+					variants,
+					feature_flag_environments: [],
+				},
+			},
+		});
+	}
+
+	it('adds, updates, and deletes variants based on key diff', async () => {
+		mockFlagDetail('flag-1', [
+			{ id: 'v-keep', key: 'keep', name: 'Keep', value: 'k' },
+			{ id: 'v-old', key: 'old', name: 'Old', value: 'o' },
+			{ id: 'v-upd', key: 'upd', name: 'Upd', value: 'u' },
+		]);
+
+		let postBody: unknown;
+		mock
+			.onPost(`${BASE}/api/v2/feature-flags/flag-1/variants`)
+			.reply((config) => {
+				postBody = JSON.parse(config.data as string);
+				return [
+					201,
+					{
+						data: {
+							id: 'v-new',
+							type: 'variants',
+							attributes: { key: 'new', name: 'New', value: 'n' },
+						},
+					},
+				];
+			});
+
+		let putBody: unknown;
+		mock
+			.onPut(`${BASE}/api/v2/feature-flags/flag-1/variants/v-upd`)
+			.reply((config) => {
+				putBody = JSON.parse(config.data as string);
+				return [200, {}];
+			});
+
+		let deleteCalled = false;
+		mock
+			.onDelete(`${BASE}/api/v2/feature-flags/flag-1/variants/v-old`)
+			.reply(() => {
+				deleteCalled = true;
+				return [204, {}];
+			});
+
+		const result = await syncVariants(
+			API_KEY,
+			APP_KEY,
+			'flag-1',
+			[
+				{ key: 'keep', name: 'Keep', value: 'k', sourceId: 'sid-keep' },
+				{ key: 'upd', name: 'Updated', value: 'u2', sourceId: 'sid-upd' },
+				{ key: 'new', name: 'New', value: 'n', sourceId: 'sid-new' },
+			],
+			'launchdarkly',
+			SITE,
+		);
+
+		expect(result.counts).toEqual({ added: 1, updated: 1, deleted: 1 });
+		expect(result.variantKeyToId.get('keep')).toBe('v-keep');
+		expect(result.variantKeyToId.get('upd')).toBe('v-upd');
+		expect(result.variantKeyToId.get('new')).toBe('v-new');
+		expect(result.variantKeyToId.has('old')).toBe(false);
+		expect(deleteCalled).toBe(true);
+
+		expect(
+			(postBody as { data: { attributes: { migration_metadata: unknown } } })
+				.data.attributes.migration_metadata,
+		).toEqual({
+			provider: 'launchdarkly',
+			source_id: 'sid-new',
+			source_key: 'new',
+		});
+		expect(
+			(putBody as { data: { attributes: { migration_metadata: unknown } } })
+				.data.attributes.migration_metadata,
+		).toEqual({
+			provider: 'launchdarkly',
+			source_id: 'sid-upd',
+			source_key: 'upd',
+		});
+	});
+
+	it('no-ops when source and existing variants match exactly', async () => {
+		mockFlagDetail('flag-1', [
+			{ id: 'v1', key: 'a', name: 'A', value: '1' },
+			{ id: 'v2', key: 'b', name: 'B', value: '2' },
+		]);
+
+		const result = await syncVariants(
+			API_KEY,
+			APP_KEY,
+			'flag-1',
+			[
+				{ key: 'a', name: 'A', value: '1', sourceId: 'sid-a' },
+				{ key: 'b', name: 'B', value: '2', sourceId: 'sid-b' },
+			],
+			'eppo',
+			SITE,
+		);
+
+		expect(result.counts).toEqual({ added: 0, updated: 0, deleted: 0 });
+		expect(result.variantKeyToId).toEqual(
+			new Map([
+				['a', 'v1'],
+				['b', 'v2'],
+			]),
+		);
+	});
+
+	it('populates eppo provider in migration_metadata on add', async () => {
+		mockFlagDetail('flag-1', []);
+
+		let postBody: unknown;
+		mock
+			.onPost(`${BASE}/api/v2/feature-flags/flag-1/variants`)
+			.reply((config) => {
+				postBody = JSON.parse(config.data as string);
+				return [
+					201,
+					{
+						data: {
+							id: 'v-new',
+							type: 'variants',
+							attributes: { key: 'x', name: 'X', value: 'x' },
+						},
+					},
+				];
+			});
+
+		await syncVariants(
+			API_KEY,
+			APP_KEY,
+			'flag-1',
+			[{ key: 'x', name: 'X', value: 'x', sourceId: 'sid-x' }],
+			'eppo',
+			SITE,
+		);
+		expect(
+			(postBody as { data: { attributes: { migration_metadata: unknown } } })
+				.data.attributes.migration_metadata,
+		).toEqual({ provider: 'eppo', source_id: 'sid-x', source_key: 'x' });
+	});
+});
+
+// ─── planVariantSync — rename & legacy matching ──────────────────────────────
+
+describe('planVariantSync — source_id matching', () => {
+	it('matches by migration_metadata.source_id across a variation rename', () => {
+		// DD already holds a variant migrated as "old-name" with source_id "abc".
+		// The source variation was renamed; slugified key is now "new-name".
+		const plan = planVariantSync(
+			[
+				{
+					key: 'new-name',
+					name: 'New Name',
+					value: 'v',
+					sourceId: 'abc',
+				},
+			],
+			[
+				{
+					id: 'uuid-1',
+					key: 'old-name',
+					name: 'Old Name',
+					value: 'v',
+					migration_metadata: {
+						provider: 'launchdarkly',
+						source_id: 'abc',
+						source_key: 'old-name',
+					},
+				},
+			],
+		);
+		expect(plan.toCreate).toEqual([]);
+		expect(plan.toDelete).toEqual([]);
+		expect(plan.toUpdate).toHaveLength(1);
+		// DD key stays put (immutable) — only name/value/metadata move.
+		expect(plan.toUpdate[0]).toEqual({
+			id: 'uuid-1',
+			key: 'old-name',
+			name: 'New Name',
+			value: 'v',
+			sourceId: 'abc',
+			sourceKey: 'new-name',
+		});
+	});
+
+	it('falls back to key match for legacy DD variants without migration_metadata', () => {
+		const plan = planVariantSync(
+			[{ key: 'red', name: 'Red', value: 'r', sourceId: 'sid-red' }],
+			[
+				{
+					id: 'uuid-1',
+					key: 'red',
+					name: 'Red',
+					value: 'r',
+					// no migration_metadata
+				},
+			],
+		);
+		expect(plan.toCreate).toEqual([]);
+		expect(plan.toDelete).toEqual([]);
+		// Names/values match and key matches — no update needed.
+		expect(plan.toUpdate).toEqual([]);
+	});
+
+	it('plans create + delete when neither source_id nor key matches', () => {
+		const plan = planVariantSync(
+			[{ key: 'green', name: 'Green', value: 'g', sourceId: 'sid-green' }],
+			[
+				{
+					id: 'uuid-old',
+					key: 'old',
+					name: 'Old',
+					value: 'o',
+					migration_metadata: {
+						provider: 'eppo',
+						source_id: 'sid-old',
+						source_key: 'old',
+					},
+				},
+			],
+		);
+		expect(plan.toCreate).toHaveLength(1);
+		expect(plan.toDelete).toEqual([{ id: 'uuid-old', key: 'old' }]);
+	});
+});
+
+// ─── syncVariants — ordering: creates/updates before deletes ─────────────────
+
+describe('syncVariants ordering', () => {
+	let mock: AxiosMockAdapter;
+	beforeEach(() => {
+		mock = new AxiosMockAdapter(ddClient as never);
+	});
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('performs creates+updates before deletes', async () => {
+		mock.onGet(`${BASE}/api/v2/feature-flags/flag-1`).reply(200, {
+			data: {
+				id: 'flag-1',
+				type: 'feature-flags',
+				attributes: {
+					variants: [
+						{ id: 'v-keep', key: 'keep', name: 'Keep', value: 'k' },
+						{ id: 'v-old', key: 'old', name: 'Old', value: 'o' },
+					],
+					feature_flag_environments: [],
+				},
+			},
+		});
+
+		const order: string[] = [];
+		mock.onPost(`${BASE}/api/v2/feature-flags/flag-1/variants`).reply(() => {
+			order.push('create');
+			return [
+				201,
+				{
+					data: {
+						id: 'v-new',
+						type: 'variants',
+						attributes: { key: 'new', name: 'New', value: 'n' },
+					},
+				},
+			];
+		});
+		mock
+			.onDelete(`${BASE}/api/v2/feature-flags/flag-1/variants/v-old`)
+			.reply(() => {
+				order.push('delete');
+				return [204, {}];
+			});
+
+		await syncVariants(
+			API_KEY,
+			APP_KEY,
+			'flag-1',
+			[
+				{ key: 'keep', name: 'Keep', value: 'k', sourceId: 'sid-keep' },
+				{ key: 'new', name: 'New', value: 'n', sourceId: 'sid-new' },
+			],
+			'launchdarkly',
+			SITE,
+		);
+
+		expect(order).toEqual(['create', 'delete']);
+	});
+
+	it('syncVariantsCreatesAndUpdates does NOT issue deletes', async () => {
+		mock.onGet(`${BASE}/api/v2/feature-flags/flag-1`).reply(200, {
+			data: {
+				id: 'flag-1',
+				type: 'feature-flags',
+				attributes: {
+					variants: [
+						{ id: 'v-keep', key: 'keep', name: 'Keep', value: 'k' },
+						{ id: 'v-old', key: 'old', name: 'Old', value: 'o' },
+					],
+					feature_flag_environments: [],
+				},
+			},
+		});
+
+		let deleteCalled = false;
+		mock
+			.onDelete(`${BASE}/api/v2/feature-flags/flag-1/variants/v-old`)
+			.reply(() => {
+				deleteCalled = true;
+				return [204, {}];
+			});
+
+		const result = await syncVariantsCreatesAndUpdates(
+			API_KEY,
+			APP_KEY,
+			'flag-1',
+			[{ key: 'keep', name: 'Keep', value: 'k', sourceId: 'sid-keep' }],
+			'eppo',
+			SITE,
+		);
+
+		// Delete is reported as pending but not yet executed — the re-migration
+		// "no new envs to enable" branch never calls applyVariantDeletes here,
+		// because no allocation rewrite happens to clear UUID references.
+		expect(deleteCalled).toBe(false);
+		expect(result.pendingDeletes).toEqual([{ id: 'v-old', key: 'old' }]);
+		expect(result.counts.deleted).toBe(1);
+	});
+
+	it('applyVariantDeletes issues DELETEs in order', async () => {
+		const order: string[] = [];
+		mock
+			.onDelete(`${BASE}/api/v2/feature-flags/flag-1/variants/v-a`)
+			.reply(() => {
+				order.push('a');
+				return [204, {}];
+			});
+		mock
+			.onDelete(`${BASE}/api/v2/feature-flags/flag-1/variants/v-b`)
+			.reply(() => {
+				order.push('b');
+				return [204, {}];
+			});
+
+		await applyVariantDeletes(
+			API_KEY,
+			APP_KEY,
+			'flag-1',
+			[
+				{ id: 'v-a', key: 'a' },
+				{ id: 'v-b', key: 'b' },
+			],
+			SITE,
+		);
+		expect(order).toEqual(['a', 'b']);
+	});
+
+	it('applyVariantDeletes silently ignores delete failures', async () => {
+		mock
+			.onDelete(`${BASE}/api/v2/feature-flags/flag-1/variants/v-a`)
+			.reply(422, { errors: ['variant is still referenced'] });
+		mock
+			.onDelete(`${BASE}/api/v2/feature-flags/flag-1/variants/v-b`)
+			.reply(204, {});
+
+		await expect(
+			applyVariantDeletes(
+				API_KEY,
+				APP_KEY,
+				'flag-1',
+				[
+					{ id: 'v-a', key: 'a' },
+					{ id: 'v-b', key: 'b' },
+				],
+				SITE,
+			),
+		).resolves.toBeUndefined();
 	});
 });

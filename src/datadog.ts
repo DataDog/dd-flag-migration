@@ -348,13 +348,29 @@ type JsonApiFlagDetail = {
 	id: string;
 	type: string;
 	attributes: {
-		variants: Array<{ id: string; key: string }>;
+		variants: Array<{
+			id: string;
+			key: string;
+			name: string;
+			value: string;
+			// The backend variant DTO carries arbitrary migration_metadata; we
+			// treat it loosely and read `provider` / `source_id` when present.
+			migration_metadata?: Record<string, unknown>;
+		}>;
 		feature_flag_environments: Array<{
 			environment_id: string;
 			allocations: Array<{ id: string; key: string }> | null;
 		}>;
 	};
 };
+
+export interface DatadogVariantDetail {
+	id: string;
+	key: string;
+	name: string;
+	value: string;
+	migration_metadata?: Record<string, unknown>;
+}
 
 export async function fetchFlagDetail(
 	apiKey: string,
@@ -363,6 +379,7 @@ export async function fetchFlagDetail(
 	site = 'datadoghq.com',
 ): Promise<{
 	variantKeyToId: Map<string, string>;
+	variants: DatadogVariantDetail[];
 	allocationKeyToIdByEnv: Map<string, Map<string, string>>;
 }> {
 	const baseUrl = `https://api.${site}`;
@@ -373,8 +390,16 @@ export async function fetchFlagDetail(
 	const { variants, feature_flag_environments } = response.data.data.attributes;
 
 	const variantKeyToId = new Map<string, string>();
+	const variantDetails: DatadogVariantDetail[] = [];
 	for (const v of variants ?? []) {
 		variantKeyToId.set(v.key, v.id);
+		variantDetails.push({
+			id: v.id,
+			key: v.key,
+			name: v.name,
+			value: v.value,
+			migration_metadata: v.migration_metadata,
+		});
 	}
 
 	const allocationKeyToIdByEnv = new Map<string, Map<string, string>>();
@@ -386,7 +411,442 @@ export async function fetchFlagDetail(
 		allocationKeyToIdByEnv.set(env.environment_id, allocKeyToId);
 	}
 
-	return { variantKeyToId, allocationKeyToIdByEnv };
+	return {
+		variantKeyToId,
+		variants: variantDetails,
+		allocationKeyToIdByEnv,
+	};
+}
+
+// ─── Variants ────────────────────────────────────────────────────────────────
+
+export interface VariantMigrationMetadata {
+	provider: 'launchdarkly' | 'eppo';
+	/** Stable identifier from the source variation — survives rename. */
+	source_id: string;
+	/** Slugified source key at migration time — useful for debugging drift. */
+	source_key: string;
+}
+
+export interface SourceVariant {
+	key: string;
+	name: string;
+	value: string;
+	/** Stable identifier from the source platform's variation. Required so the
+	 * diff can survive renames of the variation name (which feeds `key`). */
+	sourceId: string;
+}
+
+export async function createVariant(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	variant: {
+		key: string;
+		name: string;
+		value: string;
+		migrationMetadata?: VariantMigrationMetadata;
+	},
+	site = 'datadoghq.com',
+): Promise<DatadogVariantDetail> {
+	const baseUrl = `https://api.${site}`;
+	const body = {
+		data: {
+			type: 'variants',
+			attributes: {
+				key: variant.key,
+				name: variant.name,
+				value: variant.value,
+				...(variant.migrationMetadata !== undefined
+					? { migration_metadata: variant.migrationMetadata }
+					: {}),
+			},
+		},
+	};
+	const response = await ddClient.post<{
+		data: {
+			id: string;
+			attributes: { key: string; name: string; value: string };
+		};
+	}>(`${baseUrl}/api/v2/feature-flags/${flagId}/variants`, body, {
+		headers: {
+			...ddHeaders(apiKey, appKey),
+			'Content-Type': 'application/vnd.api+json',
+		},
+	});
+	return {
+		id: response.data.data.id,
+		key: response.data.data.attributes.key,
+		name: response.data.data.attributes.name,
+		value: response.data.data.attributes.value,
+	};
+}
+
+export async function updateVariant(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	variantId: string,
+	variant: {
+		name: string;
+		value: string;
+		migrationMetadata?: VariantMigrationMetadata;
+	},
+	site = 'datadoghq.com',
+): Promise<void> {
+	const baseUrl = `https://api.${site}`;
+	const body = {
+		data: {
+			type: 'variants',
+			id: variantId,
+			attributes: {
+				name: variant.name,
+				value: variant.value,
+				...(variant.migrationMetadata !== undefined
+					? { migration_metadata: variant.migrationMetadata }
+					: {}),
+			},
+		},
+	};
+	await ddClient.put(
+		`${baseUrl}/api/v2/feature-flags/${flagId}/variants/${variantId}`,
+		body,
+		{
+			headers: {
+				...ddHeaders(apiKey, appKey),
+				'Content-Type': 'application/vnd.api+json',
+			},
+		},
+	);
+}
+
+export async function deleteVariant(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	variantId: string,
+	site = 'datadoghq.com',
+): Promise<void> {
+	const baseUrl = `https://api.${site}`;
+	await ddClient.delete(
+		`${baseUrl}/api/v2/feature-flags/${flagId}/variants/${variantId}`,
+		{ headers: ddHeaders(apiKey, appKey) },
+	);
+}
+
+export interface VariantSyncCounts {
+	added: number;
+	updated: number;
+	deleted: number;
+}
+
+export interface VariantSyncPlan {
+	toCreate: SourceVariant[];
+	/**
+	 * Updates carry the **existing DD key** (immutable on the backend — only
+	 * name/value/migration_metadata are updatable per the variant DTO). When a
+	 * rename is matched by `source_id`, `key` here is the DD-side key and may
+	 * drift from `sourceKey` (the new slugified source key). UUID stability is
+	 * what matters: allocations reference variants by UUID, not by key.
+	 */
+	toUpdate: Array<{
+		id: string;
+		/** Existing DD key — never changes (variant key is immutable). */
+		key: string;
+		name: string;
+		value: string;
+		/** Stable source identifier — propagated into migration_metadata. */
+		sourceId: string;
+		/** Current slugified source key — propagated into migration_metadata
+		 * for traceability even though the DD key itself stays the same. */
+		sourceKey: string;
+	}>;
+	toDelete: Array<{ id: string; key: string }>;
+}
+
+function readSourceIdFromMetadata(
+	meta: Record<string, unknown> | undefined,
+): string | undefined {
+	if (!meta) return undefined;
+	const sid = meta.source_id;
+	return typeof sid === 'string' && sid.length > 0 ? sid : undefined;
+}
+
+export function planVariantSync(
+	sourceVariants: SourceVariant[],
+	existingVariants: DatadogVariantDetail[],
+): VariantSyncPlan {
+	// Index existing variants by their migration_metadata.source_id (preferred,
+	// survives source-side renames) and by key (fallback for legacy variants
+	// migrated before source_id metadata existed).
+	const existingBySourceId = new Map<string, DatadogVariantDetail>();
+	const existingByKey = new Map<string, DatadogVariantDetail>();
+	for (const ev of existingVariants) {
+		existingByKey.set(ev.key, ev);
+		const sid = readSourceIdFromMetadata(ev.migration_metadata);
+		if (sid !== undefined) existingBySourceId.set(sid, ev);
+	}
+
+	const toCreate: SourceVariant[] = [];
+	const toUpdate: VariantSyncPlan['toUpdate'] = [];
+	const matchedExistingIds = new Set<string>();
+
+	for (const sv of sourceVariants) {
+		// 1. Prefer match on stable source_id (survives rename).
+		// 2. Fall back to key match (for legacy variants with no source_id meta).
+		const existing =
+			existingBySourceId.get(sv.sourceId) ?? existingByKey.get(sv.key);
+		if (!existing) {
+			toCreate.push(sv);
+			continue;
+		}
+		matchedExistingIds.add(existing.id);
+
+		// Rename detection: if we matched by source_id but the slugified key
+		// drifted, treat it as an update (name almost certainly changed too).
+		// Otherwise update only on actual name/value drift.
+		const renamed = existing.key !== sv.key;
+
+		if (existing.name !== sv.name || existing.value !== sv.value || renamed) {
+			toUpdate.push({
+				id: existing.id,
+				// Keep the DD-side key: variant key is immutable on the backend.
+				// After a source rename the DD key may drift from sv.key — that's
+				// expected. UUID stability is the contract that matters.
+				key: existing.key,
+				name: sv.name,
+				value: sv.value,
+				sourceId: sv.sourceId,
+				sourceKey: sv.key,
+			});
+		}
+	}
+
+	const toDelete: Array<{ id: string; key: string }> = [];
+	for (const ev of existingVariants) {
+		if (!matchedExistingIds.has(ev.id)) {
+			toDelete.push({ id: ev.id, key: ev.key });
+		}
+	}
+	return { toCreate, toUpdate, toDelete };
+}
+
+export interface PendingVariantDelete {
+	id: string;
+	key: string;
+}
+
+/**
+ * Apply variant creates + updates only. Returns the resulting variantKey→UUID
+ * map (for callers that need to resolve allocation variant references) and the
+ * list of variants flagged for deletion but **not yet deleted**.
+ *
+ * The caller is expected to perform any allocation rewrites BEFORE invoking
+ * `applyVariantDeletes` — variants must outlive references to them.
+ */
+export async function syncVariantsCreatesAndUpdates(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	sourceVariants: SourceVariant[],
+	provider: 'launchdarkly' | 'eppo',
+	site = 'datadoghq.com',
+): Promise<{
+	variantKeyToId: Map<string, string>;
+	counts: VariantSyncCounts;
+	pendingDeletes: PendingVariantDelete[];
+}> {
+	const { variants: existingVariants } = await fetchFlagDetail(
+		apiKey,
+		appKey,
+		flagId,
+		site,
+	);
+	const plan = planVariantSync(sourceVariants, existingVariants);
+
+	const variantKeyToId = new Map<string, string>();
+	for (const v of existingVariants) variantKeyToId.set(v.key, v.id);
+
+	for (const v of plan.toUpdate) {
+		await updateVariant(
+			apiKey,
+			appKey,
+			flagId,
+			v.id,
+			{
+				name: v.name,
+				value: v.value,
+				migrationMetadata: {
+					provider,
+					source_id: v.sourceId,
+					source_key: v.sourceKey,
+				},
+			},
+			site,
+		);
+	}
+	for (const v of plan.toCreate) {
+		const created = await createVariant(
+			apiKey,
+			appKey,
+			flagId,
+			{
+				key: v.key,
+				name: v.name,
+				value: v.value,
+				migrationMetadata: {
+					provider,
+					source_id: v.sourceId,
+					source_key: v.key,
+				},
+			},
+			site,
+		);
+		variantKeyToId.set(created.key, created.id);
+	}
+
+	return {
+		variantKeyToId,
+		counts: {
+			added: plan.toCreate.length,
+			updated: plan.toUpdate.length,
+			deleted: plan.toDelete.length,
+		},
+		pendingDeletes: plan.toDelete,
+	};
+}
+
+/**
+ * Perform variant deletes. MUST run after any allocation rewrites that may
+ * have referenced these variants — variants are write-after-references.
+ *
+ * Failures are intentionally silent — a variant that cannot be deleted (e.g.
+ * due to a foreign key constraint) must not mark the flag migration as failed.
+ */
+export async function applyVariantDeletes(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	pendingDeletes: PendingVariantDelete[],
+	site = 'datadoghq.com',
+): Promise<void> {
+	for (const v of pendingDeletes) {
+		try {
+			await deleteVariant(apiKey, appKey, flagId, v.id, site);
+		} catch {
+			// Variant deletes are best-effort; failure does not affect flag status.
+		}
+	}
+}
+
+/**
+ * Convenience wrapper for callers that have no allocation rewrites to
+ * interleave: creates+updates first, then deletes.
+ */
+export async function syncVariants(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	sourceVariants: SourceVariant[],
+	provider: 'launchdarkly' | 'eppo',
+	site = 'datadoghq.com',
+): Promise<{
+	variantKeyToId: Map<string, string>;
+	counts: VariantSyncCounts;
+}> {
+	const { variantKeyToId, counts, pendingDeletes } =
+		await syncVariantsCreatesAndUpdates(
+			apiKey,
+			appKey,
+			flagId,
+			sourceVariants,
+			provider,
+			site,
+		);
+	await applyVariantDeletes(apiKey, appKey, flagId, pendingDeletes, site);
+	for (const v of pendingDeletes) variantKeyToId.delete(v.key);
+	return { variantKeyToId, counts };
+}
+
+/**
+ * Build dry-run request descriptors for a variant sync. Order matches the live
+ * code path: creates + updates first (before allocation sync) and deletes
+ * last (after allocation sync) — variants must outlive references.
+ */
+export function buildVariantSyncDryRunRequests(
+	flagId: string,
+	sourceVariants: SourceVariant[],
+	existingVariants: DatadogVariantDetail[],
+	provider: 'launchdarkly' | 'eppo',
+): {
+	createUpdateRequests: Array<{
+		method: 'POST' | 'PUT';
+		path: string;
+		body: unknown;
+	}>;
+	deleteRequests: Array<{ method: 'DELETE'; path: string; body: unknown }>;
+} {
+	const plan = planVariantSync(sourceVariants, existingVariants);
+	const createUpdateRequests: Array<{
+		method: 'POST' | 'PUT';
+		path: string;
+		body: unknown;
+	}> = [];
+	for (const v of plan.toUpdate) {
+		createUpdateRequests.push({
+			method: 'PUT',
+			path: `/api/v2/feature-flags/${flagId}/variants/${v.id}`,
+			body: {
+				data: {
+					type: 'variants',
+					id: v.id,
+					attributes: {
+						name: v.name,
+						value: v.value,
+						migration_metadata: {
+							provider,
+							source_id: v.sourceId,
+							source_key: v.sourceKey,
+						},
+					},
+				},
+			},
+		});
+	}
+	for (const v of plan.toCreate) {
+		createUpdateRequests.push({
+			method: 'POST',
+			path: `/api/v2/feature-flags/${flagId}/variants`,
+			body: {
+				data: {
+					type: 'variants',
+					attributes: {
+						key: v.key,
+						name: v.name,
+						value: v.value,
+						migration_metadata: {
+							provider,
+							source_id: v.sourceId,
+							source_key: v.key,
+						},
+					},
+				},
+			},
+		});
+	}
+	const deleteRequests: Array<{
+		method: 'DELETE';
+		path: string;
+		body: unknown;
+	}> = [];
+	for (const v of plan.toDelete) {
+		deleteRequests.push({
+			method: 'DELETE',
+			path: `/api/v2/feature-flags/${flagId}/variants/${v.id}`,
+			body: {},
+		});
+	}
+	return { createUpdateRequests, deleteRequests };
 }
 
 export async function syncAllocationsForEnvironment(
@@ -611,6 +1071,33 @@ export async function createSavedFilter(
 		},
 	);
 	return { id: response.data.data.id };
+}
+
+/**
+ * Replace the body of an existing saved filter. Used by re-migration to
+ * propagate source-side edits (segment rule changes, audience renames) into
+ * the previously-created saved filter without changing its UUID, so allocations
+ * that reference it stay valid.
+ */
+export async function updateSavedFilter(
+	apiKey: string,
+	appKey: string,
+	id: string,
+	request: CreateSavedFilterRequest,
+	site = 'datadoghq.com',
+): Promise<void> {
+	const baseUrl = `https://api.${site}`;
+	const body = { data: { type: 'saved-filters', id, attributes: request } };
+	await ddClient.put(
+		`${baseUrl}/api/v2/feature-flags/saved-filters/${id}`,
+		body,
+		{
+			headers: {
+				...ddHeaders(apiKey, appKey),
+				'Content-Type': 'application/json',
+			},
+		},
+	);
 }
 
 /**
