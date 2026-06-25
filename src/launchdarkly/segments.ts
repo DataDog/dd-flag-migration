@@ -1,7 +1,11 @@
 import { input, select } from '@inquirer/prompts';
 import axios from 'axios';
 import chalk from 'chalk';
-import { createSavedFilter, listSavedFilters } from '../datadog.js';
+import {
+	createSavedFilter,
+	listSavedFilters,
+	updateSavedFilter,
+} from '../datadog.js';
 import { createSpinner } from '../spinner.js';
 import type {
 	DatadogCondition,
@@ -286,6 +290,7 @@ export interface SegmentMigrationStats {
 	discovered: number;
 	created: number;
 	negated: number;
+	updated: number;
 	skipped: number;
 	reused: number;
 	failures: Array<{ segmentKey: string; envKey: string; error: string }>;
@@ -312,6 +317,7 @@ function createSegmentMigrationStats(): SegmentMigrationStats {
 		discovered: 0,
 		created: 0,
 		negated: 0,
+		updated: 0,
 		skipped: 0,
 		reused: 0,
 		failures: [],
@@ -737,8 +743,74 @@ export async function migrateSegments(params: {
 		}
 	}
 
+	// ── Step 5: Update reused saved filters with current source state ────────
+	// Idempotent re-sync: PUT-replace so renames and rule edits on the source
+	// segment propagate into the existing DD saved filter without changing its
+	// id (allocations reference saved filters by id).
+	const reusedPendingFilters = pendingFilters.filter((p) => p.isReused);
+	for (const pending of reusedPendingFilters) {
+		const { ref, segment, namePrefix } = pending;
+		const existingId = savedFilterLookup.get(segmentLookupKey(ref));
+		if (!existingId) continue;
+
+		const targetingRules = ref.negated
+			? buildNegatedRules(segment)
+			: buildNonNegatedRules(segment);
+		if (targetingRules === null) continue;
+
+		const name = renderSavedFilterName(
+			segment.name,
+			ref.envKey,
+			ref.negated,
+			namePrefix,
+		);
+		if (name === null) continue;
+
+		const description = ref.negated
+			? segment.description
+				? `Inverse of: ${segment.description}`
+				: `Inverse of ${segment.name}`
+			: segment.description;
+
+		const metadata: LDSavedFilterMigrationMetadata = {
+			provider: 'launchdarkly',
+			project_key: projectKey,
+			segment_key: ref.segmentKey,
+			environment_key: ref.envKey,
+			negated: ref.negated,
+			...(namePrefix ? { name_prefix: namePrefix } : {}),
+		};
+
+		try {
+			await updateSavedFilter(
+				ddApiKey,
+				ddAppKey,
+				existingId,
+				{
+					name,
+					...(description ? { description } : {}),
+					creation_type: getCreationType(segment),
+					targeting_rules: targetingRules,
+					migration_metadata: metadata,
+				},
+				ddSite,
+			);
+			stats.updated++;
+		} catch (err) {
+			const error = formatAxiosError(err);
+			savedFilterSpinner.warn(
+				`Failed to update saved filter for "${ref.segmentKey}": ${error}`,
+			);
+			stats.failures.push({
+				segmentKey: ref.segmentKey,
+				envKey: ref.envKey,
+				error,
+			});
+		}
+	}
+
 	savedFilterSpinner.succeed(
-		`Created ${stats.created} saved filter(s) (${stats.negated} negated variants, ${stats.reused} reused, ${stats.skipped} skipped)`,
+		`Created ${stats.created} saved filter(s) (${stats.negated} negated variants, ${stats.reused} reused, ${stats.updated} updated, ${stats.skipped} skipped)`,
 	);
 
 	return { savedFilterLookup, segmentConstantLookup, stats };

@@ -1,6 +1,6 @@
 # Agent guidelines
 
-Guidance for future changes to dd-flag-migration. Read `CLAUDE.md` first for repo-wide rules.
+Guidance for future changes to dd-flag-migration.
 
 ## Re-migration sync contract
 
@@ -17,6 +17,7 @@ The source platform owns these end-to-end. On re-migration, make Datadog match e
 - Default variant (per environment)
 - Environment enablement
 - **Variants** (POST/PUT/DELETE via the `/feature-flags/{id}/variants` sub-resource)
+- **Saved-filter body** for LD segments / Eppo audiences (PUT-replace `name`, `targeting_rules`, `description`, `migration_metadata` on every matched re-run). Saved-filter id is stable so allocations referencing it stay valid. Deletes are intentionally out of scope — a single saved filter can be referenced by flags outside the current re-migration's selection.
 
 When introducing a new field in this tier: a missing value in the source must propagate as a removal in Datadog, not as a no-op.
 
@@ -24,19 +25,11 @@ When introducing a new field in this tier: a missing value in the source must pr
 
 Datadog-side state may exist that the source system doesn't know about, and clobbering it would be surprising. Merge: union with what's on Datadog, dedupe, preserve unrelated bindings.
 
-- **Restriction policies** (LD only): editor-team principals derived from RBAC walk are merged into existing editor bindings; non-editor bindings (e.g., viewer) are preserved.
+- **Restriction policies**: editor-team principals derived from RBAC walk are merged into existing editor bindings; non-editor bindings (e.g., viewer) are preserved.
 
 When introducing a new field in this tier: GET current state, compute union with source-derived state, PUT/POST merged result.
 
-### Tier 3 — Write-once
-
-Currently no backend update path exists. Datadog state is created on first migration and never refreshed.
-
-- Saved filters (Eppo audiences, LD segments) — POST-only API today. **Known gap during dual-run**: if a customer edits a segment in LD, the corresponding DD saved filter goes stale and every flag referencing it evaluates differently across platforms.
-
-When introducing a new field in this tier: document the gap. When the backend ships an update path, promote to Tier 1.
-
-### Tier 4 — Never sync
+### Tier 3 — Never sync
 
 Identifiers and anchors that downstream Datadog references depend on. Changing them silently has high blast radius (dashboards, alerts, links, allocations).
 
@@ -57,7 +50,7 @@ Renames in the source platform do not propagate. Customers must delete + recreat
 
 ## When the backend gains new capabilities
 
-Saved-filter updates and variant changes are the two known backend gaps that have been (or are being) closed. When a new backend API ships:
+Saved-filter deletes are intentionally out of scope (a saved filter can be referenced by flags outside the current re-migration's selection — deleting one orphans those references). When a new backend API ships:
 
 1. Check whether it changes the tier of an existing field. If a Tier 3 field becomes updatable, promote to Tier 1.
 2. Audit the dual-run divergence implication — what state does the new API let us reconcile that we couldn't before?

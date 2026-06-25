@@ -356,11 +356,17 @@ async function confirmMigration(
 		savedFilterLookup = audienceResult.savedFilterLookup;
 		dryRunRequests.push(...audienceResult.dryRunRequests);
 		if (audienceResult.stats.discovered > 0) {
-			const { created: ac, reused: ar, skipped: as_ } = audienceResult.stats;
+			const {
+				created: ac,
+				reused: ar,
+				updated: au,
+				skipped: as_,
+			} = audienceResult.stats;
 			const createdVerb = dryRun ? 'would be created' : 'created';
+			const updatedVerb = dryRun ? 'would update' : 'updated';
 			console.log(
 				chalk.gray(
-					`  Audiences: ${ac} ${createdVerb}, ${ar} reused, ${as_} skipped as saved filters`,
+					`  Audiences: ${ac} ${createdVerb}, ${ar} reused (${au} ${updatedVerb}), ${as_} skipped as saved filters`,
 				),
 			);
 			phase1Subheader =
@@ -368,7 +374,7 @@ async function confirmMigration(
 				chalk.green(String(ac)) +
 				chalk.gray(` ${createdVerb} · `) +
 				chalk.white(String(ar)) +
-				chalk.gray(' reused · ') +
+				chalk.gray(` reused (${au} ${updatedVerb}) · `) +
 				chalk.yellow(String(as_)) +
 				chalk.gray(' skipped as saved filters');
 		}

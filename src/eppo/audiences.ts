@@ -1,6 +1,10 @@
 import axios from 'axios';
 import chalk from 'chalk';
-import { createSavedFilter, listSavedFilters } from '../datadog.js';
+import {
+	createSavedFilter,
+	listSavedFilters,
+	updateSavedFilter,
+} from '../datadog.js';
 import { createSpinner } from '../spinner.js';
 import type {
 	DatadogTargetingRule,
@@ -51,6 +55,7 @@ function formatAxiosError(err: unknown): string {
 export interface AudienceMigrationStats {
 	discovered: number;
 	created: number;
+	updated: number;
 	skipped: number;
 	reused: number;
 	failures: Array<{ audienceId: number; name: string; error: string }>;
@@ -104,6 +109,7 @@ export async function migrateAudiences(params: {
 	const stats: AudienceMigrationStats = {
 		discovered: 0,
 		created: 0,
+		updated: 0,
 		skipped: 0,
 		reused: 0,
 		failures: [],
@@ -163,23 +169,7 @@ export async function migrateAudiences(params: {
 		}
 
 		const tupleKey = `eppo:${audience.id}`;
-
-		// Idempotency: already migrated. Only the first run creates saved filters;
-		// re-runs reuse the existing filter without updating its targeting rules.
-		// To force a refresh, delete the existing saved filter and re-run.
-		if (existingByTuple.has(tupleKey)) {
-			// biome-ignore lint/style/noNonNullAssertion: safe after .has() check above
-			const savedFilterId = existingByTuple.get(tupleKey)!;
-			savedFilterLookup.set(audience.id, savedFilterId);
-			for (const rule of audience.targeting_rules) {
-				if (rule.conditions.length === 0) continue;
-				const fp = fingerprintConditions(rule.conditions);
-				if (!fingerprintLookup.has(fp))
-					fingerprintLookup.set(fp, savedFilterId);
-			}
-			stats.reused++;
-			continue;
-		}
+		const existingSavedFilterId = existingByTuple.get(tupleKey);
 
 		const targetingRules = buildAudienceTargetingRules(audience);
 		if (!targetingRules) {
@@ -190,9 +180,11 @@ export async function migrateAudiences(params: {
 			continue;
 		}
 
-		// Resolve name collision by appending the audience ID
+		// Resolve name collision by appending the audience ID, ignoring this
+		// SF's own current name when re-syncing.
 		let name = audience.name;
-		if (existingByName.has(name)) {
+		const collidingId = existingByName.get(name);
+		if (collidingId && collidingId !== existingSavedFilterId) {
 			name = `${audience.name} (${audience.id})`;
 		}
 
@@ -208,6 +200,59 @@ export async function migrateAudiences(params: {
 			targeting_rules: targetingRules,
 			migration_metadata: metadata,
 		};
+
+		// Idempotent re-sync: PUT-replace to propagate source-side edits
+		// (rule changes, renames, description updates).
+		if (existingSavedFilterId) {
+			savedFilterLookup.set(audience.id, existingSavedFilterId);
+			for (const rule of audience.targeting_rules) {
+				if (rule.conditions.length === 0) continue;
+				const fp = fingerprintConditions(rule.conditions);
+				if (!fingerprintLookup.has(fp))
+					fingerprintLookup.set(fp, existingSavedFilterId);
+			}
+
+			if (dryRun) {
+				dryRunRequests.push({
+					method: 'PUT',
+					path: `/api/v2/feature-flags/saved-filters/${existingSavedFilterId}`,
+					body: {
+						data: {
+							type: 'saved-filters',
+							id: existingSavedFilterId,
+							attributes,
+						},
+					},
+				});
+				stats.reused++;
+				stats.updated++;
+				continue;
+			}
+
+			try {
+				await updateSavedFilter(
+					ddApiKey,
+					ddAppKey,
+					existingSavedFilterId,
+					attributes,
+					ddSite,
+				);
+				stats.reused++;
+				stats.updated++;
+			} catch (err) {
+				const error = formatAxiosError(err);
+				savedFilterSpinner.warn(
+					`Failed to update saved filter for "${audience.name}": ${error}`,
+				);
+				stats.failures.push({
+					audienceId: audience.id,
+					name: audience.name,
+					error,
+				});
+				stats.reused++;
+			}
+			continue;
+		}
 
 		if (dryRun) {
 			// Synthetic ID lets Phase 2's dry-run output show fingerprint→
@@ -258,8 +303,9 @@ export async function migrateAudiences(params: {
 	}
 
 	const createdVerb = dryRun ? 'Would create' : 'Created';
+	const updatedVerb = dryRun ? 'would update' : 'updated';
 	savedFilterSpinner.succeed(
-		`${createdVerb} ${stats.created} audience saved filter(s) (${stats.reused} reused, ${stats.skipped} skipped)`,
+		`${createdVerb} ${stats.created} audience saved filter(s) (${stats.reused} reused, ${stats.updated} ${updatedVerb}, ${stats.skipped} skipped)`,
 	);
 
 	if (stats.failures.length > 0) {

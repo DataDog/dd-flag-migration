@@ -857,13 +857,18 @@ async function executeMigration(
 			segmentConstantLookup = segmentResult.segmentConstantLookup;
 			segmentMigrationStats = segmentResult.stats;
 			if (segmentResult.stats.discovered > 0) {
-				const { created: sc, reused: sr, skipped: ss } = segmentResult.stats;
+				const {
+					created: sc,
+					reused: sr,
+					updated: su,
+					skipped: ss,
+				} = segmentResult.stats;
 				phase1Subheader =
 					chalk.gray('Phase 1 — Segments: ') +
 					chalk.green(String(sc)) +
 					chalk.gray(' created · ') +
 					chalk.white(String(sr)) +
-					chalk.gray(' reused · ') +
+					chalk.gray(` reused (${su} updated) · `) +
 					chalk.yellow(String(ss)) +
 					chalk.gray(' skipped as saved filters');
 			}

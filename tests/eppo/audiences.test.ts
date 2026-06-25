@@ -417,7 +417,7 @@ describe('migrateAudiences', () => {
 		expect(result.fingerprintLookup.get(fp)).toBe('sf-real-123');
 	});
 
-	it('dryRun=true reuses already-migrated saved filters without POSTing', async () => {
+	it('dryRun=true reuses already-migrated saved filters and records the planned PUT', async () => {
 		eppoMock
 			.onGet('https://eppo.cloud/api/v1/audiences')
 			.reply(200, [audience]);
@@ -442,6 +442,12 @@ describe('migrateAudiences', () => {
 		ddMock
 			.onPost('https://api.datadoghq.com/api/v2/feature-flags/saved-filters')
 			.reply(createSpy);
+		const updateSpy = jest.fn(() => [500, {}] as [number, unknown]);
+		ddMock
+			.onPut(
+				'https://api.datadoghq.com/api/v2/feature-flags/saved-filters/sf-existing',
+			)
+			.reply(updateSpy);
 
 		const result = await migrateAudiences({
 			eppoApiKey: 'eppo-key',
@@ -452,13 +458,89 @@ describe('migrateAudiences', () => {
 		});
 
 		expect(createSpy).not.toHaveBeenCalled();
+		expect(updateSpy).not.toHaveBeenCalled();
 		expect(result.stats.reused).toBe(1);
 		expect(result.stats.created).toBe(0);
-		expect(result.dryRunRequests).toEqual([]);
+		expect(result.stats.updated).toBe(1);
+		expect(result.dryRunRequests).toHaveLength(1);
+		expect(result.dryRunRequests[0].method).toBe('PUT');
+		expect(result.dryRunRequests[0].path).toBe(
+			'/api/v2/feature-flags/saved-filters/sf-existing',
+		);
 		expect(result.savedFilterLookup.get(42)).toBe('sf-existing');
 		// fingerprintLookup must be populated even on reuse so Phase 2 can link flags.
 		const fp = fingerprintConditions(audience.targeting_rules[0].conditions);
 		expect(result.fingerprintLookup.get(fp)).toBe('sf-existing');
+	});
+
+	it('non-dry-run PUT-replaces existing saved filter to propagate source edits', async () => {
+		const renamedAudience: EppoAudience = {
+			...audience,
+			name: 'US Customers',
+			targeting_rules: [
+				{
+					id: 10,
+					conditions: [
+						{
+							operator: 'ONE_OF',
+							attribute: 'country',
+							values: ['US', 'CA'],
+						},
+					],
+				},
+			],
+		};
+		eppoMock
+			.onGet('https://eppo.cloud/api/v1/audiences')
+			.reply(200, [renamedAudience]);
+		ddMock
+			.onGet('https://api.datadoghq.com/api/v2/feature-flags/saved-filters')
+			.reply(200, {
+				data: [
+					{
+						id: 'sf-existing',
+						attributes: {
+							name: 'US Users',
+							migration_metadata: {
+								provider: 'eppo',
+								audience_id: audience.id,
+							},
+						},
+					},
+				],
+				meta: { total: 1 },
+			});
+		const createSpy = jest.fn(() => [500, {}] as [number, unknown]);
+		ddMock
+			.onPost('https://api.datadoghq.com/api/v2/feature-flags/saved-filters')
+			.reply(createSpy);
+		const updateSpy = jest.fn(() => [204, {}] as [number, unknown]);
+		ddMock
+			.onPut(
+				'https://api.datadoghq.com/api/v2/feature-flags/saved-filters/sf-existing',
+			)
+			.reply(updateSpy);
+
+		const result = await migrateAudiences({
+			eppoApiKey: 'eppo-key',
+			ddApiKey: 'dd-key',
+			ddAppKey: 'dd-app',
+			ddSite: 'datadoghq.com',
+		});
+
+		expect(createSpy).not.toHaveBeenCalled();
+		expect(updateSpy).toHaveBeenCalledTimes(1);
+		expect(result.stats.created).toBe(0);
+		expect(result.stats.reused).toBe(1);
+		expect(result.stats.updated).toBe(1);
+		expect(result.savedFilterLookup.get(42)).toBe('sf-existing');
+
+		const body = JSON.parse(updateSpy.mock.calls[0][0].data);
+		expect(body.data.id).toBe('sf-existing');
+		expect(body.data.attributes.name).toBe('US Customers');
+		expect(body.data.attributes.targeting_rules[0].conditions[0].value).toEqual(
+			['US', 'CA'],
+		);
 	});
 });
 

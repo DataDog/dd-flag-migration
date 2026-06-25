@@ -1216,6 +1216,33 @@ export async function createSavedFilter(
 }
 
 /**
+ * Replace the body of an existing saved filter. Used by re-migration to
+ * propagate source-side edits (segment rule changes, audience renames) into
+ * the previously-created saved filter without changing its UUID, so allocations
+ * that reference it stay valid.
+ */
+export async function updateSavedFilter(
+	apiKey: string,
+	appKey: string,
+	id: string,
+	request: CreateSavedFilterRequest,
+	site = 'datadoghq.com',
+): Promise<void> {
+	const baseUrl = `https://api.${site}`;
+	const body = { data: { type: 'saved-filters', id, attributes: request } };
+	await ddClient.put(
+		`${baseUrl}/api/v2/feature-flags/saved-filters/${id}`,
+		body,
+		{
+			headers: {
+				...ddHeaders(apiKey, appKey),
+				'Content-Type': 'application/json',
+			},
+		},
+	);
+}
+
+/**
  * List saved filters (paginated). The v2 endpoint does not support filtering
  * by migration_metadata, so results are paged and matched client-side.
  */
