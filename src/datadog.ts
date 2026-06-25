@@ -719,6 +719,9 @@ export async function syncVariantsCreatesAndUpdates(
 /**
  * Perform variant deletes. MUST run after any allocation rewrites that may
  * have referenced these variants — variants are write-after-references.
+ *
+ * Failures are intentionally silent — a variant that cannot be deleted (e.g.
+ * due to a foreign key constraint) must not mark the flag migration as failed.
  */
 export async function applyVariantDeletes(
 	apiKey: string,
@@ -728,7 +731,11 @@ export async function applyVariantDeletes(
 	site = 'datadoghq.com',
 ): Promise<void> {
 	for (const v of pendingDeletes) {
-		await deleteVariant(apiKey, appKey, flagId, v.id, site);
+		try {
+			await deleteVariant(apiKey, appKey, flagId, v.id, site);
+		} catch {
+			// Variant deletes are best-effort; failure does not affect flag status.
+		}
 	}
 }
 

@@ -2226,4 +2226,26 @@ describe('syncVariants ordering', () => {
 		);
 		expect(order).toEqual(['a', 'b']);
 	});
+
+	it('applyVariantDeletes silently ignores delete failures', async () => {
+		mock
+			.onDelete(`${BASE}/api/v2/feature-flags/flag-1/variants/v-a`)
+			.reply(422, { errors: ['variant is still referenced'] });
+		mock
+			.onDelete(`${BASE}/api/v2/feature-flags/flag-1/variants/v-b`)
+			.reply(204, {});
+
+		await expect(
+			applyVariantDeletes(
+				API_KEY,
+				APP_KEY,
+				'flag-1',
+				[
+					{ id: 'v-a', key: 'a' },
+					{ id: 'v-b', key: 'b' },
+				],
+				SITE,
+			),
+		).resolves.toBeUndefined();
+	});
 });
