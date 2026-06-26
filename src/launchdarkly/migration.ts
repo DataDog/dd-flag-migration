@@ -30,6 +30,20 @@ export function mapFlagType(
 	return 'STRING';
 }
 
+// ─── Context-Key Attribute Mapping ───────────────────────────────────────────
+
+/**
+ * Datadog's UFC evaluator only treats `"id"` as an alias for the subject's
+ * targeting_key. LD's `key` attribute on the user context plays the same role,
+ * so any condition referencing the context key must be emitted as `"id"` for
+ * user-kind contexts (and as `${ck}.key` for non-user kinds, which DD looks up
+ * from the attribute bag as-is).
+ */
+function targetKeyAttribute(contextKind: string | undefined): string {
+	const ck = contextKind ?? 'user';
+	return ck === 'user' ? 'id' : `${ck}.key`;
+}
+
 // ─── Operator Mapping ────────────────────────────────────────────────────────
 
 type OperatorResult =
@@ -317,7 +331,11 @@ export function buildTargetingRules(
 			if ('skip' in result) return null; // unsupported non-segment op (safety net)
 			const ck = clause.contextKind ?? 'user';
 			const attribute =
-				ck === 'user' ? clause.attribute : `${ck}.${clause.attribute}`;
+				clause.attribute === 'key'
+					? targetKeyAttribute(ck)
+					: ck === 'user'
+						? clause.attribute
+						: `${ck}.${clause.attribute}`;
 			inlineConditions.push({
 				operator: result.operator,
 				attribute,
@@ -412,18 +430,21 @@ export function buildAllocations(
 
 		const envSlug = ddEnv.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
 
-		// 1. Individual targets → allocations with ONE_OF targeting
+		// 1. Individual targets → allocations with ONE_OF targeting.
+		// LD's `targets` are always user-kind; DD's evaluator recognises "id"
+		// (not "key") as the targeting-key alias on the subject.
 		for (let ti = 0; ti < envConfig.targets.length; ti++) {
 			const target = envConfig.targets[ti];
 			if (target.values.length === 0) continue;
 
 			const variantWeights = buildVariantWeights(flag, target.variation);
+			const targetAttribute = targetKeyAttribute(target.contextKind);
 			const targetingRules: DatadogTargetingRule[] = [
 				{
 					conditions: [
 						{
 							operator: 'ONE_OF',
-							attribute: 'key',
+							attribute: targetAttribute,
 							value: target.values,
 						},
 					],
@@ -446,7 +467,7 @@ export function buildAllocations(
 			if (target.values.length === 0) continue;
 
 			const variantWeights = buildVariantWeights(flag, target.variation);
-			const targetAttribute = `${target.contextKind}.key`;
+			const targetAttribute = targetKeyAttribute(target.contextKind);
 			const targetingRules: DatadogTargetingRule[] = [
 				{
 					conditions: [

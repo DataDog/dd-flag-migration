@@ -81,6 +81,44 @@ allocations, so it must **skip variant deletes** entirely — a delete there
 would orphan UUID references that no code path is going to clean up. Tags and
 restriction policy still sync; variants only get creates and updates.
 
+## When adding a new source provider
+
+A new provider integration needs to translate around the constraints below.
+Copying the source shape directly will produce evaluations that diverge from
+the source even when migration reports success.
+
+### Targeting on the subject's identity uses `id`, not `key`
+
+Datadog's UFC evaluator only aliases the literal attribute name `"id"` to the
+subject's `targeting_key`. Any condition emitted with `attribute: "key"` is
+looked up in the attribute bag verbatim, finds nothing for SDK callers who pass
+their identity via `targeting_key`, and fails to match — sending the subject
+silently down the fallthrough.
+
+Translate any source-side identity reference (LD individual `targets`,
+user-kind `contextTargets`, rule clauses on `key`, equivalent Eppo / future
+provider constructs) to `attribute: "id"` for user-kind contexts. For non-user
+contexts, dot-notate the kind (see below). The `targetKeyAttribute` helper in
+`src/launchdarkly/migration.ts` is the canonical implementation.
+
+### Multi-context targeting uses dot notation
+
+Datadog has no multi-context type — there is one flat attribute bag per
+evaluation. LD's per-kind context attributes (and any analogous construct in a
+new provider) must be flattened to dot-prefixed attribute names on emit
+(`ld_application.versionName`, `device.os`, etc.). The evaluation tool mirrors
+this on the read side: synthetic test cases for non-user kinds attach
+`${kind}.key` to the attribute bag rather than expecting Datadog to understand
+a separate context object.
+
+### JSON variants cannot be top-level arrays
+
+Datadog's variant-value schema rejects top-level JSON arrays. When the source
+provider allows a variant whose value is `[...]`, wrap it as `{ "value": [...] }`
+during migration (and unwrap symmetrically anywhere the migration tool needs to
+compare against the source). Top-level objects, scalars, and null are accepted
+as-is; only the array case needs the wrapper.
+
 ## Required verification
 
 Per `CLAUDE.md`: `yarn typecheck && yarn lint:fix && yarn test` must pass before claiming a change complete. Do not skip.

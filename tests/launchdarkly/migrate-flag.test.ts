@@ -234,12 +234,12 @@ describe('migrate a flag with individual targets, rules, and fallthrough', () =>
 		expect(result.request?.allocations).toHaveLength(3);
 	});
 
-	it('first allocation targets individual users via ONE_OF on key', () => {
+	it('first allocation targets individual users via ONE_OF on id', () => {
 		const target = result.request?.allocations?.[0];
 		expect(target?.targeting_rules).toHaveLength(1);
 		expect(target?.targeting_rules?.[0].conditions[0]).toEqual({
 			operator: 'ONE_OF',
-			attribute: 'key',
+			attribute: 'id',
 			value: ['user-aaa', 'user-bbb', 'user-ccc'],
 		});
 		// 100% on variation 0 (true)

@@ -656,6 +656,11 @@ describe('buildAllocations', () => {
 		expect(allocations[0].targeting_rules?.[0].conditions[0].operator).toBe(
 			'ONE_OF',
 		);
+		// DD's evaluator aliases "id" → targeting_key, so user individual
+		// targets must emit `attribute: 'id'`, not 'key'.
+		expect(allocations[0].targeting_rules?.[0].conditions[0].attribute).toBe(
+			'id',
+		);
 		expect(allocations[0].targeting_rules?.[0].conditions[0].value).toEqual([
 			'user-1',
 			'user-2',
@@ -674,6 +679,114 @@ describe('buildAllocations', () => {
 			{ variant_key: 'true', value: 0 },
 			{ variant_key: 'false', value: 100 },
 		]);
+	});
+
+	it('emits non-user contextTargets with the kind-prefixed key attribute', () => {
+		const flag = makeFlag({
+			key: 'ctx-flag',
+			environments: {
+				production: {
+					on: true,
+					archived: false,
+					targets: [],
+					contextTargets: [
+						{
+							values: ['device-a', 'device-b'],
+							variation: 0,
+							contextKind: 'device',
+						},
+					],
+					rules: [],
+					fallthrough: { variation: 1 },
+					offVariation: 1,
+					prerequisites: [],
+					_environmentName: 'Production',
+				},
+			},
+		});
+
+		const envMapping = new Map([['production', ddProd]]);
+		const allocations = buildAllocations(
+			flag,
+			envMapping,
+		) as DatadogAllocationForFlagCreation[];
+		expect(allocations[0].key).toBe('ctx-flag-production-ctx-target-0');
+		expect(allocations[0].targeting_rules?.[0].conditions[0].attribute).toBe(
+			'device.key',
+		);
+	});
+
+	it('emits user contextTargets as `id` so DD aliases to targeting_key', () => {
+		const flag = makeFlag({
+			key: 'user-ctx-flag',
+			environments: {
+				production: {
+					on: true,
+					archived: false,
+					targets: [],
+					contextTargets: [
+						{ values: ['u1'], variation: 0, contextKind: 'user' },
+					],
+					rules: [],
+					fallthrough: { variation: 1 },
+					offVariation: 1,
+					prerequisites: [],
+					_environmentName: 'Production',
+				},
+			},
+		});
+
+		const envMapping = new Map([['production', ddProd]]);
+		const allocations = buildAllocations(
+			flag,
+			envMapping,
+		) as DatadogAllocationForFlagCreation[];
+		expect(allocations[0].targeting_rules?.[0].conditions[0].attribute).toBe(
+			'id',
+		);
+	});
+
+	it('rewrites rule clauses on user `key` to `id`', () => {
+		const flag = makeFlag({
+			key: 'rule-key-flag',
+			environments: {
+				production: {
+					on: true,
+					archived: false,
+					targets: [],
+					contextTargets: [],
+					rules: [
+						{
+							_id: 'r1',
+							variation: 0,
+							clauses: [
+								makeClause({
+									attribute: 'key',
+									op: 'in',
+									values: ['u1', 'u2'],
+									contextKind: 'user',
+								}),
+							],
+							trackEvents: false,
+						},
+					],
+					fallthrough: { variation: 1 },
+					offVariation: 1,
+					prerequisites: [],
+					_environmentName: 'Production',
+				},
+			},
+		});
+
+		const envMapping = new Map([['production', ddProd]]);
+		const allocations = buildAllocations(
+			flag,
+			envMapping,
+		) as DatadogAllocationForFlagCreation[];
+		const ruleAlloc = allocations.find((a) =>
+			a.key.includes('-rule-0'),
+		) as DatadogAllocationForFlagCreation;
+		expect(ruleAlloc.targeting_rules?.[0].conditions[0].attribute).toBe('id');
 	});
 
 	it('handles rollout in fallthrough', () => {
