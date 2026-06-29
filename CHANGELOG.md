@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.0] — 2026-06-29
+
+### CLI
+
+- Feat: fail early when Datadog app key is missing required permissions (#87, #89)
+- Feat: sync variants and saved filters on re-migration (#88)
+- Fix: use `id` attribute for LD user-key targeting instead of `key` (#90)
+
 ## [1.0.3] — 2026-06-22
 
 ### Migration — LaunchDarkly
