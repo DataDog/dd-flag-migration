@@ -21,10 +21,7 @@ import {
 	syncVariantsCreatesAndUpdates,
 	updateFlagTags,
 } from '../datadog.js';
-import {
-	filterableCheckbox,
-	filterableSelect,
-} from '../filterable-checkbox.js';
+import { filterableSelect } from '../filterable-checkbox.js';
 import { toSyncRequests } from '../migration.js';
 import { writeJsonOutput } from '../output.js';
 import { MigrationProgressBar } from '../progress-bar.js';
@@ -47,6 +44,13 @@ import {
 	type LDProject,
 } from './api.js';
 import {
+	type ConflictResolution,
+	classifyConflict,
+	classifyNonInteractiveConflict,
+	type LDFlagMigrationSpec,
+	parseLDFlagMigrationSpecs,
+} from './conflicts.js';
+import {
 	buildAllocations,
 	buildVariants,
 	findProjectEditorRoleKeys,
@@ -56,6 +60,15 @@ import {
 	mapFlagType,
 	shouldSkipFlag,
 } from './migration.js';
+import { resolveLDEnvMap } from './non-interactive.js';
+import {
+	clearScreen,
+	linkEnvironments,
+	printHeader,
+	selectFlags,
+	selectLDEnvironments,
+	selectProject,
+} from './prompts.js';
 import {
 	discoverSegmentRefs,
 	migrateSegments,
@@ -63,36 +76,24 @@ import {
 } from './segments.js';
 import type { LDEnvironment, LDFlag, LDMigrationFile } from './types.js';
 
-// ─── UI Helpers ──────────────────────────────────────────────────────────────
+export type {
+	ConflictClassification,
+	ConflictResolution,
+	ConflictType,
+	LDFlagMigrationSpec,
+	NonInteractiveConflictClassification,
+	NonInteractiveConflictType,
+} from './conflicts.js';
+// Re-exported so external callers (tests, callers importing from `./launchdarkly`)
+// can continue to find these here.
+export {
+	classifyConflict,
+	classifyNonInteractiveConflict,
+	parseLDFlagMigrationSpecs,
+} from './conflicts.js';
+export { resolveLDEnvMap } from './non-interactive.js';
 
-function clearScreen(): void {
-	process.stdout.write('\x1Bc');
-}
-
-function printHeader(): void {
-	const purple = chalk.bold.hex('#632CA6');
-	console.log();
-	console.log(purple('╔══════════════════════════════════════════╗'));
-	console.log(
-		purple('║') +
-			chalk.bold.white('   🚩  Feature Flag Migration Tool  🚩    ') +
-			purple('║'),
-	);
-	console.log(
-		purple('║') +
-			chalk.hex('#632CA6')('          LaunchDarkly → Datadog          ') +
-			purple('║'),
-	);
-	console.log(purple('╚══════════════════════════════════════════╝'));
-	console.log();
-}
-
-function ddEnvLabel(env: DatadogEnvironment): string {
-	const prodBadge = env.is_production
-		? `  ${chalk.bgHex('#632CA6').white(' Prod ')}`
-		: '';
-	return `${env.name}${prodBadge}`;
-}
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function formatVariantLabel(counts: {
 	added: number;
@@ -208,348 +209,6 @@ async function promptForTeamMapping(
 		pageSize,
 	});
 	return result;
-}
-
-/** Find the DD flag that matches this LD flag for the given project. */
-function findMatchingDatadogFlag(
-	datadogFlags: DatadogFlagEntry[],
-	projectKey: string,
-	flagKey: string,
-): DatadogFlagEntry | undefined {
-	return datadogFlags.find(
-		(f) =>
-			f.migration_metadata?.project_key === projectKey &&
-			f.migration_metadata?.flag_key === flagKey,
-	);
-}
-
-export type ConflictType = 'none' | 'same_project' | 'manual' | 'cross_project';
-
-export interface ConflictClassification {
-	type: ConflictType;
-	existingFlag?: DatadogFlagEntry;
-}
-
-export interface LDFlagMigrationSpec {
-	sourceKey: string;
-	datadogKey: string;
-}
-
-export type NonInteractiveConflictType = 'none' | 'same_project' | 'duplicate';
-
-export interface NonInteractiveConflictClassification {
-	type: NonInteractiveConflictType;
-	existingFlag?: DatadogFlagEntry;
-}
-
-export function parseLDFlagMigrationSpecs(
-	flagSpecs: string[],
-): LDFlagMigrationSpec[] {
-	const seenSourceKeys = new Set<string>();
-	return flagSpecs.map((raw) => {
-		const parts = raw.split(',').map((part) => part.trim());
-		if (
-			parts.length > 2 ||
-			parts.length === 0 ||
-			parts.some((part) => part.length === 0)
-		) {
-			throw new Error(
-				`--feature-flag must be either '<source-key>' or '<source-key>,<datadog-key>', got: ${raw}`,
-			);
-		}
-		const [sourceKey, datadogKey = sourceKey] = parts;
-		if (seenSourceKeys.has(sourceKey)) {
-			throw new Error(`Duplicate LaunchDarkly flag key: ${sourceKey}`);
-		}
-		seenSourceKeys.add(sourceKey);
-		return { sourceKey, datadogKey };
-	});
-}
-
-export function classifyNonInteractiveConflict(
-	datadogFlags: DatadogFlagEntry[],
-	projectKey: string,
-	sourceFlagKey: string,
-	datadogFlagKey: string,
-): NonInteractiveConflictClassification {
-	const keyMatch = datadogFlags.find((f) => f.key === datadogFlagKey);
-	if (!keyMatch) return { type: 'none' };
-
-	const metadata = keyMatch.migration_metadata;
-	if (
-		metadata?.project_key === projectKey &&
-		metadata.flag_key === sourceFlagKey
-	) {
-		return { type: 'same_project', existingFlag: keyMatch };
-	}
-
-	return { type: 'duplicate', existingFlag: keyMatch };
-}
-
-/** Classify the relationship between an LD flag and existing DD flags. */
-export function classifyConflict(
-	datadogFlags: DatadogFlagEntry[],
-	projectKey: string,
-	flagKey: string,
-): ConflictClassification {
-	const metadataMatch = findMatchingDatadogFlag(
-		datadogFlags,
-		projectKey,
-		flagKey,
-	);
-	if (metadataMatch)
-		return { type: 'same_project', existingFlag: metadataMatch };
-
-	const keyMatch = datadogFlags.find((f) => f.key === flagKey);
-	if (!keyMatch) return { type: 'none' };
-
-	if (keyMatch.migration_metadata) {
-		return { type: 'cross_project', existingFlag: keyMatch };
-	}
-	return { type: 'manual', existingFlag: keyMatch };
-}
-
-export type ConflictResolution =
-	| { action: 'skip' }
-	| { action: 'prefix'; prefix: string };
-
-function flagLabel(
-	flag: LDFlag,
-	datadogFlags: DatadogFlagEntry[],
-	projectKey: string,
-	conflictResolution?: ConflictResolution,
-): string {
-	const classification = classifyConflict(datadogFlags, projectKey, flag.key);
-	const name = flag.name;
-	const key = chalk.gray(`(${flag.key})`);
-	const kind = flag.kind === 'boolean' ? '' : chalk.dim(` [${flag.kind}]`);
-
-	let indicator: string;
-	let badge: string;
-
-	switch (classification.type) {
-		case 'same_project':
-		case 'manual':
-			indicator = chalk.green('✓');
-			badge = `  ${chalk.bgGreen.black(' In Datadog — will sync targeting ')}`;
-			break;
-		case 'cross_project':
-			if (conflictResolution?.action === 'prefix') {
-				indicator = chalk.hex('#632CA6')('⊕');
-				badge = `  ${chalk.bgHex('#632CA6').white(` Will prefix with ${conflictResolution.prefix}- `)}`;
-			} else {
-				indicator = chalk.red('✗');
-				badge = `  ${chalk.bgRed.white(' Key conflict — will skip ')}`;
-			}
-			break;
-		default:
-			indicator = ' ';
-			badge = '';
-	}
-
-	return `${indicator}  ${name}  ${key}${kind}${badge}`;
-}
-
-// ─── Prompt Steps ────────────────────────────────────────────────────────────
-
-async function selectProject(projects: LDProject[]): Promise<LDProject | null> {
-	console.log();
-	console.log(
-		chalk.bold(
-			`Found ${chalk.green(String(projects.length))} LaunchDarkly project(s)`,
-		),
-	);
-	console.log();
-
-	const pageSize = Math.max(
-		3,
-		Math.min(projects.length, (process.stdout.rows ?? 24) - 9),
-	);
-
-	const choices = projects.map((p) => ({
-		name: `${p.name}  ${chalk.gray(`(${p.key})`)}`,
-		value: p,
-		short: p.name,
-	}));
-
-	return filterableSelect<LDProject>({
-		message: 'Select a LaunchDarkly project to migrate:',
-		choices,
-		pageSize,
-	});
-}
-
-async function selectLDEnvironments(
-	ldEnvs: LDEnvironment[],
-	previouslySelected: string[] = [],
-): Promise<LDEnvironment[] | null> {
-	const activeEnvs = ldEnvs.filter((env) => !env.archived);
-	const archivedCount = ldEnvs.length - activeEnvs.length;
-
-	const previousSet = new Set(previouslySelected);
-
-	console.log();
-	console.log(
-		chalk.bold(
-			`Found ${chalk.green(String(activeEnvs.length))} environment(s) in the project`,
-		) +
-			(archivedCount > 0
-				? chalk.gray(` (${archivedCount} archived environment(s) hidden)`)
-				: ''),
-	);
-	console.log();
-
-	const pageSize = Math.max(
-		3,
-		Math.min(activeEnvs.length, (process.stdout.rows ?? 24) - 9),
-	);
-
-	return filterableCheckbox<LDEnvironment>({
-		message: 'Select LaunchDarkly environments to migrate:',
-		choices: activeEnvs.map((env) => {
-			const label =
-				env.name !== env.key
-					? `${env.name} ${chalk.gray(`(${env.key})`)}`
-					: env.key;
-			return {
-				name: label,
-				value: env,
-				checked: previousSet.has(env.key),
-			};
-		}),
-		pageSize,
-	});
-}
-
-async function linkEnvironments(
-	ldEnvs: LDEnvironment[],
-	ddEnvs: DatadogEnvironment[],
-	previousMapping: Map<string, DatadogEnvironment>,
-): Promise<Map<string, DatadogEnvironment> | null> {
-	const mapping = new Map<string, DatadogEnvironment>(previousMapping);
-	let i = 0;
-
-	while (i < ldEnvs.length) {
-		const ldEnv = ldEnvs[i];
-		const prevChoice = mapping.get(ldEnv.key);
-
-		clearScreen();
-		printHeader();
-		console.log(
-			chalk.bold('Linking environment ') +
-				chalk.green(`${i + 1}`) +
-				chalk.bold(' of ') +
-				chalk.green(`${ldEnvs.length}`) +
-				chalk.bold(':') +
-				`  ${chalk.cyan(ldEnv.name)}` +
-				(ldEnv.name !== ldEnv.key ? chalk.gray(` (${ldEnv.key})`) : ''),
-		);
-		console.log();
-
-		type LinkChoice = DatadogEnvironment | null;
-
-		const result = await select<LinkChoice>({
-			message: 'Select the matching Datadog environment:',
-			choices: [
-				{ name: chalk.dim('← Back'), value: null, short: 'Back' },
-				...ddEnvs.map((env) => ({
-					name: ddEnvLabel(env),
-					value: env as LinkChoice,
-					short: env.name,
-				})),
-			],
-			default: prevChoice,
-		});
-
-		if (result === null) {
-			if (i === 0) return null;
-			i--;
-		} else {
-			mapping.set(ldEnv.key, result);
-			i++;
-		}
-	}
-
-	return mapping;
-}
-
-async function selectFlags(
-	flags: LDFlag[],
-	datadogFlags: DatadogFlagEntry[],
-	projectKey: string,
-	previouslySelected: LDFlag[] = [],
-	conflictResolution?: ConflictResolution,
-): Promise<LDFlag[] | null> {
-	let inDatadogCount = 0;
-	let prefixedCount = 0;
-	let skipCount = 0;
-	for (const f of flags) {
-		const c = classifyConflict(datadogFlags, projectKey, f.key);
-		if (c.type === 'same_project' || c.type === 'manual') inDatadogCount++;
-		if (c.type === 'cross_project') {
-			if (conflictResolution?.action === 'prefix') prefixedCount++;
-			else skipCount++;
-		}
-	}
-	const previousKeys = new Set(previouslySelected.map((f) => f.key));
-
-	console.log();
-	console.log(
-		chalk.bold(
-			`Found ${chalk.green(String(flags.length))} feature flags in the project`,
-		),
-	);
-	if (inDatadogCount > 0) {
-		console.log(
-			chalk.gray(
-				`  ${inDatadogCount} flag(s) already exist in Datadog (will sync targeting for new environments) `,
-			) + chalk.green('✓'),
-		);
-	}
-	if (prefixedCount > 0) {
-		console.log(
-			chalk.hex('#632CA6')(
-				`  ${prefixedCount} flag(s) will be prefixed with ${(conflictResolution as { action: 'prefix'; prefix: string }).prefix}-`,
-			),
-		);
-	}
-	if (skipCount > 0) {
-		console.log(
-			chalk.red(
-				`  ${skipCount} flag(s) have key conflicts and will be skipped`,
-			),
-		);
-	}
-	console.log();
-
-	const sortedFlags = flags.slice().sort((a, b) => {
-		const aType = classifyConflict(datadogFlags, projectKey, a.key).type;
-		const bType = classifyConflict(datadogFlags, projectKey, b.key).type;
-		const aDD = aType === 'same_project' || aType === 'manual' ? 0 : 1;
-		const bDD = bType === 'same_project' || bType === 'manual' ? 0 : 1;
-		if (aDD !== bDD) return aDD - bDD;
-		return a.name.localeCompare(b.name);
-	});
-
-	const pageSize = Math.max(5, (process.stdout.rows ?? 24) - 9);
-
-	return filterableCheckbox<LDFlag>({
-		message: 'Select flags to migrate to Datadog:',
-		choices: sortedFlags.map((flag) => {
-			const conflictType = classifyConflict(
-				datadogFlags,
-				projectKey,
-				flag.key,
-			).type;
-			return {
-				name: flagLabel(flag, datadogFlags, projectKey, conflictResolution),
-				value: flag,
-				checked: previousKeys.has(flag.key),
-				migrated: conflictType === 'same_project' || conflictType === 'manual',
-			};
-		}),
-		pageSize,
-	});
 }
 
 // ─── Flag Detail Loading ─────────────────────────────────────────────────────
@@ -1933,46 +1592,6 @@ export async function runLaunchDarklyMigration(
 }
 
 // ─── Non-Interactive Entry Point ─────────────────────────────────────────────
-
-export function resolveLDEnvMap(
-	pairs: Array<[string, string]>,
-	ldEnvironments: LDEnvironment[],
-	datadogEnvs: DatadogEnvironment[],
-): { envMapping: Map<string, DatadogEnvironment>; selectedEnvKeys: string[] } {
-	const envMapping = new Map<string, DatadogEnvironment>();
-	const selectedEnvKeys: string[] = [];
-	const ddByName = new Map(datadogEnvs.map((e) => [e.name, e]));
-	for (const [src, dst] of pairs) {
-		// Match LD env: key first, then name
-		const ldEnv =
-			ldEnvironments.find((e) => e.key === src) ??
-			ldEnvironments.find((e) => e.name === src);
-		if (!ldEnv) {
-			const available = ldEnvironments
-				.filter((e) => !e.archived)
-				.map((e) => (e.key === e.name ? e.key : `${e.key} (${e.name})`))
-				.join(', ');
-			throw new Error(
-				`LaunchDarkly environment not found: "${src}". Available: ${available}`,
-			);
-		}
-		if (ldEnv.archived) {
-			throw new Error(
-				`LaunchDarkly environment "${ldEnv.key}" is archived and cannot be migrated`,
-			);
-		}
-		const ddEnv = ddByName.get(dst);
-		if (!ddEnv) {
-			const available = datadogEnvs.map((e) => e.name).join(', ');
-			throw new Error(
-				`Datadog environment not found: "${dst}". Available: ${available}`,
-			);
-		}
-		envMapping.set(ldEnv.key, ddEnv);
-		selectedEnvKeys.push(ldEnv.key);
-	}
-	return { envMapping, selectedEnvKeys };
-}
 
 async function runLaunchDarklyMigrationNonInteractive(
 	ldApiKey: string,
