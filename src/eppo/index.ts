@@ -16,7 +16,6 @@ import {
 	syncVariantsCreatesAndUpdates,
 	updateFlagTags,
 } from '../datadog.js';
-import { filterableCheckbox } from '../filterable-checkbox.js';
 import { toSyncRequests } from '../migration.js';
 import { writeJsonOutput } from '../output.js';
 import { MigrationProgressBar } from '../progress-bar.js';
@@ -37,6 +36,14 @@ import {
 	normalizeJsonVariantValue,
 	slugify,
 } from './migration.js';
+import { resolveEppoEnvMap, resolveEppoFlags } from './non-interactive.js';
+import {
+	clearScreen,
+	linkEnvironments,
+	printHeader,
+	selectEnvironments,
+	selectFlags,
+} from './prompts.js';
 import type {
 	DryRunFile,
 	EppoFlag,
@@ -44,41 +51,7 @@ import type {
 	MigrationFile,
 } from './types.js';
 
-// ─── UI Helpers ───────────────────────────────────────────────────────────────
-
-function clearScreen(): void {
-	process.stdout.write('\x1Bc');
-}
-
-function printHeader(): void {
-	const purple = chalk.bold.hex('#632CA6');
-	console.log();
-	console.log(purple('╔══════════════════════════════════════════╗'));
-	console.log(
-		purple('║') +
-			chalk.bold.white('   🚩  Feature Flag Migration Tool  🚩    ') +
-			purple('║'),
-	);
-	console.log(
-		purple('║') +
-			chalk.hex('#632CA6')('              Eppo → Datadog              ') +
-			purple('║'),
-	);
-	console.log(purple('╚══════════════════════════════════════════╝'));
-	console.log();
-}
-
-function ddEnvLabel(env: DatadogEnvironment): string {
-	const prodBadge = env.is_production
-		? `  ${chalk.bgHex('#632CA6').white(' Prod ')}`
-		: '';
-	return `${env.name}${prodBadge}`;
-}
-
-function envLabel(env: EppoFlagEnvironment, flagCount: number): string {
-	const prodBadge = env.is_production ? `  ${chalk.bgRed.white(' Prod ')}` : '';
-	return `${env.name}${prodBadge}  ${chalk.gray(`(${flagCount} flags)`)}`;
-}
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function formatVariantLabel(counts: {
 	added: number;
@@ -103,165 +76,6 @@ function formatAxiosError(err: unknown): string {
 	const url = err.config?.url ?? '';
 	const bodyPreview = data ? JSON.stringify(data).slice(0, 300) : 'no body';
 	return `${method} ${url} — ${status ?? 'no status'}: ${bodyPreview}`;
-}
-
-function flagLabel(flag: EppoFlag, inDatadog: boolean): string {
-	const indicator = inDatadog ? chalk.green('✓') : ' ';
-	const name = flag.name;
-	const key = chalk.gray(`(${flag.key})`);
-	const badge = inDatadog
-		? `  ${chalk.bgGreen.black(' In Datadog — will sync targeting ')}`
-		: '';
-	return `${indicator}  ${name}  ${key}${badge}`;
-}
-
-// ─── Prompt Steps ─────────────────────────────────────────────────────────────
-
-async function linkEnvironments(
-	eppoEnvs: EppoFlagEnvironment[],
-	ddEnvs: DatadogEnvironment[],
-	previousMapping: Map<number, DatadogEnvironment>,
-): Promise<Map<number, DatadogEnvironment> | null> {
-	const mapping = new Map<number, DatadogEnvironment>(previousMapping);
-	let i = 0;
-
-	while (i < eppoEnvs.length) {
-		const eppoEnv = eppoEnvs[i];
-		const prevChoice = mapping.get(eppoEnv.id);
-
-		clearScreen();
-		printHeader();
-		console.log(
-			chalk.bold('Linking environment ') +
-				chalk.green(`${i + 1}`) +
-				chalk.bold(' of ') +
-				chalk.green(`${eppoEnvs.length}`) +
-				chalk.bold(':') +
-				`  ${chalk.cyan(eppoEnv.name)}` +
-				(eppoEnv.is_production ? `  ${chalk.bgRed.white(' Prod ')}` : ''),
-		);
-		console.log();
-
-		type LinkChoice = DatadogEnvironment | null;
-
-		const result = await select<LinkChoice>({
-			message: 'Select the matching Datadog environment:',
-			choices: [
-				{ name: chalk.dim('← Back'), value: null, short: 'Back' },
-				...ddEnvs.map((env) => ({
-					name: ddEnvLabel(env),
-					value: env as LinkChoice,
-					short: env.name,
-				})),
-			],
-			default: prevChoice,
-		});
-
-		if (result === null) {
-			if (i === 0) return null; // back to Eppo env selection
-			i--;
-		} else {
-			mapping.set(eppoEnv.id, result);
-			i++;
-		}
-	}
-
-	return mapping;
-}
-
-async function selectEnvironments(
-	flags: EppoFlag[],
-	environments: EppoFlagEnvironment[],
-	previouslySelected: EppoFlagEnvironment[] = [],
-): Promise<EppoFlagEnvironment[] | null> {
-	const flagCount = new Map<number, number>();
-	for (const flag of flags) {
-		for (const env of flag.environments ?? []) {
-			flagCount.set(env.id, (flagCount.get(env.id) ?? 0) + 1);
-		}
-	}
-
-	const previousIds = new Set(previouslySelected.map((e) => e.id));
-
-	console.log();
-	console.log(
-		chalk.bold(
-			`Found ${chalk.green(String(environments.length))} environments in Eppo`,
-		),
-	);
-	console.log();
-
-	const pageSize = Math.max(
-		3,
-		Math.min(environments.length, (process.stdout.rows ?? 24) - 9),
-	);
-
-	return filterableCheckbox<EppoFlagEnvironment>({
-		message: 'Select environments to migrate from:',
-		choices: environments.map((env) => ({
-			name: envLabel(env, flagCount.get(env.id) ?? 0),
-			value: env,
-			checked: previousIds.has(env.id),
-		})),
-		pageSize,
-	});
-}
-
-async function selectFlags(
-	flags: EppoFlag[],
-	datadogKeys: Map<string, string>,
-	selectedEnvs: EppoFlagEnvironment[],
-	previouslySelected: EppoFlag[] = [],
-): Promise<EppoFlag[] | null> {
-	const selectedEnvIds = new Set(selectedEnvs.map((e) => e.id));
-	const visibleFlags =
-		selectedEnvIds.size > 0
-			? flags.filter((f) =>
-					f.environments?.some((e) => selectedEnvIds.has(e.id)),
-				)
-			: flags;
-
-	const inDatadogCount = visibleFlags.filter((f) =>
-		datadogKeys.has(f.key),
-	).length;
-	const previousKeys = new Set(previouslySelected.map((f) => f.key));
-
-	console.log();
-	console.log(
-		chalk.bold(
-			`Found ${chalk.green(String(visibleFlags.length))} feature flags in Eppo`,
-		),
-	);
-	if (inDatadogCount > 0) {
-		console.log(
-			chalk.gray(
-				`  ${inDatadogCount} flag(s) already exist in Datadog (will sync targeting for new environments) `,
-			) + chalk.green('✓'),
-		);
-	}
-	console.log();
-
-	const sortedFlags = visibleFlags.slice().sort((a, b) => {
-		// Flags already in Datadog float to the top
-		const aDD = datadogKeys.has(a.key) ? 0 : 1;
-		const bDD = datadogKeys.has(b.key) ? 0 : 1;
-		if (aDD !== bDD) return aDD - bDD;
-		return a.name.localeCompare(b.name);
-	});
-
-	// Reserve lines for: found header (~3), prompt message, filter line, help tip, buffer
-	const pageSize = Math.max(5, (process.stdout.rows ?? 24) - 9);
-
-	return filterableCheckbox<EppoFlag>({
-		message: 'Select flags to migrate to Datadog:',
-		choices: sortedFlags.map((flag) => ({
-			name: flagLabel(flag, datadogKeys.has(flag.key)),
-			value: flag,
-			checked: previousKeys.has(flag.key),
-			migrated: datadogKeys.has(flag.key),
-		})),
-		pageSize,
-	});
 }
 
 type ConfirmAction = 'migrate' | 'select-more' | 'cancel';
@@ -1176,66 +990,9 @@ export async function runEppoMigration(
 
 // ─── Non-Interactive Entry Point ─────────────────────────────────────────────
 
-export function resolveEppoEnvMap(
-	pairs: Array<[string, string]>,
-	eppoEnvs: EppoFlagEnvironment[],
-	datadogEnvs: DatadogEnvironment[],
-): {
-	envMapping: Map<number, DatadogEnvironment>;
-	selectedEnvs: EppoFlagEnvironment[];
-} {
-	const envMapping = new Map<number, DatadogEnvironment>();
-	const selectedEnvs: EppoFlagEnvironment[] = [];
-	const ddByName = new Map(datadogEnvs.map((e) => [e.name, e]));
-	for (const [src, dst] of pairs) {
-		const eppoEnv = eppoEnvs.find((e) => e.name === src);
-		if (!eppoEnv) {
-			const available = eppoEnvs.map((e) => e.name).join(', ');
-			throw new Error(
-				`Eppo environment not found: "${src}". Available: ${available}`,
-			);
-		}
-		const ddEnv = ddByName.get(dst);
-		if (!ddEnv) {
-			const available = datadogEnvs.map((e) => e.name).join(', ');
-			throw new Error(
-				`Datadog environment not found: "${dst}". Available: ${available}`,
-			);
-		}
-		envMapping.set(eppoEnv.id, ddEnv);
-		selectedEnvs.push(eppoEnv);
-	}
-	return { envMapping, selectedEnvs };
-}
-
-export function resolveEppoFlags(
-	keys: string[],
-	allFlags: EppoFlag[],
-	selectedEnvIds?: Set<number>,
-): EppoFlag[] {
-	const byKey = new Map(allFlags.map((f) => [f.key, f]));
-	const selected: EppoFlag[] = [];
-	const missing: string[] = [];
-	for (const key of keys) {
-		const f = byKey.get(key);
-		if (f) selected.push(f);
-		else missing.push(key);
-	}
-	if (missing.length > 0) {
-		throw new Error(`Flag(s) not found in Eppo: ${missing.join(', ')}`);
-	}
-	if (selectedEnvIds && selectedEnvIds.size > 0) {
-		const noEnv = selected.filter(
-			(f) => !f.environments?.some((e) => selectedEnvIds.has(e.id)),
-		);
-		if (noEnv.length > 0) {
-			throw new Error(
-				`Flag(s) not present in any mapped Eppo environment: ${noEnv.map((f) => f.key).join(', ')}`,
-			);
-		}
-	}
-	return selected;
-}
+// Re-exported so external callers (tests, callers importing from `./eppo`) can
+// continue to find these here.
+export { resolveEppoEnvMap, resolveEppoFlags };
 
 async function runEppoMigrationNonInteractive(
 	apiKey: string,
