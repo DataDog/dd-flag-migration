@@ -282,3 +282,57 @@ export async function selectFlags(
 		pageSize,
 	});
 }
+
+// ─── Confirmation ────────────────────────────────────────────────────────────
+
+export type ConfirmAction = 'migrate' | 'select-more' | 'cancel';
+
+// Final confirmation prompt at the end of Phase A. Returns the user's choice;
+// caller decides whether to build the plan, loop back to flag selection, or
+// abort. No execution side-effects.
+export async function confirmFlagSelection(
+	flags: LDFlag[],
+	dryRun: boolean,
+): Promise<ConfirmAction> {
+	if (flags.length === 0) {
+		console.log(chalk.yellow('\nNo flags selected — nothing to migrate.'));
+		const action = await select<'select-more' | 'cancel'>({
+			message: 'What would you like to do?',
+			choices: [
+				{ name: 'Select flags', value: 'select-more' },
+				{ name: 'Cancel', value: 'cancel' },
+			],
+		});
+		return action;
+	}
+
+	console.log();
+	console.log(
+		chalk.bold(`You selected ${chalk.green(String(flags.length))} flag(s):`),
+	);
+	for (const f of flags) {
+		console.log(chalk.gray(`  •  ${f.name}`) + chalk.dim(`  (${f.key})`));
+	}
+	console.log();
+
+	const action = await select<ConfirmAction>({
+		message: dryRun
+			? `Simulate migration of ${flags.length} flag(s)?`
+			: `Migrate ${flags.length} flag(s) to Datadog?`,
+		choices: [
+			{
+				name: dryRun
+					? `Simulate ${flags.length} flag(s)`
+					: `Migrate ${flags.length} flag(s)`,
+				value: 'migrate',
+			},
+			{ name: 'Select more flags', value: 'select-more' },
+			{ name: 'Cancel', value: 'cancel' },
+		],
+	});
+
+	if (action === 'cancel') {
+		console.log(chalk.yellow('\nMigration cancelled.'));
+	}
+	return action;
+}

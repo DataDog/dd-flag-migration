@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { confirm, input, select } from '@inquirer/prompts';
+import { confirm } from '@inquirer/prompts';
 import axios from 'axios';
 import chalk from 'chalk';
 import { CONFIG_DIR } from '../config.js';
@@ -12,8 +12,6 @@ import {
 	type DatadogTeam,
 	type DDRestrictionBinding,
 	enableFeatureFlagEnvironment,
-	fetchDatadogEnvironments,
-	fetchDatadogFlags,
 	fetchDatadogTeams,
 	fetchFlagDetail,
 	fetchRestrictionPolicy,
@@ -25,6 +23,8 @@ import { filterableSelect } from '../filterable-checkbox.js';
 import { toSyncRequests } from '../migration.js';
 import { writeJsonOutput } from '../output.js';
 import { MigrationProgressBar } from '../progress-bar.js';
+import { createPromptKit } from '../provider/prompt-kit.js';
+import type { ProviderContext } from '../provider/types.js';
 import { createSpinner } from '../spinner.js';
 import type {
 	DatadogCreateFlagRequest,
@@ -35,20 +35,13 @@ import {
 	fetchCustomRoles,
 	fetchFlag,
 	fetchFlagRelease,
-	fetchFlags,
-	fetchFlagsByKey,
-	fetchProjectEnvironments,
-	fetchProjects,
 	fetchTeamsWithRoles,
 	isReleaseInProgress,
-	type LDProject,
 } from './api.js';
 import {
 	type ConflictResolution,
 	classifyConflict,
 	classifyNonInteractiveConflict,
-	type LDFlagMigrationSpec,
-	parseLDFlagMigrationSpecs,
 } from './conflicts.js';
 import {
 	buildAllocations,
@@ -60,21 +53,14 @@ import {
 	mapFlagType,
 	shouldSkipFlag,
 } from './migration.js';
-import { resolveLDEnvMap } from './non-interactive.js';
-import {
-	clearScreen,
-	linkEnvironments,
-	printHeader,
-	selectFlags,
-	selectLDEnvironments,
-	selectProject,
-} from './prompts.js';
+import { clearScreen } from './prompts.js';
+import { selectLDMigrationPlan } from './provider.js';
 import {
 	discoverSegmentRefs,
 	migrateSegments,
 	planDryRunSegments,
 } from './segments.js';
-import type { LDEnvironment, LDFlag, LDMigrationFile } from './types.js';
+import type { LDFlag, LDMigrationFile } from './types.js';
 
 export type {
 	ConflictClassification,
@@ -233,9 +219,11 @@ async function loadFlagDetails(
 
 // ─── Migration Execution ─────────────────────────────────────────────────────
 
-type ConfirmAction = 'migrate' | 'select-more' | 'cancel';
-
-interface MigrationOptions {
+export interface ExecuteLDMigrationParams {
+	flags: LDFlag[];
+	envMapping: Map<string, DatadogEnvironment>;
+	datadogFlags: DatadogFlagEntry[];
+	selectedEnvs: string[];
 	ldApiKey: string;
 	projectKey: string;
 	projectName: string;
@@ -244,19 +232,23 @@ interface MigrationOptions {
 	ddSite: string;
 	dryRun: boolean;
 	conflictResolution?: ConflictResolution;
-	nonInteractive?: boolean;
-	doExport?: boolean;
+	nonInteractive: boolean;
+	doExport: boolean;
 	targetKeyBySource?: Map<string, string>;
 }
 
-async function executeMigration(
-	flags: LDFlag[],
-	envMapping: Map<string, DatadogEnvironment>,
-	datadogFlags: DatadogFlagEntry[],
-	selectedEnvs: string[],
-	opts: MigrationOptions,
-): Promise<ConfirmAction> {
+// Phase B for LaunchDarkly: segment migration, conflict-resolved flag creation,
+// variant/allocation sync, restriction policies, env enabling, xlsx export.
+// The user has already confirmed via Phase A (see ldProvider.selectMigrationPlan)
+// so this function executes unconditionally.
+export async function executeLDMigration(
+	params: ExecuteLDMigrationParams,
+): Promise<void> {
 	const {
+		flags,
+		envMapping,
+		datadogFlags,
+		selectedEnvs,
 		ldApiKey,
 		projectKey,
 		projectName,
@@ -268,54 +260,7 @@ async function executeMigration(
 		nonInteractive,
 		doExport,
 		targetKeyBySource,
-	} = opts;
-
-	if (flags.length === 0) {
-		console.log(chalk.yellow('\nNo flags selected — nothing to migrate.'));
-		if (nonInteractive) return 'cancel';
-		const action = await select<'select-more' | 'cancel'>({
-			message: 'What would you like to do?',
-			choices: [
-				{ name: 'Select flags', value: 'select-more' },
-				{ name: 'Cancel', value: 'cancel' },
-			],
-		});
-		return action;
-	}
-
-	console.log();
-	console.log(
-		chalk.bold(`You selected ${chalk.green(String(flags.length))} flag(s):`),
-	);
-	for (const f of flags) {
-		console.log(chalk.gray(`  •  ${f.name}`) + chalk.dim(`  (${f.key})`));
-	}
-	console.log();
-
-	if (!nonInteractive) {
-		const action = await select<ConfirmAction>({
-			message: dryRun
-				? `Simulate migration of ${flags.length} flag(s)?`
-				: `Migrate ${flags.length} flag(s) to Datadog?`,
-			choices: [
-				{
-					name: dryRun
-						? `Simulate ${flags.length} flag(s)`
-						: `Migrate ${flags.length} flag(s)`,
-					value: 'migrate',
-				},
-				{ name: 'Select more flags', value: 'select-more' },
-				{ name: 'Cancel', value: 'cancel' },
-			],
-		});
-
-		if (action === 'cancel') {
-			console.log(chalk.yellow('\nMigration cancelled.'));
-			return 'cancel';
-		}
-
-		if (action === 'select-more') return 'select-more';
-	}
+	} = params;
 
 	// Fetch full flag details for selected flags
 	const detailSpinner = createSpinner(
@@ -328,7 +273,7 @@ async function executeMigration(
 	} catch (err) {
 		detailSpinner.fail('Failed to fetch flag details');
 		console.error(chalk.red(`  ${formatAxiosError(err)}`));
-		return 'cancel';
+		return;
 	}
 
 	// Discover teams with edit access via RBAC (project-level)
@@ -1346,7 +1291,6 @@ async function executeMigration(
 
 	console.log();
 	if (nonInteractive && errored > 0) process.exitCode = 1;
-	return 'migrate';
 }
 
 // ─── Main Entry Point ────────────────────────────────────────────────────────
@@ -1369,348 +1313,37 @@ export async function runLaunchDarklyMigration(
 	dryRun: boolean,
 	options?: RunLaunchDarklyMigrationOptions,
 ): Promise<void> {
-	// LAUNCHDARKLY_API_KEY presence was validated in src/index.ts before this runs.
-	// biome-ignore lint/style/noNonNullAssertion: validated upstream
-	const ldApiKey = process.env.LAUNCHDARKLY_API_KEY!.trim();
+	const ctx: ProviderContext = {
+		promptKit: createPromptKit(),
+		datadog: { apiKey: ddApiKey, appKey: ddAppKey, site: ddSite },
+		dryRun,
+		nonInteractive: options?.nonInteractive
+			? {
+					envMap: options.nonInteractive.envMap,
+					flagKeys: options.nonInteractive.flagKeys,
+					projectKey: options.nonInteractive.projectKey,
+				}
+			: undefined,
+	};
 
-	if (options?.nonInteractive) {
-		await runLaunchDarklyMigrationNonInteractive(
-			ldApiKey,
-			ddApiKey,
-			ddAppKey,
-			ddSite,
-			dryRun,
-			options.nonInteractive,
-			options.doExport ?? false,
-		);
-		return;
-	}
+	const plan = await selectLDMigrationPlan(ctx);
+	if (!plan) return;
 
-	// Fetch projects from LD API
-	clearScreen();
-	printHeader();
-	if (dryRun) {
-		console.log(
-			chalk.bold.yellow('  Dry run mode — no flags will be created\n'),
-		);
-	}
-
-	const projectSpinner = createSpinner(
-		'Fetching LaunchDarkly projects…',
-	).start();
-	let projects: LDProject[];
-	try {
-		projects = await fetchProjects(ldApiKey);
-		projectSpinner.succeed(`Found ${projects.length} LaunchDarkly project(s)`);
-	} catch (err) {
-		projectSpinner.fail('Failed to fetch LaunchDarkly projects');
-		if (axios.isAxiosError(err)) {
-			const msg =
-				(err.response?.data as { message?: string } | undefined)?.message ??
-				err.message;
-			console.error(chalk.red(`  ${msg}`));
-		}
-		return;
-	}
-
-	if (projects.length === 0) {
-		console.log(chalk.yellow('\n  No projects found in LaunchDarkly.\n'));
-		return;
-	}
-
-	// Select a project
-	const selectedProject = await selectProject(projects);
-	if (!selectedProject) {
-		console.log(chalk.yellow('\n  No project selected.\n'));
-		return;
-	}
-
-	console.log();
-	console.log(
-		chalk.bold('Project: ') +
-			chalk.green(selectedProject.name) +
-			chalk.gray(` (${selectedProject.key})`),
-	);
-
-	// Fetch flags, project environments, and DD data in parallel
-	const loadSpinner = createSpinner('Fetching flags and Datadog data…').start();
-	let allFlags: LDFlag[];
-	let ldEnvironments: LDEnvironment[];
-	let datadogFlags: DatadogFlagEntry[] = [];
-	let datadogEnvs: DatadogEnvironment[] = [];
-	try {
-		[allFlags, ldEnvironments, datadogFlags, datadogEnvs] = await Promise.all([
-			fetchFlags(ldApiKey, selectedProject.key),
-			fetchProjectEnvironments(ldApiKey, selectedProject.key),
-			fetchDatadogFlags(ddApiKey, ddAppKey, ddSite),
-			fetchDatadogEnvironments(ddApiKey, ddAppKey, ddSite),
-		]);
-		loadSpinner.succeed(
-			`Loaded ${allFlags.length} LD flag(s) · ${ldEnvironments.length} LD environment(s) · ${datadogFlags.length} Datadog flag(s) · ${datadogEnvs.length} Datadog environment(s)`,
-		);
-	} catch (err) {
-		loadSpinner.fail('Failed to load data');
-		if (axios.isAxiosError(err)) {
-			const url = err.config?.url ?? 'unknown URL';
-			const status = err.response?.status ?? 'no status';
-			const msg =
-				(err.response?.data as { message?: string } | undefined)?.message ??
-				err.message;
-			console.error(
-				chalk.red(
-					`  ${err.config?.method?.toUpperCase() ?? 'GET'} ${url} → ${status}: ${msg}`,
-				),
-			);
-		} else if (err instanceof Error) {
-			console.error(chalk.red(`  ${err.message}`));
-		}
-		return;
-	}
-
-	if (allFlags.length === 0) {
-		console.log(chalk.yellow('\n  No flags found in this project.\n'));
-		return;
-	}
-
-	// Detect cross-project conflicts and prompt for resolution
-	const crossProjectConflicts = allFlags.filter(
-		(f) =>
-			classifyConflict(datadogFlags, selectedProject.key, f.key).type ===
-			'cross_project',
-	);
-
-	let conflictResolution: ConflictResolution | undefined;
-	if (crossProjectConflicts.length > 0) {
-		console.log();
-		console.log(
-			chalk.yellow(
-				`  ${crossProjectConflicts.length} flag(s) have key conflicts with flags from other LaunchDarkly projects`,
-			),
-		);
-		console.log();
-
-		const action = await select<'skip' | 'prefix'>({
-			message: 'How would you like to handle these conflicts?',
-			choices: [
-				{ name: 'Skip conflicting flags', value: 'skip' },
-				{
-					name: 'Add a prefix to conflicting flag keys',
-					value: 'prefix',
-				},
-			],
-		});
-
-		if (action === 'skip') {
-			conflictResolution = { action: 'skip' };
-		} else {
-			const prefix = await input({
-				message: 'Enter a prefix for conflicting flag keys:',
-				validate: (val) => {
-					const trimmed = val.trim();
-					if (trimmed.length === 0) return 'Prefix cannot be empty';
-					if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(trimmed))
-						return 'Prefix must contain only lowercase letters, numbers, and hyphens';
-					return true;
-				},
-			});
-			conflictResolution = { action: 'prefix', prefix: prefix.trim() };
-		}
-	}
-
-	let prevSelectedEnvKeys: string[] = [];
-	let prevEnvMapping = new Map<string, DatadogEnvironment>();
-	let prevSelectedFlags: LDFlag[] = [];
-
-	// eslint-disable-next-line no-constant-condition
-	outer: while (true) {
-		// Select LD environments
-		clearScreen();
-		printHeader();
-		const envResult = await selectLDEnvironments(
-			ldEnvironments,
-			prevSelectedEnvKeys,
-		);
-		if (envResult === null) break;
-		if (envResult.length === 0) {
-			console.log(
-				chalk.yellow(
-					'\n  Please select at least one environment to migrate from.\n',
-				),
-			);
-			continue;
-		}
-		prevSelectedEnvKeys = envResult.map((e) => e.key);
-
-		// Link LD environments → DD environments
-		while (true) {
-			const mapping = await linkEnvironments(
-				envResult,
-				datadogEnvs,
-				prevEnvMapping,
-			);
-			if (mapping === null) break;
-
-			prevEnvMapping = mapping;
-
-			// Select flags
-			while (true) {
-				clearScreen();
-				printHeader();
-				const flagResult = await selectFlags(
-					allFlags,
-					datadogFlags,
-					selectedProject.key,
-					prevSelectedFlags,
-					conflictResolution,
-				);
-				if (flagResult === null) break;
-
-				prevSelectedFlags = flagResult;
-				clearScreen();
-				printHeader();
-				const action = await executeMigration(
-					prevSelectedFlags,
-					prevEnvMapping,
-					datadogFlags,
-					prevSelectedEnvKeys,
-					{
-						ldApiKey,
-						projectKey: selectedProject.key,
-						projectName: selectedProject.name,
-						ddApiKey,
-						ddAppKey,
-						ddSite,
-						dryRun,
-						conflictResolution,
-					},
-				);
-				if (action === 'cancel') break outer;
-				if (action === 'migrate') break outer;
-			}
-		}
-	}
-}
-
-// ─── Non-Interactive Entry Point ─────────────────────────────────────────────
-
-async function runLaunchDarklyMigrationNonInteractive(
-	ldApiKey: string,
-	ddApiKey: string,
-	ddAppKey: string,
-	ddSite: string,
-	dryRun: boolean,
-	ni: LDNonInteractiveOptions,
-	doExport: boolean,
-): Promise<void> {
-	printHeader();
-	console.log(chalk.gray('  Running in non-interactive mode\n'));
-	if (dryRun) {
-		console.log(
-			chalk.bold.yellow('  Dry run mode — no flags will be created\n'),
-		);
-	}
-
-	let flagSpecs: LDFlagMigrationSpec[];
-	try {
-		flagSpecs = parseLDFlagMigrationSpecs(ni.flagKeys);
-	} catch (err) {
-		console.error(
-			chalk.red(`\n  ${err instanceof Error ? err.message : String(err)}\n`),
-		);
-		process.exit(1);
-	}
-	const sourceFlagKeys = flagSpecs.map((spec) => spec.sourceKey);
-	const targetKeyBySource = new Map(
-		flagSpecs.map((spec) => [spec.sourceKey, spec.datadogKey]),
-	);
-
-	const projectSpinner = createSpinner(
-		'Fetching LaunchDarkly projects…',
-	).start();
-	let projects: LDProject[];
-	try {
-		projects = await fetchProjects(ldApiKey);
-		projectSpinner.succeed(`Found ${projects.length} LaunchDarkly project(s)`);
-	} catch (err) {
-		projectSpinner.fail('Failed to fetch LaunchDarkly projects');
-		console.error(chalk.red(`  ${formatAxiosError(err)}`));
-		process.exit(1);
-	}
-
-	const selectedProject = projects.find((p) => p.key === ni.projectKey);
-	if (!selectedProject) {
-		console.error(
-			chalk.red(
-				`\n  LaunchDarkly project not found: "${ni.projectKey}"\n` +
-					`  Available: ${projects.map((p) => p.key).join(', ')}\n`,
-			),
-		);
-		process.exit(1);
-	}
-
-	console.log(
-		chalk.bold('  Project: ') +
-			chalk.green(selectedProject.name) +
-			chalk.gray(` (${selectedProject.key})`),
-	);
-
-	const loadSpinner = createSpinner(
-		`Fetching ${sourceFlagKeys.length} flag(s) and Datadog data…`,
-	).start();
-	let selectedFlags: LDFlag[];
-	let ldEnvironments: LDEnvironment[];
-	let datadogFlags: DatadogFlagEntry[] = [];
-	let datadogEnvs: DatadogEnvironment[] = [];
-	try {
-		[selectedFlags, ldEnvironments, datadogFlags, datadogEnvs] =
-			await Promise.all([
-				fetchFlagsByKey(ldApiKey, selectedProject.key, sourceFlagKeys),
-				fetchProjectEnvironments(ldApiKey, selectedProject.key),
-				fetchDatadogFlags(ddApiKey, ddAppKey, ddSite),
-				fetchDatadogEnvironments(ddApiKey, ddAppKey, ddSite),
-			]);
-		loadSpinner.succeed(
-			`Loaded ${selectedFlags.length} LD flag(s) · ${ldEnvironments.length} LD environment(s) · ${datadogFlags.length} Datadog flag(s) · ${datadogEnvs.length} Datadog environment(s)`,
-		);
-	} catch (err) {
-		loadSpinner.fail('Failed to load data');
-		console.error(chalk.red(`  ${formatAxiosError(err)}`));
-		process.exit(1);
-	}
-
-	let envMapping: Map<string, DatadogEnvironment>;
-	let selectedEnvKeys: string[];
-	try {
-		({ envMapping, selectedEnvKeys } = resolveLDEnvMap(
-			ni.envMap,
-			ldEnvironments,
-			datadogEnvs,
-		));
-	} catch (err) {
-		console.error(
-			chalk.red(`\n  ${err instanceof Error ? err.message : String(err)}\n`),
-		);
-		process.exit(1);
-	}
-
-	await executeMigration(
-		selectedFlags,
-		envMapping,
-		datadogFlags,
-		selectedEnvKeys,
-		{
-			ldApiKey,
-			projectKey: selectedProject.key,
-			projectName: selectedProject.name,
-			ddApiKey,
-			ddAppKey,
-			ddSite,
-			dryRun,
-			// Default to skip for cross-project conflicts in non-interactive mode.
-			conflictResolution: { action: 'skip' },
-			nonInteractive: true,
-			doExport,
-			targetKeyBySource,
-		},
-	);
+	await executeLDMigration({
+		flags: plan.selectedFlags,
+		envMapping: plan.envMapping,
+		datadogFlags: plan.extras.datadogFlags,
+		selectedEnvs: Array.from(plan.envMapping.keys()),
+		ldApiKey: plan.extras.ldApiKey,
+		projectKey: plan.extras.projectKey,
+		projectName: plan.extras.projectName,
+		ddApiKey,
+		ddAppKey,
+		ddSite,
+		dryRun,
+		conflictResolution: plan.extras.conflictResolution,
+		nonInteractive: !!options?.nonInteractive,
+		doExport: options?.doExport ?? false,
+		targetKeyBySource: plan.extras.targetKeyBySource,
+	});
 }
