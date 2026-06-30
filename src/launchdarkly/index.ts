@@ -1117,7 +1117,7 @@ async function executeMigration(
 			const allRuleLabel = allRuleCount > 0 ? `, ${allRuleCount} rule(s)` : '';
 
 			if (existingFlagId) {
-				const syncTags = buildFlagTags(flag.tags, projectName);
+				const syncTags = buildFlagTags(flag.tags, projectKey);
 
 				if (envsToEnable.length === 0) {
 					// Always sync tags and restriction policy even when no new environments need enabling.
@@ -1437,7 +1437,7 @@ async function executeMigration(
 					? `${conflictResolution.prefix}-${flag.key}`
 					: targetKey;
 
-				const tags = buildFlagTags(flag.tags, projectName);
+				const tags = buildFlagTags(flag.tags, projectKey);
 
 				const request: DatadogCreateFlagRequest = {
 					key: ddKey,

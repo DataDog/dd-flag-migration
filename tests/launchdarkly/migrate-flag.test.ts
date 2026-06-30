@@ -65,7 +65,7 @@ function migrateFlag(
 	flag: LDFlag,
 	envMapping: Map<string, DatadogEnvironment>,
 	selectedEnvs: string[],
-	projectName = 'Test Project',
+	projectKey = 'test-project',
 ): {
 	skipped: boolean;
 	skipReason?: string;
@@ -93,7 +93,7 @@ function migrateFlag(
 	}
 	const allocations = allocationsResult;
 	const envsToEnable = getEnvsToEnable(flag, envMapping);
-	const tags = buildFlagTags(flag.tags, projectName);
+	const tags = buildFlagTags(flag.tags, projectKey);
 
 	const request: DatadogCreateFlagRequest = {
 		key: flag.key,
@@ -1253,7 +1253,6 @@ function migrateFlagWithConflicts(
 	datadogFlags: DatadogFlagEntry[],
 	projectKey: string,
 	conflictResolution?: ConflictResolution,
-	projectName = projectKey,
 ): {
 	action: 'create' | 'sync' | 'skip';
 	skipReason?: string;
@@ -1324,7 +1323,7 @@ function migrateFlagWithConflicts(
 		...(usePrefix ? { key_prefix: conflictResolution.prefix } : {}),
 	};
 
-	const tags = buildFlagTags(flag.tags, projectName);
+	const tags = buildFlagTags(flag.tags, projectKey);
 
 	const request: DatadogCreateFlagRequest = {
 		key: ddKey,
@@ -1719,7 +1718,7 @@ describe('migrate a realistic flag with targets, rules, LD tags, and a team main
 		expect(result.request?.tags).toEqual([
 			'checkout',
 			'q3-launch',
-			'launchdarkly-project:Test Project',
+			'launchdarkly-project:test-project',
 		]);
 	});
 
@@ -1743,7 +1742,7 @@ describe('migrate a realistic flag with targets, rules, LD tags, and a team main
 	});
 });
 
-describe('migrate a flag and verify the LaunchDarkly project name is added as a tag', () => {
+describe('migrate a flag and verify the LaunchDarkly project key is added as a tag', () => {
 	const flag: LDFlag = {
 		name: 'Project Tag Flag',
 		kind: 'boolean',
@@ -1767,23 +1766,23 @@ describe('migrate a flag and verify the LaunchDarkly project name is added as a 
 	};
 
 	const envMapping = new Map([['production', ddProd]]);
-	const result = migrateFlag(flag, envMapping, ['production'], 'My LD Project');
+	const result = migrateFlag(flag, envMapping, ['production'], 'my-ld-project');
 
-	it('includes the launchdarkly-project tag with the project name', () => {
+	it('includes the launchdarkly-project tag with the project key', () => {
 		expect(result.request?.tags).toContain(
-			'launchdarkly-project:My LD Project',
+			'launchdarkly-project:my-ld-project',
 		);
 	});
 
 	it('preserves existing LD source tags alongside the project tag', () => {
 		expect(result.request?.tags).toEqual([
 			'existing-tag',
-			'launchdarkly-project:My LD Project',
+			'launchdarkly-project:my-ld-project',
 		]);
 	});
 });
 
-describe('migrate a flag with no LD tags and verify the project name tag is still added', () => {
+describe('migrate a flag with no LD tags and verify the project key tag is still added', () => {
 	const flag: LDFlag = {
 		name: 'No Tag Flag',
 		kind: 'boolean',
@@ -1807,9 +1806,9 @@ describe('migrate a flag with no LD tags and verify the project name tag is stil
 	};
 
 	const envMapping = new Map([['production', ddProd]]);
-	const result = migrateFlag(flag, envMapping, ['production'], 'Solo Project');
+	const result = migrateFlag(flag, envMapping, ['production'], 'solo-project');
 
 	it('includes only the project tag when the flag has no LD tags', () => {
-		expect(result.request?.tags).toEqual(['launchdarkly-project:Solo Project']);
+		expect(result.request?.tags).toEqual(['launchdarkly-project:solo-project']);
 	});
 });
