@@ -48,6 +48,7 @@ import {
 } from './api.js';
 import {
 	buildAllocations,
+	buildFlagTags,
 	buildVariants,
 	findProjectEditorRoleKeys,
 	findTeamsWithEditAccess,
@@ -1116,7 +1117,7 @@ async function executeMigration(
 			const allRuleLabel = allRuleCount > 0 ? `, ${allRuleCount} rule(s)` : '';
 
 			if (existingFlagId) {
-				const syncTags = flag.tags;
+				const syncTags = buildFlagTags(flag.tags, projectName);
 
 				if (envsToEnable.length === 0) {
 					// Always sync tags and restriction policy even when no new environments need enabling.
@@ -1436,7 +1437,7 @@ async function executeMigration(
 					? `${conflictResolution.prefix}-${flag.key}`
 					: targetKey;
 
-				const tags = flag.tags;
+				const tags = buildFlagTags(flag.tags, projectName);
 
 				const request: DatadogCreateFlagRequest = {
 					key: ddKey,

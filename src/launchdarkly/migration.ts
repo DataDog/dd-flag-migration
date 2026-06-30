@@ -719,3 +719,19 @@ export function findTeamsWithEditAccess(
 	}
 	return teamKeys;
 }
+
+// ─── Tag Building ───────────────────────────────────────────────────────────
+
+/**
+ * Build the tag list for a migrated flag, combining the LD flag's own tags
+ * with a tag identifying the source LaunchDarkly project. The project tag is
+ * always added so that migrated flags can be traced back to their LD origin.
+ * Duplicates are removed to keep the tag list clean on re-migrations.
+ */
+export function buildFlagTags(
+	flagTags: string[],
+	projectName: string,
+): string[] {
+	const projectTag = `launchdarkly-project:${projectName}`;
+	return [...new Set([...flagTags, projectTag])];
+}

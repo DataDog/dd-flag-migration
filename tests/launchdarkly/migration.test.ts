@@ -5,6 +5,7 @@ import {
 } from '../../src/launchdarkly/api.js';
 import {
 	buildAllocations,
+	buildFlagTags,
 	buildTargetingRules,
 	buildVariants,
 	findProjectEditorRoleKeys,
@@ -2151,5 +2152,42 @@ describe('hasSemverConditions', () => {
 				},
 			]),
 		).toBe(true);
+	});
+});
+
+// ─── buildFlagTags ─────────────────────────────────────────────────────────────
+
+describe('buildFlagTags', () => {
+	it('adds the LD project name as a tag', () => {
+		const tags = buildFlagTags([], 'My Project');
+		expect(tags).toEqual(['launchdarkly-project:My Project']);
+	});
+
+	it('preserves existing LD tags and appends the project tag', () => {
+		const tags = buildFlagTags(['checkout', 'q3-launch'], 'My Project');
+		expect(tags).toEqual([
+			'checkout',
+			'q3-launch',
+			'launchdarkly-project:My Project',
+		]);
+	});
+
+	it('deduplicates when the project tag already exists', () => {
+		const tags = buildFlagTags(
+			['checkout', 'launchdarkly-project:My Project'],
+			'My Project',
+		);
+		expect(tags).toEqual(['checkout', 'launchdarkly-project:My Project']);
+	});
+
+	it('always returns at least the project tag even with no source tags', () => {
+		const tags = buildFlagTags([], 'Empty');
+		expect(tags).toHaveLength(1);
+		expect(tags[0]).toBe('launchdarkly-project:Empty');
+	});
+
+	it('handles project names with special characters', () => {
+		const tags = buildFlagTags([], 'My Project (Prod)');
+		expect(tags).toEqual(['launchdarkly-project:My Project (Prod)']);
 	});
 });
