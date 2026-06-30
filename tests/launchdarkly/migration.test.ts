@@ -2160,34 +2160,30 @@ describe('hasSemverConditions', () => {
 describe('buildFlagTags', () => {
 	it('adds the LD project key as a tag', () => {
 		const tags = buildFlagTags([], 'my-project');
-		expect(tags).toEqual(['launchdarkly-project:my-project']);
+		expect(tags).toEqual(['ld-project:my-project']);
 	});
 
 	it('preserves existing LD tags and appends the project tag', () => {
 		const tags = buildFlagTags(['checkout', 'q3-launch'], 'my-project');
-		expect(tags).toEqual([
-			'checkout',
-			'q3-launch',
-			'launchdarkly-project:my-project',
-		]);
+		expect(tags).toEqual(['checkout', 'q3-launch', 'ld-project:my-project']);
 	});
 
 	it('deduplicates when the project tag already exists', () => {
 		const tags = buildFlagTags(
-			['checkout', 'launchdarkly-project:my-project'],
+			['checkout', 'ld-project:my-project'],
 			'my-project',
 		);
-		expect(tags).toEqual(['checkout', 'launchdarkly-project:my-project']);
+		expect(tags).toEqual(['checkout', 'ld-project:my-project']);
 	});
 
 	it('always returns at least the project tag even with no source tags', () => {
 		const tags = buildFlagTags([], 'empty');
 		expect(tags).toHaveLength(1);
-		expect(tags[0]).toBe('launchdarkly-project:empty');
+		expect(tags[0]).toBe('ld-project:empty');
 	});
 
 	it('handles project keys with hyphens and numbers', () => {
 		const tags = buildFlagTags([], 'my-project-123');
-		expect(tags).toEqual(['launchdarkly-project:my-project-123']);
+		expect(tags).toEqual(['ld-project:my-project-123']);
 	});
 });
