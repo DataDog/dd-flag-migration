@@ -734,6 +734,6 @@ export function buildFlagTags(
 	flagTags: string[],
 	projectKey: string,
 ): string[] {
-	const projectTag = `ld-project:${projectKey}`;
+	const projectTag = `project:${projectKey}`;
 	return [...new Set([...flagTags, projectTag])];
 }

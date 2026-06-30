@@ -1628,7 +1628,7 @@ describe('migrate a cross-project prefixed flag that also has team tags', () => 
 
 	it('has prefixed key and migration metadata in the same request', () => {
 		expect(result.request?.key).toBe('mobile-feature-toggle');
-		expect(result.request?.tags).toEqual(['mobile-app', 'ld-project:mobile']);
+		expect(result.request?.tags).toEqual(['mobile-app', 'project:mobile']);
 		expect(result.request?.migration_metadata?.key_prefix).toBe('mobile');
 	});
 });
@@ -1715,7 +1715,7 @@ describe('migrate a realistic flag with targets, rules, LD tags, and a team main
 		expect(result.request?.tags).toEqual([
 			'checkout',
 			'q3-launch',
-			'ld-project:test-project',
+			'project:test-project',
 		]);
 	});
 
@@ -1765,14 +1765,14 @@ describe('migrate a flag and verify the LaunchDarkly project key is added as a t
 	const envMapping = new Map([['production', ddProd]]);
 	const result = migrateFlag(flag, envMapping, ['production'], 'my-ld-project');
 
-	it('includes the ld-project tag with the project key', () => {
-		expect(result.request?.tags).toContain('ld-project:my-ld-project');
+	it('includes the project tag with the project key', () => {
+		expect(result.request?.tags).toContain('project:my-ld-project');
 	});
 
 	it('preserves existing LD source tags alongside the project tag', () => {
 		expect(result.request?.tags).toEqual([
 			'existing-tag',
-			'ld-project:my-ld-project',
+			'project:my-ld-project',
 		]);
 	});
 });
@@ -1804,6 +1804,6 @@ describe('migrate a flag with no LD tags and verify the project key tag is still
 	const result = migrateFlag(flag, envMapping, ['production'], 'solo-project');
 
 	it('includes only the project tag when the flag has no LD tags', () => {
-		expect(result.request?.tags).toEqual(['ld-project:solo-project']);
+		expect(result.request?.tags).toEqual(['project:solo-project']);
 	});
 });
