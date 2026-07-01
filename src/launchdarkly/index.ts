@@ -772,6 +772,7 @@ async function executeMigration(
 	// handle to the restriction-policy API would silently produce a broken
 	// principal and undermine the access controls this feature exists to set.
 	const editorTeamIds: string[] = [];
+	const editorTeamHandles: string[] = [];
 	const unresolvedEditorTeams: string[] = [];
 	if (!ddTeamsFetchFailed) {
 		for (const ldKey of projectEditorTeamKeys) {
@@ -779,6 +780,7 @@ async function executeMigration(
 			const ddId = ddHandleToId.get(ddHandle);
 			if (ddId) {
 				editorTeamIds.push(ddId);
+				editorTeamHandles.push(ddHandle);
 			} else {
 				unresolvedEditorTeams.push(ddHandle);
 			}
@@ -1117,7 +1119,11 @@ async function executeMigration(
 			const allRuleLabel = allRuleCount > 0 ? `, ${allRuleCount} rule(s)` : '';
 
 			if (existingFlagId) {
-				const syncTags = buildFlagTags(flag.tags, projectKey);
+				const syncTags = buildFlagTags(
+					flag.tags,
+					projectKey,
+					editorTeamHandles,
+				);
 
 				if (envsToEnable.length === 0) {
 					// Always sync tags and restriction policy even when no new environments need enabling.
@@ -1437,7 +1443,7 @@ async function executeMigration(
 					? `${conflictResolution.prefix}-${flag.key}`
 					: targetKey;
 
-				const tags = buildFlagTags(flag.tags, projectKey);
+				const tags = buildFlagTags(flag.tags, projectKey, editorTeamHandles);
 
 				const request: DatadogCreateFlagRequest = {
 					key: ddKey,

@@ -2186,4 +2186,35 @@ describe('buildFlagTags', () => {
 		const tags = buildFlagTags([], 'my-project-123');
 		expect(tags).toEqual(['project:my-project-123']);
 	});
+
+	it('adds team tags for editor teams', () => {
+		const tags = buildFlagTags(['checkout'], 'my-project', [
+			'marketing-team',
+			'platform-team',
+		]);
+		expect(tags).toEqual([
+			'checkout',
+			'team:marketing-team',
+			'team:platform-team',
+			'project:my-project',
+		]);
+	});
+
+	it('deduplicates team tags and existing tags', () => {
+		const tags = buildFlagTags(
+			['team:marketing-team', 'checkout'],
+			'my-project',
+			['marketing-team'],
+		);
+		expect(tags).toEqual([
+			'team:marketing-team',
+			'checkout',
+			'project:my-project',
+		]);
+	});
+
+	it('does not add team tags when no editor teams are provided', () => {
+		const tags = buildFlagTags(['checkout'], 'my-project');
+		expect(tags).toEqual(['checkout', 'project:my-project']);
+	});
 });
