@@ -5,6 +5,7 @@ import {
 } from '../../src/launchdarkly/api.js';
 import {
 	buildAllocations,
+	buildFlagTags,
 	buildTargetingRules,
 	buildVariants,
 	findProjectEditorRoleKeys,
@@ -2151,5 +2152,38 @@ describe('hasSemverConditions', () => {
 				},
 			]),
 		).toBe(true);
+	});
+});
+
+// ─── buildFlagTags ─────────────────────────────────────────────────────────────
+
+describe('buildFlagTags', () => {
+	it('adds the LD project key as a tag', () => {
+		const tags = buildFlagTags([], 'my-project');
+		expect(tags).toEqual(['project:my-project']);
+	});
+
+	it('preserves existing LD tags and appends the project tag', () => {
+		const tags = buildFlagTags(['checkout', 'q3-launch'], 'my-project');
+		expect(tags).toEqual(['checkout', 'q3-launch', 'project:my-project']);
+	});
+
+	it('deduplicates when the project tag already exists', () => {
+		const tags = buildFlagTags(
+			['checkout', 'project:my-project'],
+			'my-project',
+		);
+		expect(tags).toEqual(['checkout', 'project:my-project']);
+	});
+
+	it('always returns at least the project tag even with no source tags', () => {
+		const tags = buildFlagTags([], 'empty');
+		expect(tags).toHaveLength(1);
+		expect(tags[0]).toBe('project:empty');
+	});
+
+	it('handles project keys with hyphens and numbers', () => {
+		const tags = buildFlagTags([], 'my-project-123');
+		expect(tags).toEqual(['project:my-project-123']);
 	});
 });
