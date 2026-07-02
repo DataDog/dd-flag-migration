@@ -649,8 +649,10 @@ async function loadFlagDetails(
 	ldApiKey: string,
 	projectKey: string,
 	flags: LDFlag[],
+	options?: { onProgress?: (loaded: number, total: number) => void },
 ): Promise<LDFlag[]> {
 	const detailed: LDFlag[] = [];
+	const total = flags.length;
 	for (const flag of flags) {
 		if (flag.environments) {
 			detailed.push(flag);
@@ -658,6 +660,7 @@ async function loadFlagDetails(
 			const full = await fetchFlag(ldApiKey, projectKey, flag.key);
 			detailed.push(full);
 		}
+		options?.onProgress?.(detailed.length, total);
 	}
 	return detailed;
 }
@@ -750,11 +753,15 @@ async function executeMigration(
 
 	// Fetch full flag details for selected flags
 	const detailSpinner = createSpinner(
-		`Fetching details for ${flags.length} flag(s)…`,
+		`Fetching details for ${flags.length} flag(s)… (0/${flags.length} downloaded)`,
 	).start();
 	let detailedFlags: LDFlag[];
 	try {
-		detailedFlags = await loadFlagDetails(ldApiKey, projectKey, flags);
+		detailedFlags = await loadFlagDetails(ldApiKey, projectKey, flags, {
+			onProgress: (loaded, total) => {
+				detailSpinner.text = `Fetching details for ${total} flag(s)… (${loaded}/${total} downloaded)`;
+			},
+		});
 		detailSpinner.succeed(`Loaded details for ${detailedFlags.length} flag(s)`);
 	} catch (err) {
 		detailSpinner.fail('Failed to fetch flag details');
