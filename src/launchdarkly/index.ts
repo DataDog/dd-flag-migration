@@ -487,44 +487,49 @@ const LD_FILTER_CATEGORIES: FilterCategory[] = [
 	{
 		id: 'new',
 		label: 'new',
-		description: 'Created fewer than 7 days ago and has never been requested.',
+		scope: 'any environment',
+		description:
+			'LaunchDarkly reports new for at least one non-archived environment.',
 	},
 	{
 		id: 'active',
 		label: 'active',
+		scope: 'any environment',
 		description:
-			'LaunchDarkly is receiving requests for the flag, and at least one of: multiple variations are configured, the flag is toggled off, or its configuration changed in the past 7 days.',
+			'LaunchDarkly reports active for at least one non-archived environment.',
 	},
 	{
 		id: 'inactive',
 		label: 'inactive',
+		scope: 'all environments',
 		description:
-			'Created more than 7 days ago and not requested within the past 7 days.',
+			'LaunchDarkly reports inactive for every non-archived environment whose status could be loaded.',
 	},
 	{
 		id: 'launched',
 		label: 'launched',
+		scope: 'any environment',
 		description:
-			'LaunchDarkly is receiving requests, the flag is toggled on, there is only one variation configured, and no configuration changes in the past 7 days.',
+			'LaunchDarkly reports launched for at least one non-archived environment.',
 	},
 	{
 		id: MIGRATED_FILTER_ID,
 		label: 'previously-migrated',
-		description: 'Flag has been migrated for at least one environment.',
+		scope: 'any environment',
+		description: 'Flag exists in Datadog for at least one environment.',
 	},
 ];
 
 type LDFlagStatusByEnv = Map<string, Map<string, LDFlagStatus> | null>;
 
 /**
- * Collapse per-environment LD statuses for a single flag into the set of
- * categories it belongs to, using a union: the flag is assigned every status
- * held by any of its environments. A null environment entry means the status
- * fetch failed; flags with no known status in that case stay uncategorized
- * rather than being treated as inactive.
+ * Collapse per-environment LD statuses for a single flag into filter
+ * categories across all non-archived environments. Active/new/launched are
+ * "any environment" categories. Inactive is an "all environments" category.
  *
- * When all selected environment status fetches succeeded but a flag has no
- * known status, it defaults to `inactive`, matching LD's own status semantics.
+ * A null environment entry means the status fetch failed; flags with no
+ * positive status in that case stay uncategorized rather than being treated as
+ * inactive everywhere.
  */
 export function flagCategories(
 	flagKey: string,
@@ -532,19 +537,19 @@ export function flagCategories(
 ): string[] {
 	const found = new Set<LDFlagStatus>();
 	let hasUnknownEnvironment = false;
+	let hasKnownEnvironment = false;
 	for (const statuses of statusByEnv.values()) {
 		if (statuses === null) {
 			hasUnknownEnvironment = true;
 			continue;
 		}
-		const s = statuses.get(flagKey);
-		if (s) found.add(s);
+		hasKnownEnvironment = true;
+		found.add(statuses.get(flagKey) ?? 'inactive');
 	}
-	if (found.size === 0 && (hasUnknownEnvironment || statusByEnv.size === 0)) {
-		return [];
-	}
-	if (found.size === 0) return ['inactive'];
-	return [...found];
+	const positive = [...found].filter((status) => status !== 'inactive');
+	if (positive.length > 0) return positive;
+	if (!hasKnownEnvironment || hasUnknownEnvironment) return [];
+	return ['inactive'];
 }
 
 async function selectFlags(
@@ -1944,8 +1949,9 @@ export async function runLaunchDarklyMigration(
 	let prevSelectedEnvKeys: string[] = [];
 	let prevEnvMapping = new Map<string, DatadogEnvironment>();
 	let prevSelectedFlags: LDFlag[] = [];
-	// Cache of LD flag lifecycle statuses per environment key, fetched lazily
-	// as environments are selected and reused across re-selection loops.
+	const statusEnvs = ldEnvironments.filter((env) => !env.archived);
+	// Cache of LD flag lifecycle statuses per non-archived environment key,
+	// fetched lazily and reused across re-selection loops.
 	const statusByEnv: LDFlagStatusByEnv = new Map();
 
 	// eslint-disable-next-line no-constant-condition
@@ -1968,10 +1974,12 @@ export async function runLaunchDarklyMigration(
 		}
 		prevSelectedEnvKeys = envResult.map((e) => e.key);
 
-		// Fetch flag lifecycle statuses for any newly selected environments so
-		// the advanced-filter screen can categorize flags. Failures are
-		// non-fatal — filtering simply treats those flags as uncategorized.
-		for (const env of envResult) {
+		// Fetch flag lifecycle statuses for all non-archived environments so the
+		// advanced-filter screen can answer "active anywhere" and "inactive
+		// everywhere". Failures are non-fatal — filtering simply treats affected
+		// flags as uncategorized unless another environment proves a positive
+		// status.
+		for (const env of statusEnvs) {
 			if (statusByEnv.has(env.key)) continue;
 			try {
 				statusByEnv.set(
@@ -1998,10 +2006,10 @@ export async function runLaunchDarklyMigration(
 			while (true) {
 				clearScreen();
 				printHeader();
-				const selectedStatusByEnv = new Map(
-					prevSelectedEnvKeys
-						.filter((k) => statusByEnv.has(k))
-						.map((k) => [k, statusByEnv.get(k) ?? null]),
+				const filterStatusByEnv = new Map(
+					statusEnvs
+						.filter((env) => statusByEnv.has(env.key))
+						.map((env) => [env.key, statusByEnv.get(env.key) ?? null]),
 				);
 				const flagResult = await selectFlags(
 					allFlags,
@@ -2009,7 +2017,7 @@ export async function runLaunchDarklyMigration(
 					selectedProject.key,
 					prevSelectedFlags,
 					conflictResolution,
-					selectedStatusByEnv,
+					filterStatusByEnv,
 				);
 				if (flagResult === null) break;
 

@@ -279,7 +279,8 @@ const EPPO_FILTER_CATEGORIES: FilterCategory[] = [
 	{
 		id: MIGRATED_FILTER_ID,
 		label: 'previously-migrated',
-		description: 'Flag has been migrated for at least one environment.',
+		scope: 'any environment',
+		description: 'Flag exists in Datadog for at least one environment.',
 	},
 ];
 

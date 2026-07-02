@@ -8,8 +8,8 @@ All notable changes to this project will be documented in this file.
 
 - Feat: replace the flag-selection **Tab** toggle with an advanced-filter screen
   - Tab now opens a multi-select of flag categories (`new`, `active`, `inactive`, `launched`, `previously-migrated`); all start checked
-  - Unchecking a category hides matching flags and unselects any already-selected flags that no longer match on return
-  - The four lifecycle categories are derived from LaunchDarkly flag statuses (per environment, union across selected environments); Eppo offers only `previously-migrated` since it exposes no usage-recency signal
+  - Press Enter to apply filter changes and unselect any already-selected flags that no longer match; press Escape to cancel filter changes
+  - The four lifecycle categories are derived from LaunchDarkly flag statuses across all non-archived environments; `active` means active in any environment and `inactive` means inactive in all environments. Eppo offers only `previously-migrated` since it exposes no usage-recency signal
 
 ## [1.1.0] — 2026-06-29
 

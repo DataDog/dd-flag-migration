@@ -25,9 +25,15 @@ import stripAnsi from 'strip-ansi';
  */
 export const MIGRATED_FILTER_ID = 'previously-migrated';
 
+export type FilterCategoryScope =
+	| 'any environment'
+	| 'all environments'
+	| 'selected environments';
+
 export type FilterCategory = {
 	id: string;
 	label: string;
+	scope?: FilterCategoryScope;
 	description: string;
 };
 
@@ -121,6 +127,12 @@ const theme = {
 	},
 };
 
+const scopeStyles: Record<FilterCategoryScope, (value: string) => string> = {
+	'any environment': chalk.cyan,
+	'all environments': chalk.yellow,
+	'selected environments': chalk.magenta,
+};
+
 const _filterableCheckbox = createPrompt(
 	<T>(config: Config<T>, done: (value: T[]) => void) => {
 		const { pageSize = 10 } = config;
@@ -147,6 +159,10 @@ const _filterableCheckbox = createPrompt(
 		const [activeFilters, setActiveFilters] = useState<Set<string>>(
 			() => new Set(filterCategories.map((c) => c.id)),
 		);
+		// Draft filter ids while the advanced-filter screen is open.
+		const [draftFilters, setDraftFilters] = useState<Set<string>>(
+			() => new Set(filterCategories.map((c) => c.id)),
+		);
 		// Cursor position within the filter sub-screen.
 		const [filterActive, setFilterActive] = useState(0);
 
@@ -168,11 +184,11 @@ const _filterableCheckbox = createPrompt(
 		);
 
 		/**
-		 * Return from the filter sub-screen to the list, unchecking any items
-		 * that no longer match the active filters so selection stays consistent
-		 * with what is visible.
+		 * Apply the draft filter selection and return to the list, unchecking any
+		 * items that no longer match so selection stays consistent with visibility.
 		 */
-		const returnToList = (nextFilters: ReadonlySet<string>) => {
+		const applyFilterSelection = (nextFilters: ReadonlySet<string>) => {
+			setActiveFilters(new Set(nextFilters));
 			setAllItems(
 				allItems.map((item) =>
 					item.checked &&
@@ -185,11 +201,21 @@ const _filterableCheckbox = createPrompt(
 			setActive(0);
 		};
 
+		const cancelFilterSelection = () => {
+			setDraftFilters(new Set(activeFilters));
+			setMode('list');
+			setActive(0);
+		};
+
 		useKeypress((key) => {
 			// ─── Advanced-filter sub-screen ─────────────────────────────────
 			if (mode === 'filter') {
-				if (isEnterKey(key) || key.name === 'tab' || key.name === 'escape') {
-					returnToList(activeFilters);
+				if (isEnterKey(key)) {
+					applyFilterSelection(draftFilters);
+					return;
+				}
+				if (key.name === 'escape') {
+					cancelFilterSelection();
 					return;
 				}
 				if (isUpKey(key)) {
@@ -198,13 +224,22 @@ const _filterableCheckbox = createPrompt(
 					setFilterActive(
 						Math.min(filterCategories.length - 1, safeFilterActive + 1),
 					);
+				} else if (key.ctrl && key.name === 'a') {
+					const allFiltersSelected = filterCategories.every((cat) =>
+						draftFilters.has(cat.id),
+					);
+					setDraftFilters(
+						allFiltersSelected
+							? new Set()
+							: new Set(filterCategories.map((cat) => cat.id)),
+					);
 				} else if (isSpaceKey(key)) {
 					const target = filterCategories[safeFilterActive];
 					if (target) {
-						const next = new Set(activeFilters);
+						const next = new Set(draftFilters);
 						if (next.has(target.id)) next.delete(target.id);
 						else next.add(target.id);
-						setActiveFilters(next);
+						setDraftFilters(next);
 					}
 				}
 				return;
@@ -249,6 +284,7 @@ const _filterableCheckbox = createPrompt(
 				);
 			} else if (key.name === 'tab') {
 				if (filterCategories.length > 0) {
+					setDraftFilters(new Set(activeFilters));
 					setMode('filter');
 					setFilterActive(0);
 				}
@@ -344,21 +380,34 @@ const _filterableCheckbox = createPrompt(
 
 		// ─── Advanced-filter sub-screen ────────────────────────────────────
 		if (mode === 'filter') {
+			const draftMatchCount = allItems.filter((item) =>
+				itemMatchesFilters(item, draftFilters, filterCategories),
+			).length;
+			const filterSummaryText = `${draftMatchCount} of ${allItems.length} flags match current filter selection`;
+			const filterSummary =
+				draftMatchCount === allItems.length
+					? chalk.dim(filterSummaryText)
+					: chalk.yellow(filterSummaryText);
 			const rows = filterCategories.map((cat, idx) => {
 				const isActive = idx === safeFilterActive;
-				const checkbox = activeFilters.has(cat.id)
+				const checkbox = draftFilters.has(cat.id)
 					? theme.icon.checked
 					: theme.icon.unchecked;
 				const cursor = isActive ? theme.icon.cursor : ' ';
-				const name = isActive ? chalk.cyan(cat.label) : chalk.bold(cat.label);
-				return `${cursor}${checkbox} ${name} ${chalk.dim(`· ${cat.description}`)}`;
+				const name = isActive ? chalk.cyan(cat.label) : cat.label;
+				const scope = cat.scope ? scopeStyles[cat.scope](cat.scope) : undefined;
+				const meta = [scope, chalk.dim(cat.description)]
+					.filter(Boolean)
+					.join(` ${chalk.dim('·')} `);
+				return `${cursor}${checkbox} ${name} ${chalk.dim('·')} ${meta}`;
 			});
 			const filterHelp = chalk.dim(
-				'↑↓ navigate  ·  space toggle  ·  ⏎ return to flag selection',
+				'↑↓ navigate  ·  space toggle  ·  ctrl+a toggle all  ·  esc cancel filter changes  ·  ⏎ apply filter selection',
 			);
 			return (
 				[
-					`${prefix} ${builtTheme.style.message('Filter flags by status:', 'idle')}`,
+					`${prefix} ${builtTheme.style.message('Filter flags by category:', 'idle')}`,
+					filterSummary,
 					rows.join('\n'),
 					filterHelp,
 				]

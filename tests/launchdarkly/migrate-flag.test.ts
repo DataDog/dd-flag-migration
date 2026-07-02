@@ -1570,7 +1570,7 @@ describe('classifyConflict edge cases', () => {
 });
 
 describe('flagCategories', () => {
-	it('returns the union of statuses across selected environments', () => {
+	it('returns active/new/launched statuses seen in any environment', () => {
 		const statusByEnv: Map<string, Map<string, LDFlagStatus> | null> = new Map([
 			['staging', new Map<string, LDFlagStatus>([['checkout', 'active']])],
 			['production', new Map<string, LDFlagStatus>([['checkout', 'launched']])],
@@ -1582,6 +1582,15 @@ describe('flagCategories', () => {
 		]);
 	});
 
+	it('does not include inactive when any environment has a positive status', () => {
+		const statusByEnv: Map<string, Map<string, LDFlagStatus> | null> = new Map([
+			['staging', new Map<string, LDFlagStatus>([['checkout', 'inactive']])],
+			['production', new Map<string, LDFlagStatus>([['checkout', 'active']])],
+		]);
+
+		expect(flagCategories('checkout', statusByEnv)).toEqual(['active']);
+	});
+
 	it('leaves flags uncategorized when no status data is available', () => {
 		expect(
 			flagCategories(
@@ -1591,7 +1600,7 @@ describe('flagCategories', () => {
 		).toEqual([]);
 	});
 
-	it('leaves flags uncategorized when status fetch failed and no known status exists', () => {
+	it('leaves flags uncategorized when status fetch failed and no positive status exists', () => {
 		const statusByEnv: Map<string, Map<string, LDFlagStatus> | null> = new Map([
 			['staging', null],
 			['production', new Map<string, LDFlagStatus>()],
@@ -1600,13 +1609,22 @@ describe('flagCategories', () => {
 		expect(flagCategories('checkout', statusByEnv)).toEqual([]);
 	});
 
-	it('defaults to inactive only when all selected status fetches succeeded', () => {
+	it('returns inactive only when all loaded environments are inactive', () => {
 		const statusByEnv: Map<string, Map<string, LDFlagStatus> | null> = new Map([
 			['staging', new Map<string, LDFlagStatus>()],
-			['production', new Map<string, LDFlagStatus>()],
+			['production', new Map<string, LDFlagStatus>([['checkout', 'inactive']])],
 		]);
 
 		expect(flagCategories('checkout', statusByEnv)).toEqual(['inactive']);
+	});
+
+	it('keeps a positive status even when another environment status fetch failed', () => {
+		const statusByEnv: Map<string, Map<string, LDFlagStatus> | null> = new Map([
+			['staging', null],
+			['production', new Map<string, LDFlagStatus>([['checkout', 'active']])],
+		]);
+
+		expect(flagCategories('checkout', statusByEnv)).toEqual(['active']);
 	});
 });
 

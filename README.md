@@ -138,7 +138,7 @@ The tool will walk you through:
 
 1. **Select your provider** — Eppo or LaunchDarkly
 2. **Map environments** — link each source environment (e.g. `production`) to the corresponding Datadog environment
-3. **Select flags** — choose which flags to migrate; flags already in Datadog are marked. Press **Tab** to open the advanced-filter screen and narrow the list by flag status (see [Advanced filtering](#advanced-filtering)), then **Ctrl+A** to select all remaining flags
+3. **Select flags** — choose which flags to migrate; flags already in Datadog are marked. Press **Tab** to open the advanced-filter screen and narrow the list by category (see [Advanced filtering](#advanced-filtering)), then **Ctrl+A** to select all remaining flags
 4. **Confirm and migrate** — flags are created in Datadog and enabled in the mapped environments. A progress bar tracks migration status in real time
 
 API keys are read from environment variables (see [Credentials](#credentials-youll-need)).
@@ -156,17 +156,17 @@ For large flag sets, the tool supports splitting work across multiple runs:
 
 ### Advanced filtering
 
-During flag selection, press **Tab** to open a multi-select filter screen. All categories start checked; uncheck a category to hide flags in it, then press **Enter** to return to flag selection. Any selected flags that no longer match the active filters are automatically unselected on return.
+During flag selection, press **Tab** to open a multi-select filter screen. All categories start checked; uncheck a category to hide flags in it, then press **Enter** to apply the filter selection and return to flag selection, or **Escape** to cancel filter changes. Any selected flags that no longer match the applied filters are automatically unselected on return.
 
 The available categories are:
 
-- **new** — created fewer than 7 days ago and never requested _(LaunchDarkly only)_
-- **active** — LaunchDarkly is receiving requests, and at least one of: multiple variations are configured, the flag is toggled off, or its configuration changed in the past 7 days _(LaunchDarkly only)_
-- **inactive** — created more than 7 days ago and not requested within the past 7 days _(LaunchDarkly only)_
-- **launched** — LaunchDarkly is receiving requests, the flag is toggled on, there is only one variation configured, and no configuration changes in the past 7 days _(LaunchDarkly only)_
-- **previously-migrated** — the flag has been migrated to Datadog for at least one environment _(both providers)_
+- **new** — any environment — LaunchDarkly reports new for at least one non-archived environment _(LaunchDarkly only)_
+- **active** — any environment — LaunchDarkly reports active for at least one non-archived environment _(LaunchDarkly only)_
+- **inactive** — all environments — LaunchDarkly reports inactive for every non-archived environment whose status could be loaded _(LaunchDarkly only)_
+- **launched** — any environment — LaunchDarkly reports launched for at least one non-archived environment _(LaunchDarkly only)_
+- **previously-migrated** — any environment — the flag exists in Datadog for at least one environment _(both providers)_
 
-The four lifecycle categories are derived from [LaunchDarkly flag statuses](https://launchdarkly.com/docs/api/feature-flags/get-feature-flag-status-across-environments), which are tracked per environment; a flag matches a category if any selected environment has that status. Eppo does not expose flag usage-recency data, so only **previously-migrated** is available when migrating from Eppo.
+The four lifecycle categories are derived from [LaunchDarkly flag statuses](https://launchdarkly.com/docs/api/feature-flags/get-feature-flag-status-across-environments), which are tracked per environment. Environment selection still controls what gets migrated; lifecycle filters look across all non-archived LaunchDarkly environments in the project so they can answer whether a flag appears to be used anywhere. If a status fetch fails, the tool does not treat that missing data as inactive. Eppo does not expose flag usage-recency data, so only **previously-migrated** is available when migrating from Eppo.
 
 ### LaunchDarkly-specific workflow
 
