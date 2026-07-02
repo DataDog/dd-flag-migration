@@ -791,24 +791,25 @@ describe('fetchFlagStatuses', () => {
 				statusItem(`flag-${start + i}`, 'active'),
 			);
 
+		// First page is a full page (limit=100), forcing a second request.
 		mock
 			.onGet(
 				'https://app.launchdarkly.com/api/v2/flag-statuses/big-project/production',
 			)
-			.replyOnce(200, { items: page(0, 20), totalCount: 30 })
+			.replyOnce(200, { items: page(0, 100), totalCount: 130 })
 			.onGet(
 				'https://app.launchdarkly.com/api/v2/flag-statuses/big-project/production',
 			)
-			.replyOnce(200, { items: page(20, 10), totalCount: 30 });
+			.replyOnce(200, { items: page(100, 30), totalCount: 130 });
 
 		const statuses = await fetchFlagStatuses(
 			API_KEY,
 			'big-project',
 			'production',
 		);
-		expect(statuses.size).toBe(30);
+		expect(statuses.size).toBe(130);
 		expect(statuses.get('flag-0')).toBe('active');
-		expect(statuses.get('flag-29')).toBe('active');
+		expect(statuses.get('flag-129')).toBe('active');
 	});
 
 	it('returns an empty map when the environment has no flags', async () => {

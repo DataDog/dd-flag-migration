@@ -347,7 +347,7 @@ export async function fetchFlagStatuses(
 ): Promise<Map<string, LDFlagStatus>> {
 	const statuses = new Map<string, LDFlagStatus>();
 	let offset = 0;
-	const limit = 20;
+	const limit = 100;
 
 	while (true) {
 		const response = await ldClient.get<{

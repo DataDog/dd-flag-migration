@@ -516,14 +516,15 @@ const LD_FILTER_CATEGORIES: FilterCategory[] = [
 	{
 		id: MIGRATED_FILTER_ID,
 		label: 'previously-migrated',
-		scope: 'any environment',
-		description: 'Flag exists in Datadog for at least one environment.',
+		scope: 'flag',
+		description:
+			'A matching flag already exists in Datadog (its targeting rules may still differ).',
 	},
 	{
 		id: NOT_MIGRATED_FILTER_ID,
 		label: 'not-yet-migrated',
-		scope: 'all environments',
-		description: 'Flag does not exist in Datadog for any environment.',
+		scope: 'flag',
+		description: 'No matching flag exists in Datadog yet.',
 	},
 ];
 
@@ -1985,16 +1986,33 @@ export async function runLaunchDarklyMigration(
 		// advanced-filter screen can answer "active anywhere" and "inactive
 		// everywhere". Failures are non-fatal — filtering simply treats affected
 		// flags as uncategorized unless another environment proves a positive
-		// status.
-		for (const env of statusEnvs) {
-			if (statusByEnv.has(env.key)) continue;
-			try {
-				statusByEnv.set(
-					env.key,
-					await fetchFlagStatuses(ldApiKey, selectedProject.key, env.key),
+		// status. Fetched lazily and cached, so re-selection loops stay silent.
+		const envsToLoad = statusEnvs.filter((env) => !statusByEnv.has(env.key));
+		if (envsToLoad.length > 0) {
+			const statusSpinner = createSpinner(
+				'Loading LaunchDarkly flag statuses…',
+			).start();
+			let failedCount = 0;
+			for (const env of envsToLoad) {
+				try {
+					statusByEnv.set(
+						env.key,
+						await fetchFlagStatuses(ldApiKey, selectedProject.key, env.key),
+					);
+				} catch {
+					statusByEnv.set(env.key, null);
+					failedCount++;
+				}
+			}
+			const loadedCount = envsToLoad.length - failedCount;
+			if (failedCount > 0) {
+				statusSpinner.warn(
+					`Loaded flag statuses for ${loadedCount} environment(s); ${failedCount} could not be loaded (affected flags stay uncategorized)`,
 				);
-			} catch {
-				statusByEnv.set(env.key, null);
+			} else {
+				statusSpinner.succeed(
+					`Loaded flag statuses for ${loadedCount} environment(s)`,
+				);
 			}
 		}
 
@@ -2013,18 +2031,13 @@ export async function runLaunchDarklyMigration(
 			while (true) {
 				clearScreen();
 				printHeader();
-				const filterStatusByEnv = new Map(
-					statusEnvs
-						.filter((env) => statusByEnv.has(env.key))
-						.map((env) => [env.key, statusByEnv.get(env.key) ?? null]),
-				);
 				const flagResult = await selectFlags(
 					allFlags,
 					datadogFlags,
 					selectedProject.key,
 					prevSelectedFlags,
 					conflictResolution,
-					filterStatusByEnv,
+					statusByEnv,
 				);
 				if (flagResult === null) break;
 

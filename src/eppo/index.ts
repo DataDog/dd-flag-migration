@@ -294,14 +294,15 @@ const EPPO_FILTER_CATEGORIES: FilterCategory[] = [
 	{
 		id: MIGRATED_FILTER_ID,
 		label: 'previously-migrated',
-		scope: 'any environment',
-		description: 'Flag exists in Datadog for at least one environment.',
+		scope: 'flag',
+		description:
+			'A matching flag already exists in Datadog (its targeting rules may still differ).',
 	},
 	{
 		id: NOT_MIGRATED_FILTER_ID,
 		label: 'not-yet-migrated',
-		scope: 'all environments',
-		description: 'Flag does not exist in Datadog for any environment.',
+		scope: 'flag',
+		description: 'No matching flag exists in Datadog yet.',
 	},
 ];
 

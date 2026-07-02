@@ -28,7 +28,8 @@ export const NOT_MIGRATED_FILTER_ID = 'not-yet-migrated';
 export type FilterCategoryScope =
 	| 'any environment'
 	| 'all environments'
-	| 'selected environments';
+	| 'selected environments'
+	| 'flag';
 
 export type FilterCategory = {
 	id: string;
@@ -124,6 +125,7 @@ const scopeStyles: Record<FilterCategoryScope, (value: string) => string> = {
 	'any environment': chalk.cyan,
 	'all environments': chalk.yellow,
 	'selected environments': chalk.magenta,
+	flag: chalk.blue,
 };
 
 const _filterableCheckbox = createPrompt(
@@ -406,6 +408,9 @@ const _filterableCheckbox = createPrompt(
 					.join(` ${chalk.dim('·')} `);
 				return `${cursor}${checkbox} ${name} ${chalk.dim('·')} ${meta}`;
 			});
+			const filterNote = chalk.dim(
+				'Categories combine with OR — a flag shows if it matches any checked category.',
+			);
 			const filterHelp = chalk.dim(
 				'↑↓ navigate  ·  space toggle  ·  ctrl+a toggle all  ·  esc cancel filter changes  ·  ⏎ apply filter selection',
 			);
@@ -413,6 +418,7 @@ const _filterableCheckbox = createPrompt(
 				[
 					`${prefix} ${builtTheme.style.message('Filter flags by category:', 'idle')}`,
 					filterSummary,
+					filterNote,
 					rows.join('\n'),
 					filterHelp,
 				]

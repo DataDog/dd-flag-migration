@@ -164,8 +164,8 @@ The available categories are:
 - **active** — any environment — LaunchDarkly reports active for at least one non-archived environment _(LaunchDarkly only)_
 - **inactive** — all environments — LaunchDarkly reports inactive for every non-archived environment whose status could be loaded _(LaunchDarkly only)_
 - **launched** — any environment — LaunchDarkly reports launched for at least one non-archived environment _(LaunchDarkly only)_
-- **previously-migrated** — any environment — the flag exists in Datadog for at least one environment _(both providers)_
-- **not-yet-migrated** — all environments — the flag does not exist in Datadog for any environment _(both providers)_
+- **previously-migrated** — flag — a matching flag already exists in Datadog; its targeting rules may still differ _(both providers)_
+- **not-yet-migrated** — flag — no matching flag exists in Datadog yet _(both providers)_
 
 The four lifecycle categories are derived from [LaunchDarkly flag statuses](https://launchdarkly.com/docs/api/feature-flags/get-feature-flag-status-across-environments), which are tracked per environment. Environment selection still controls what gets migrated; lifecycle filters look across all non-archived LaunchDarkly environments in the project so they can answer whether a flag appears to be used anywhere. If a status fetch fails, the tool does not treat that missing data as inactive. Eppo does not expose flag usage-recency data, so only the migration-state categories are available when migrating from Eppo.
 
