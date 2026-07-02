@@ -9,6 +9,7 @@ import {
 	buildVariantSyncDryRunRequests,
 	createFeatureFlag,
 	enableFeatureFlagEnvironment,
+	eppoSourceIdLookupKey,
 	fetchDatadogEnvironments,
 	fetchDatadogFlagKeys,
 	fetchFlagDetail,
@@ -16,7 +17,12 @@ import {
 	syncVariantsCreatesAndUpdates,
 	updateFlagTags,
 } from '../datadog.js';
-import { filterableCheckbox } from '../filterable-checkbox.js';
+import {
+	type FilterCategory,
+	filterableCheckbox,
+	MIGRATED_FILTER_ID,
+	NOT_MIGRATED_FILTER_ID,
+} from '../filterable-checkbox.js';
 import { toSyncRequests } from '../migration.js';
 import { writeJsonOutput } from '../output.js';
 import { MigrationProgressBar } from '../progress-bar.js';
@@ -103,6 +109,16 @@ function formatAxiosError(err: unknown): string {
 	const url = err.config?.url ?? '';
 	const bodyPreview = data ? JSON.stringify(data).slice(0, 300) : 'no body';
 	return `${method} ${url} — ${status ?? 'no status'}: ${bodyPreview}`;
+}
+
+function datadogIdForEppoFlag(
+	flag: EppoFlag,
+	datadogKeys: Map<string, string>,
+): string | undefined {
+	return (
+		datadogKeys.get(flag.key) ??
+		datadogKeys.get(eppoSourceIdLookupKey(String(flag.id)))
+	);
 }
 
 function flagLabel(flag: EppoFlag, inDatadog: boolean): string {
@@ -222,7 +238,7 @@ async function selectFlags(
 			: flags;
 
 	const inDatadogCount = visibleFlags.filter((f) =>
-		datadogKeys.has(f.key),
+		datadogIdForEppoFlag(f, datadogKeys),
 	).length;
 	const previousKeys = new Set(previouslySelected.map((f) => f.key));
 
@@ -243,8 +259,8 @@ async function selectFlags(
 
 	const sortedFlags = visibleFlags.slice().sort((a, b) => {
 		// Flags already in Datadog float to the top
-		const aDD = datadogKeys.has(a.key) ? 0 : 1;
-		const bDD = datadogKeys.has(b.key) ? 0 : 1;
+		const aDD = datadogIdForEppoFlag(a, datadogKeys) ? 0 : 1;
+		const bDD = datadogIdForEppoFlag(b, datadogKeys) ? 0 : 1;
 		if (aDD !== bDD) return aDD - bDD;
 		return a.name.localeCompare(b.name);
 	});
@@ -255,14 +271,39 @@ async function selectFlags(
 	return filterableCheckbox<EppoFlag>({
 		message: 'Select flags to migrate to Datadog:',
 		choices: sortedFlags.map((flag) => ({
-			name: flagLabel(flag, datadogKeys.has(flag.key)),
+			name: flagLabel(
+				flag,
+				datadogIdForEppoFlag(flag, datadogKeys) !== undefined,
+			),
 			value: flag,
 			checked: previousKeys.has(flag.key),
-			migrated: datadogKeys.has(flag.key),
+			migrated: datadogIdForEppoFlag(flag, datadogKeys) !== undefined,
 		})),
 		pageSize,
+		filterCategories: EPPO_FILTER_CATEGORIES,
 	});
 }
+
+/**
+ * Advanced-filter categories offered on the Eppo flag-selection screen. Eppo
+ * exposes no flag lifecycle/usage-recency signal (its per-environment `active`
+ * field is a config on/off toggle, not an evaluation-recency status), so the
+ * available categories only describe migration state.
+ */
+const EPPO_FILTER_CATEGORIES: FilterCategory[] = [
+	{
+		id: MIGRATED_FILTER_ID,
+		label: 'previously-migrated',
+		scope: 'any environment',
+		description: 'Flag exists in Datadog for at least one environment.',
+	},
+	{
+		id: NOT_MIGRATED_FILTER_ID,
+		label: 'not-yet-migrated',
+		scope: 'all environments',
+		description: 'Flag does not exist in Datadog for any environment.',
+	},
+];
 
 type ConfirmAction = 'migrate' | 'select-more' | 'cancel';
 
@@ -520,7 +561,7 @@ async function confirmMigration(
 				defaultVariantKeyPerEnv,
 			);
 			const envsToEnable = getEnvsToEnable(flag, envMapping);
-			const existingFlagId = datadogKeys.get(flag.key);
+			const existingFlagId = datadogIdForEppoFlag(flag, datadogKeys);
 
 			// Count targeting rules for reporting (all environments — used for new-flag path)
 			const allRuleCount = allocations.reduce(
@@ -800,6 +841,11 @@ async function confirmMigration(
 					value_type: mapVariationType(flag.variation_type),
 					variants,
 					allocations: allocations.length > 0 ? allocations : undefined,
+					migration_metadata: {
+						provider: 'eppo',
+						source_id: String(flag.id),
+						source_key: flag.key,
+					},
 					...(hasSemverConditions(allocations)
 						? { distribution_channel: 'CLIENT' as const }
 						: {}),

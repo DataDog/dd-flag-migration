@@ -138,7 +138,7 @@ The tool will walk you through:
 
 1. **Select your provider** — Eppo or LaunchDarkly
 2. **Map environments** — link each source environment (e.g. `production`) to the corresponding Datadog environment
-3. **Select flags** — choose which flags to migrate; flags already in Datadog are marked. Press **Tab** to toggle visibility of already-migrated flags, then **Ctrl+A** to select all remaining flags
+3. **Select flags** — choose which flags to migrate; flags already in Datadog are marked. Press **Tab** to open the advanced-filter screen and narrow the list by category (see [Advanced filtering](#advanced-filtering)), then **Ctrl+A** to select all remaining flags
 4. **Confirm and migrate** — flags are created in Datadog and enabled in the mapped environments. A progress bar tracks migration status in real time
 
 API keys are read from environment variables (see [Credentials](#credentials-youll-need)).
@@ -151,8 +151,23 @@ When the migration completes, a record is saved to `~/.dd-flag-migration/migrati
 For large flag sets, the tool supports splitting work across multiple runs:
 
 - **Progress bar** — a sticky progress bar shows how many flags have been migrated so far, updating in real time
-- **Tab to filter** — during flag selection, press **Tab** to hide flags that have already been migrated. Combined with **Ctrl+A**, this makes it easy to select only the remaining flags for the next run
-- **Ctrl+C to save progress** — pressing **Ctrl+C** during migration saves a partial migration file (`~/.dd-flag-migration/migration-<timestamp>.json`) with all flags that completed successfully before the interruption. You can resume later by filtering out already-migrated flags with **Tab**
+- **Tab to filter** — during flag selection, press **Tab** to open the advanced-filter screen and narrow the list by category, such as `not-yet-migrated`. Combined with **Ctrl+A**, this makes it easy to select only the remaining flags for the next run. See [Advanced filtering](#advanced-filtering)
+- **Ctrl+C to save progress** — pressing **Ctrl+C** during migration saves a partial migration file (`~/.dd-flag-migration/migration-<timestamp>.json`) with all flags that completed successfully before the interruption. You can resume later by filtering to `not-yet-migrated` with **Tab**
+
+### Advanced filtering
+
+During flag selection, press **Tab** to open a multi-select filter screen. Categories start unchecked, which means no category filter is applied and all flags remain visible. Check one or more categories to narrow the flag list, then press **Enter** to apply the filter selection and return to flag selection, or **Escape** to cancel filter changes. Checking every category is equivalent to applying no category filter. Any selected flags that no longer match the applied filters are automatically unselected on return.
+
+The available categories are:
+
+- **new** — any environment — LaunchDarkly reports new for at least one non-archived environment _(LaunchDarkly only)_
+- **active** — any environment — LaunchDarkly reports active for at least one non-archived environment _(LaunchDarkly only)_
+- **inactive** — all environments — LaunchDarkly reports inactive for every non-archived environment whose status could be loaded _(LaunchDarkly only)_
+- **launched** — any environment — LaunchDarkly reports launched for at least one non-archived environment _(LaunchDarkly only)_
+- **previously-migrated** — any environment — the flag exists in Datadog for at least one environment _(both providers)_
+- **not-yet-migrated** — all environments — the flag does not exist in Datadog for any environment _(both providers)_
+
+The four lifecycle categories are derived from [LaunchDarkly flag statuses](https://launchdarkly.com/docs/api/feature-flags/get-feature-flag-status-across-environments), which are tracked per environment. Environment selection still controls what gets migrated; lifecycle filters look across all non-archived LaunchDarkly environments in the project so they can answer whether a flag appears to be used anywhere. If a status fetch fails, the tool does not treat that missing data as inactive. Eppo does not expose flag usage-recency data, so only the migration-state categories are available when migrating from Eppo.
 
 ### LaunchDarkly-specific workflow
 

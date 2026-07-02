@@ -17,9 +17,12 @@ export type {
 // ─── Datadog Types ───────────────────────────────────────────────────────────
 
 export interface MigrationMetadata {
-	project_key: string;
-	flag_key: string;
+	project_key?: string;
+	flag_key?: string;
 	key_prefix?: string;
+	provider?: 'launchdarkly' | 'eppo';
+	source_id?: string;
+	source_key?: string;
 }
 
 export interface DatadogFlagEntry {
