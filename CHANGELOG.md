@@ -7,10 +7,10 @@ All notable changes to this project will be documented in this file.
 ### CLI
 
 - Feat: replace the flag-selection **Tab** toggle with an advanced-filter screen
-  - Tab now opens a multi-select of flag categories (`new`, `active`, `inactive`, `launched`, `previously-migrated`); all start checked
+  - Tab now opens a multi-select of flag categories (`new`, `active`, `inactive`, `launched`, `previously-migrated`, `not-yet-migrated`); none start checked, which means no category filter is applied
   - Press Enter to apply filter changes and unselect any already-selected flags that no longer match; press Escape to cancel filter changes
-  - If every category is unchecked, no flags are shown; Eppo's single `previously-migrated` category now shows only flags already found in Datadog
-  - The four lifecycle categories are derived from LaunchDarkly flag statuses across all non-archived environments; `active` means active in any environment and `inactive` means inactive in all environments. Eppo offers only `previously-migrated` since it exposes no usage-recency signal
+  - Selecting every category is equivalent to no category filter; partial selections narrow the visible flags to any selected category
+  - The four lifecycle categories are derived from LaunchDarkly flag statuses across all non-archived environments; `active` means active in any environment and `inactive` means inactive in all environments. Eppo offers only migration-state categories since it exposes no usage-recency signal
 
 ## [1.1.0] — 2026-06-29
 

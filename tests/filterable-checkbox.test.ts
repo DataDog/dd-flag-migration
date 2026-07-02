@@ -7,6 +7,7 @@ import {
 	type FilterCategory,
 	itemMatchesFilters,
 	MIGRATED_FILTER_ID,
+	NOT_MIGRATED_FILTER_ID,
 } from '../src/filterable-checkbox.js';
 
 const LD_CATEGORIES: FilterCategory[] = [
@@ -15,16 +16,36 @@ const LD_CATEGORIES: FilterCategory[] = [
 	{ id: 'inactive', label: 'inactive', description: '' },
 	{ id: 'launched', label: 'launched', description: '' },
 	{ id: MIGRATED_FILTER_ID, label: 'previously-migrated', description: '' },
+	{ id: NOT_MIGRATED_FILTER_ID, label: 'not-yet-migrated', description: '' },
 ];
 
 const EPPO_CATEGORIES: FilterCategory[] = [
 	{ id: MIGRATED_FILTER_ID, label: 'previously-migrated', description: '' },
+	{ id: NOT_MIGRATED_FILTER_ID, label: 'not-yet-migrated', description: '' },
 ];
 
 const allActive = (cats: FilterCategory[]) => new Set(cats.map((c) => c.id));
 
 describe('itemMatchesFilters', () => {
-	it('shows every item when all filters are active', () => {
+	it('shows every item when no category filters are active', () => {
+		const active = new Set<string>();
+		expect(
+			itemMatchesFilters(
+				{ migrated: false, categories: ['active'] },
+				active,
+				LD_CATEGORIES,
+			),
+		).toBe(true);
+		expect(
+			itemMatchesFilters(
+				{ migrated: true, categories: [] },
+				active,
+				EPPO_CATEGORIES,
+			),
+		).toBe(true);
+	});
+
+	it('shows every item when all category filters are active', () => {
 		const active = allActive(LD_CATEGORIES);
 		expect(
 			itemMatchesFilters(
@@ -40,11 +61,17 @@ describe('itemMatchesFilters', () => {
 				LD_CATEGORIES,
 			),
 		).toBe(true);
+		expect(
+			itemMatchesFilters(
+				{ migrated: false, categories: [] },
+				active,
+				LD_CATEGORIES,
+			),
+		).toBe(true);
 	});
 
-	it('hides a lifecycle item when its only category is unchecked', () => {
-		const active = allActive(LD_CATEGORIES);
-		active.delete('inactive');
+	it('hides a lifecycle item when its category is not selected', () => {
+		const active = new Set(['active']);
 		expect(
 			itemMatchesFilters(
 				{ migrated: false, categories: ['inactive'] },
@@ -55,8 +82,7 @@ describe('itemMatchesFilters', () => {
 	});
 
 	it('keeps a multi-category item visible if ANY of its categories is active (union)', () => {
-		const active = allActive(LD_CATEGORIES);
-		active.delete('inactive');
+		const active = new Set(['active']);
 		// Flag is inactive in one env but active in another → still visible.
 		expect(
 			itemMatchesFilters(
@@ -67,10 +93,8 @@ describe('itemMatchesFilters', () => {
 		).toBe(true);
 	});
 
-	it('hides a multi-category item only when all of its categories are unchecked', () => {
-		const active = allActive(LD_CATEGORIES);
-		active.delete('inactive');
-		active.delete('active');
+	it('hides a multi-category item only when none of its categories are selected', () => {
+		const active = new Set(['launched']);
 		expect(
 			itemMatchesFilters(
 				{ migrated: false, categories: ['inactive', 'active'] },
@@ -80,112 +104,123 @@ describe('itemMatchesFilters', () => {
 		).toBe(false);
 	});
 
-	it('hides migrated items when previously-migrated is unchecked', () => {
-		const active = allActive(LD_CATEGORIES);
-		active.delete(MIGRATED_FILTER_ID);
+	it('shows migrated items when previously-migrated is selected', () => {
+		const active = new Set([MIGRATED_FILTER_ID]);
 		expect(
 			itemMatchesFilters(
 				{ migrated: true, categories: ['active'] },
 				active,
 				LD_CATEGORIES,
 			),
-		).toBe(false);
+		).toBe(true);
 	});
 
-	it('does not hide non-migrated items when previously-migrated is unchecked', () => {
-		const active = allActive(LD_CATEGORIES);
-		active.delete(MIGRATED_FILTER_ID);
+	it('does not show non-migrated items when only previously-migrated is selected', () => {
+		const active = new Set([MIGRATED_FILTER_ID]);
 		expect(
 			itemMatchesFilters(
 				{ migrated: false, categories: ['active'] },
 				active,
 				LD_CATEGORIES,
 			),
-		).toBe(true);
-	});
-
-	it('hides migrated flags when previously-migrated is unchecked even if their lifecycle is active', () => {
-		const base = allActive(LD_CATEGORIES);
-
-		const migratedOff = new Set(base);
-		migratedOff.delete(MIGRATED_FILTER_ID);
-		expect(
-			itemMatchesFilters(
-				{ migrated: true, categories: ['inactive'] },
-				migratedOff,
-				LD_CATEGORIES,
-			),
 		).toBe(false);
 	});
 
-	it('shows migrated flags when previously-migrated is checked even if their lifecycle is unchecked', () => {
-		const base = allActive(LD_CATEGORIES);
-		const inactiveOff = new Set(base);
-		inactiveOff.delete('inactive');
-		expect(
-			itemMatchesFilters(
-				{ migrated: true, categories: ['inactive'] },
-				inactiveOff,
-				LD_CATEGORIES,
-			),
-		).toBe(true);
-	});
-
-	it('does not show an Eppo item unless it matches the migrated category', () => {
-		const active = allActive(EPPO_CATEGORIES);
+	it('shows non-migrated items when not-yet-migrated is selected', () => {
+		const active = new Set([NOT_MIGRATED_FILTER_ID]);
 		expect(
 			itemMatchesFilters(
 				{ migrated: false, categories: ['inactive'] },
 				active,
-				EPPO_CATEGORIES,
-			),
-		).toBe(false);
-		expect(
-			itemMatchesFilters(
-				{ migrated: true, categories: [] },
-				active,
-				EPPO_CATEGORIES,
-			),
-		).toBe(true);
-	});
-
-	it('hides every Eppo flag when previously-migrated is unchecked', () => {
-		const active = allActive(EPPO_CATEGORIES);
-		active.delete(MIGRATED_FILTER_ID);
-		expect(
-			itemMatchesFilters(
-				{ migrated: true, categories: [] },
-				active,
-				EPPO_CATEGORIES,
-			),
-		).toBe(false);
-		expect(
-			itemMatchesFilters(
-				{ migrated: false, categories: [] },
-				active,
-				EPPO_CATEGORIES,
-			),
-		).toBe(false);
-	});
-
-	it('shows uncategorized LD flags only while all lifecycle filters are active', () => {
-		const active = allActive(LD_CATEGORIES);
-		expect(
-			itemMatchesFilters(
-				{ migrated: false, categories: [] },
-				active,
 				LD_CATEGORIES,
 			),
 		).toBe(true);
+	});
 
-		active.delete('inactive');
-		active.delete('active');
-		active.delete('new');
-		active.delete('launched');
+	it('does not show migrated items when only not-yet-migrated is selected', () => {
+		const active = new Set([NOT_MIGRATED_FILTER_ID]);
+		expect(
+			itemMatchesFilters(
+				{ migrated: true, categories: ['inactive'] },
+				active,
+				LD_CATEGORIES,
+			),
+		).toBe(false);
+	});
+
+	it('shows both Eppo migration states when both Eppo filters are selected', () => {
+		const active = allActive(EPPO_CATEGORIES);
 		expect(
 			itemMatchesFilters(
 				{ migrated: false, categories: [] },
 				active,
+				EPPO_CATEGORIES,
+			),
+		).toBe(true);
+		expect(
+			itemMatchesFilters(
+				{ migrated: true, categories: [] },
+				active,
+				EPPO_CATEGORIES,
+			),
+		).toBe(true);
+	});
+
+	it('narrows Eppo to previously migrated flags', () => {
+		const active = new Set([MIGRATED_FILTER_ID]);
+		expect(
+			itemMatchesFilters(
+				{ migrated: true, categories: [] },
+				active,
+				EPPO_CATEGORIES,
+			),
+		).toBe(true);
+		expect(
+			itemMatchesFilters(
+				{ migrated: false, categories: [] },
+				active,
+				EPPO_CATEGORIES,
+			),
+		).toBe(false);
+	});
+
+	it('narrows Eppo to not-yet-migrated flags', () => {
+		const active = new Set([NOT_MIGRATED_FILTER_ID]);
+		expect(
+			itemMatchesFilters(
+				{ migrated: false, categories: [] },
+				active,
+				EPPO_CATEGORIES,
+			),
+		).toBe(true);
+		expect(
+			itemMatchesFilters(
+				{ migrated: true, categories: [] },
+				active,
+				EPPO_CATEGORIES,
+			),
+		).toBe(false);
+	});
+
+	it('hides uncategorized LD flags only under a partial category filter', () => {
+		expect(
+			itemMatchesFilters(
+				{ migrated: false, categories: [] },
+				new Set(),
+				LD_CATEGORIES,
+			),
+		).toBe(true);
+		expect(
+			itemMatchesFilters(
+				{ migrated: false, categories: [] },
+				allActive(LD_CATEGORIES),
+				LD_CATEGORIES,
+			),
+		).toBe(true);
+		expect(
+			itemMatchesFilters(
+				{ migrated: false, categories: [] },
+				new Set(['active']),
 				LD_CATEGORIES,
 			),
 		).toBe(false);

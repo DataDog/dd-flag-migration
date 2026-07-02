@@ -26,6 +26,7 @@ import {
 	filterableCheckbox,
 	filterableSelect,
 	MIGRATED_FILTER_ID,
+	NOT_MIGRATED_FILTER_ID,
 } from '../filterable-checkbox.js';
 import { toSyncRequests } from '../migration.js';
 import { writeJsonOutput } from '../output.js';
@@ -517,6 +518,12 @@ const LD_FILTER_CATEGORIES: FilterCategory[] = [
 		label: 'previously-migrated',
 		scope: 'any environment',
 		description: 'Flag exists in Datadog for at least one environment.',
+	},
+	{
+		id: NOT_MIGRATED_FILTER_ID,
+		label: 'not-yet-migrated',
+		scope: 'all environments',
+		description: 'Flag does not exist in Datadog for any environment.',
 	},
 ];
 

@@ -18,12 +18,12 @@ import chalk from 'chalk';
 import stripAnsi from 'strip-ansi';
 
 /**
- * A selectable filter category shown in the advanced-filter sub-screen. The
- * `previously-migrated` category is special-cased (it maps to each choice's
- * `migrated` flag rather than its `category`); all other ids match a choice's
- * `category` field.
+ * Selectable filter categories shown in the advanced-filter sub-screen.
+ * Migration-state categories are derived from each choice's `migrated` flag;
+ * all other ids match a choice's `categories` field.
  */
 export const MIGRATED_FILTER_ID = 'previously-migrated';
+export const NOT_MIGRATED_FILTER_ID = 'not-yet-migrated';
 
 export type FilterCategoryScope =
 	| 'any environment'
@@ -59,8 +59,8 @@ type Config<T> = {
 	 * Categories shown in the advanced-filter sub-screen (opened with Tab).
 	 * When omitted or empty, Tab is disabled and no filtering sub-screen is
 	 * available. Providers supply only the categories relevant to them (e.g.
-	 * LaunchDarkly passes all statuses plus previously-migrated; Eppo passes
-	 * only previously-migrated).
+	 * LaunchDarkly passes statuses plus migration-state categories; Eppo passes
+	 * only migration-state categories.
 	 */
 	filterCategories?: FilterCategory[];
 };
@@ -76,10 +76,9 @@ type NormalizedChoice<T> = {
 /**
  * Whether an item is visible given the set of active (checked) filter ids.
  *
- * An item is visible when it belongs to at least one active filter category.
- * The `previously-migrated` category is special because it is derived from the
- * choice's `migrated` flag, and when it is unchecked migrated items are hidden
- * even if they also have an active lifecycle category.
+ * When no category filter is selected, no category filter is applied. When every
+ * category is selected, the result is also unfiltered. Partial selections narrow
+ * the list to items that belong to at least one selected category.
  *
  * Exported for unit testing.
  */
@@ -89,31 +88,28 @@ export function itemMatchesFilters(
 	filterCategories: readonly FilterCategory[],
 ): boolean {
 	if (filterCategories.length === 0) return true;
-	if (activeFilters.size === 0) return false;
 
-	const hasMigratedFilter = filterCategories.some(
-		(c) => c.id === MIGRATED_FILTER_ID,
-	);
-	if (hasMigratedFilter && item.migrated) {
-		if (activeFilters.has(MIGRATED_FILTER_ID)) return true;
-		return false;
+	const configuredIds = new Set(filterCategories.map((c) => c.id));
+	const selectedIds = [...activeFilters].filter((id) => configuredIds.has(id));
+	if (
+		selectedIds.length === 0 ||
+		selectedIds.length === filterCategories.length
+	) {
+		return true;
 	}
 
-	const lifecycleIds = new Set(
-		filterCategories.map((c) => c.id).filter((id) => id !== MIGRATED_FILTER_ID),
+	const itemFilterIds = new Set(
+		(item.categories ?? []).filter((id) => configuredIds.has(id)),
 	);
-	if (lifecycleIds.size === 0) return false;
 
-	const itemLifecycle = (item.categories ?? []).filter((c) =>
-		lifecycleIds.has(c),
-	);
-	if (itemLifecycle.length > 0) {
-		return itemLifecycle.some((c) => activeFilters.has(c));
+	if (configuredIds.has(MIGRATED_FILTER_ID) && item.migrated) {
+		itemFilterIds.add(MIGRATED_FILTER_ID);
+	}
+	if (configuredIds.has(NOT_MIGRATED_FILTER_ID) && !item.migrated) {
+		itemFilterIds.add(NOT_MIGRATED_FILTER_ID);
 	}
 
-	// A flag with missing lifecycle data should remain visible in the default
-	// all-selected state, but disappear once the user narrows lifecycle filters.
-	return [...lifecycleIds].every((id) => activeFilters.has(id));
+	return selectedIds.some((id) => itemFilterIds.has(id));
 }
 
 const theme = {
@@ -152,13 +148,13 @@ const _filterableCheckbox = createPrompt(
 		const [status, setStatus] = useState<'idle' | 'done' | 'escaped'>('idle');
 		// Which screen is showing: the flag list, or the advanced-filter picker.
 		const [mode, setMode] = useState<'list' | 'filter'>('list');
-		// Active (checked) filter ids. All categories start checked.
+		// Active (checked) category filters. Empty means no category filters.
 		const [activeFilters, setActiveFilters] = useState<Set<string>>(
-			() => new Set(filterCategories.map((c) => c.id)),
+			() => new Set(),
 		);
 		// Draft filter ids while the advanced-filter screen is open.
 		const [draftFilters, setDraftFilters] = useState<Set<string>>(
-			() => new Set(filterCategories.map((c) => c.id)),
+			() => new Set(),
 		);
 		// Cursor position within the filter sub-screen.
 		const [filterActive, setFilterActive] = useState(0);
@@ -341,13 +337,17 @@ const _filterableCheckbox = createPrompt(
 		const activeCount = filterCategories.filter((c) =>
 			activeFilters.has(c.id),
 		).length;
+		const filterState =
+			activeCount === 0
+				? 'none'
+				: activeCount === totalFilters
+					? 'all'
+					: `${activeCount}/${totalFilters} on`;
 		const filterToggle =
 			totalFilters > 0
-				? activeCount < totalFilters
-					? chalk.yellow(
-							`  ·  tab: filters (${activeCount}/${totalFilters} on)`,
-						)
-					: chalk.dim(`  ·  tab: filters (${totalFilters})`)
+				? activeCount === 0 || activeCount === totalFilters
+					? chalk.dim(`  ·  tab: filters (${filterState})`)
+					: chalk.yellow(`  ·  tab: filters (${filterState})`)
 				: '';
 		const filterLine =
 			chalk.cyan('Filter: ') +
@@ -380,7 +380,15 @@ const _filterableCheckbox = createPrompt(
 			const draftMatchCount = allItems.filter((item) =>
 				itemMatchesFilters(item, draftFilters, filterCategories),
 			).length;
-			const filterSummaryText = `${draftMatchCount} of ${allItems.length} flags match current filter selection`;
+			const draftActiveCount = filterCategories.filter((c) =>
+				draftFilters.has(c.id),
+			).length;
+			const filterSummaryText =
+				draftActiveCount === 0
+					? `${draftMatchCount} of ${allItems.length} flags visible with no category filters`
+					: draftActiveCount === filterCategories.length
+						? `${draftMatchCount} of ${allItems.length} flags visible with all category filters`
+						: `${draftMatchCount} of ${allItems.length} flags match current filter selection`;
 			const filterSummary =
 				draftMatchCount === allItems.length
 					? chalk.dim(filterSummaryText)

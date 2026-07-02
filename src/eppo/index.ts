@@ -21,6 +21,7 @@ import {
 	type FilterCategory,
 	filterableCheckbox,
 	MIGRATED_FILTER_ID,
+	NOT_MIGRATED_FILTER_ID,
 } from '../filterable-checkbox.js';
 import { toSyncRequests } from '../migration.js';
 import { writeJsonOutput } from '../output.js';
@@ -287,7 +288,7 @@ async function selectFlags(
  * Advanced-filter categories offered on the Eppo flag-selection screen. Eppo
  * exposes no flag lifecycle/usage-recency signal (its per-environment `active`
  * field is a config on/off toggle, not an evaluation-recency status), so the
- * only category available is `previously-migrated`.
+ * available categories only describe migration state.
  */
 const EPPO_FILTER_CATEGORIES: FilterCategory[] = [
 	{
@@ -295,6 +296,12 @@ const EPPO_FILTER_CATEGORIES: FilterCategory[] = [
 		label: 'previously-migrated',
 		scope: 'any environment',
 		description: 'Flag exists in Datadog for at least one environment.',
+	},
+	{
+		id: NOT_MIGRATED_FILTER_ID,
+		label: 'not-yet-migrated',
+		scope: 'all environments',
+		description: 'Flag does not exist in Datadog for any environment.',
 	},
 ];
 
