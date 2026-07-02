@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### CLI
+
+- Feat: replace the flag-selection **Tab** toggle with an advanced-filter screen
+  - Tab now opens a multi-select of flag categories (`new`, `active`, `inactive`, `launched`, `previously-migrated`); all start checked
+  - Unchecking a category hides matching flags and unselects any already-selected flags that no longer match on return
+  - The four lifecycle categories are derived from LaunchDarkly flag statuses (per environment, union across selected environments); Eppo offers only `previously-migrated` since it exposes no usage-recency signal
+
 ## [1.1.0] — 2026-06-29
 
 ### CLI

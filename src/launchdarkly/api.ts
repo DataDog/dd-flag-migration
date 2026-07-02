@@ -302,6 +302,104 @@ export async function fetchFlag(
 	return response.data;
 }
 
+// ─── Flag statuses ────────────────────────────────────────────────────────
+
+/**
+ * LaunchDarkly flag lifecycle status, tracked per environment. Derived by LD
+ * from `lastRequested` (recency of SDK evaluations) using a seven-day window:
+ *  - `new`: created <7 days ago and never requested
+ *  - `active`: receiving requests, and either multiple variations, toggled
+ *    off, or config changed in the past 7 days
+ *  - `inactive`: created >7 days ago and not requested within the past 7 days
+ *  - `launched`: receiving requests, toggled on, single variation, no config
+ *    changes in the past 7 days
+ */
+export type LDFlagStatus = 'new' | 'active' | 'inactive' | 'launched';
+
+const LD_FLAG_STATUSES: ReadonlySet<string> = new Set([
+	'new',
+	'active',
+	'inactive',
+	'launched',
+]);
+
+interface LDFlagStatusItem {
+	name?: string;
+	_links?: { parent?: { href?: string }; self?: { href?: string } };
+}
+
+/**
+ * Fetch the lifecycle status of every flag in a single environment (bulk).
+ *
+ * Uses `GET /api/v2/flag-statuses/{projectKey}/{environmentKey}`, which returns
+ * one status per flag for that environment. Returns a map of flag key → status.
+ * Flags whose status is missing or unrecognized are omitted from the map;
+ * callers should treat an absent entry as "unknown".
+ *
+ * The flag key is parsed from each item's `_links.parent.href`, which points
+ * at `/api/v2/flags/{projectKey}/{flagKey}`. `_links.self.href` is retained as
+ * a fallback for older/alternate API shapes.
+ */
+export async function fetchFlagStatuses(
+	apiKey: string,
+	projectKey: string,
+	environmentKey: string,
+): Promise<Map<string, LDFlagStatus>> {
+	const statuses = new Map<string, LDFlagStatus>();
+	let offset = 0;
+	const limit = 20;
+
+	while (true) {
+		const response = await ldClient.get<{
+			items: LDFlagStatusItem[];
+			totalCount?: number;
+		}>(`${LD_BASE_URL}/api/v2/flag-statuses/${projectKey}/${environmentKey}`, {
+			headers: ldHeaders(apiKey),
+			params: { limit, offset },
+		});
+
+		const items = response.data.items ?? [];
+		for (const item of items) {
+			const flagKey = flagKeyFromStatusItem(item);
+			if (flagKey && item.name && LD_FLAG_STATUSES.has(item.name)) {
+				statuses.set(flagKey, item.name as LDFlagStatus);
+			}
+		}
+
+		offset += items.length;
+		const total = response.data.totalCount ?? items.length;
+		if (items.length < limit || offset >= total) break;
+	}
+
+	return statuses;
+}
+
+/** Parse the flag key from a flag-status item's links. */
+function flagKeyFromStatusItem(item: LDFlagStatusItem): string | undefined {
+	return (
+		flagKeyFromHref(item._links?.parent?.href, 'flags') ??
+		flagKeyFromHref(item._links?.self?.href, 'flag-statuses')
+	);
+}
+
+/** Parse the flag key from a LaunchDarkly API href. */
+function flagKeyFromHref(
+	href: string | undefined,
+	resource: 'flags' | 'flag-statuses',
+): string | undefined {
+	if (!href) return undefined;
+	const parts = href.split('/').filter(Boolean);
+	const idx = parts.indexOf(resource);
+	if (idx === -1 || parts.length <= idx + 2) return undefined;
+	const encodedFlagKey = parts.at(-1);
+	if (!encodedFlagKey) return undefined;
+	try {
+		return decodeURIComponent(encodedFlagKey);
+	} catch {
+		return encodedFlagKey;
+	}
+}
+
 /**
  * Fetch the specified flags by key, preserving the requested order. Throws
  * listing all missing keys if any 404. Used by non-interactive mode to avoid

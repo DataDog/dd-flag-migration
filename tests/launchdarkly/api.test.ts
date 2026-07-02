@@ -8,6 +8,7 @@ import {
 	createLDClient,
 	fetchCustomRoles,
 	fetchFlag,
+	fetchFlagStatuses,
 	fetchFlags,
 	fetchFlagsByKey,
 	fetchProjectEnvironments,
@@ -627,5 +628,201 @@ describe('fetchTeamsWithRoles', () => {
 
 		const teams = await fetchTeamsWithRoles(API_KEY);
 		expect(teams).toEqual([]);
+	});
+});
+
+// ─── fetchFlagStatuses ───────────────────────────────────────────────────────
+
+describe('fetchFlagStatuses', () => {
+	let mock: AxiosMockAdapter;
+
+	beforeEach(() => {
+		mock = new AxiosMockAdapter(ldClient as never);
+	});
+
+	afterEach(() => {
+		mock.restore();
+	});
+
+	const statusItem = (flagKey: string, name: string) => ({
+		name,
+		_links: {
+			parent: {
+				href: `/api/v2/flags/my-project/${encodeURIComponent(flagKey)}`,
+				type: 'application/json',
+			},
+			self: {
+				href: `/api/v2/flag-statuses/my-project/${encodeURIComponent(flagKey)}`,
+				type: 'application/json',
+			},
+		},
+	});
+
+	it('maps flag key → status from the documented parent link href', async () => {
+		mock
+			.onGet(
+				'https://app.launchdarkly.com/api/v2/flag-statuses/my-project/production',
+			)
+			.reply(200, {
+				items: [
+					statusItem('kill-switch', 'active'),
+					statusItem('theme-selector', 'launched'),
+					statusItem('brand-new', 'new'),
+					statusItem('stale-flag', 'inactive'),
+				],
+				totalCount: 4,
+			});
+
+		const statuses = await fetchFlagStatuses(
+			API_KEY,
+			'my-project',
+			'production',
+		);
+		expect(statuses.get('kill-switch')).toBe('active');
+		expect(statuses.get('theme-selector')).toBe('launched');
+		expect(statuses.get('brand-new')).toBe('new');
+		expect(statuses.get('stale-flag')).toBe('inactive');
+		expect(statuses.size).toBe(4);
+	});
+
+	it('falls back to the self link href when the parent link is missing', async () => {
+		mock
+			.onGet(
+				'https://app.launchdarkly.com/api/v2/flag-statuses/my-project/production',
+			)
+			.reply(200, {
+				items: [
+					{
+						name: 'active',
+						_links: {
+							self: {
+								href: '/api/v2/flag-statuses/my-project/self-only',
+								type: 'application/json',
+							},
+						},
+					},
+				],
+				totalCount: 1,
+			});
+
+		const statuses = await fetchFlagStatuses(
+			API_KEY,
+			'my-project',
+			'production',
+		);
+		expect(statuses.get('self-only')).toBe('active');
+		expect(statuses.size).toBe(1);
+	});
+
+	it('decodes URL-encoded flag keys from status links', async () => {
+		mock
+			.onGet(
+				'https://app.launchdarkly.com/api/v2/flag-statuses/my-project/production',
+			)
+			.reply(200, {
+				items: [statusItem('group/flag', 'active')],
+				totalCount: 1,
+			});
+
+		const statuses = await fetchFlagStatuses(
+			API_KEY,
+			'my-project',
+			'production',
+		);
+		expect(statuses.get('group/flag')).toBe('active');
+		expect(statuses.size).toBe(1);
+	});
+
+	it('omits items with missing or unrecognized status', async () => {
+		mock
+			.onGet(
+				'https://app.launchdarkly.com/api/v2/flag-statuses/my-project/production',
+			)
+			.reply(200, {
+				items: [
+					statusItem('good', 'active'),
+					statusItem('weird', 'bogus-status'),
+					{
+						_links: {
+							self: {
+								href: '/api/v2/flag-statuses/my-project/production/nostatus',
+							},
+						},
+					},
+				],
+				totalCount: 3,
+			});
+
+		const statuses = await fetchFlagStatuses(
+			API_KEY,
+			'my-project',
+			'production',
+		);
+		expect(statuses.get('good')).toBe('active');
+		expect(statuses.has('weird')).toBe(false);
+		expect(statuses.has('nostatus')).toBe(false);
+		expect(statuses.size).toBe(1);
+	});
+
+	it('omits items whose self href cannot be parsed', async () => {
+		mock
+			.onGet(
+				'https://app.launchdarkly.com/api/v2/flag-statuses/my-project/production',
+			)
+			.reply(200, {
+				items: [
+					{ name: 'active', _links: { self: { href: '/api/v2/other/thing' } } },
+					{ name: 'active' },
+				],
+				totalCount: 2,
+			});
+
+		const statuses = await fetchFlagStatuses(
+			API_KEY,
+			'my-project',
+			'production',
+		);
+		expect(statuses.size).toBe(0);
+	});
+
+	it('paginates through multiple pages', async () => {
+		const page = (start: number, count: number) =>
+			Array.from({ length: count }, (_, i) =>
+				statusItem(`flag-${start + i}`, 'active'),
+			);
+
+		mock
+			.onGet(
+				'https://app.launchdarkly.com/api/v2/flag-statuses/big-project/production',
+			)
+			.replyOnce(200, { items: page(0, 20), totalCount: 30 })
+			.onGet(
+				'https://app.launchdarkly.com/api/v2/flag-statuses/big-project/production',
+			)
+			.replyOnce(200, { items: page(20, 10), totalCount: 30 });
+
+		const statuses = await fetchFlagStatuses(
+			API_KEY,
+			'big-project',
+			'production',
+		);
+		expect(statuses.size).toBe(30);
+		expect(statuses.get('flag-0')).toBe('active');
+		expect(statuses.get('flag-29')).toBe('active');
+	});
+
+	it('returns an empty map when the environment has no flags', async () => {
+		mock
+			.onGet(
+				'https://app.launchdarkly.com/api/v2/flag-statuses/empty-project/production',
+			)
+			.reply(200, { items: [], totalCount: 0 });
+
+		const statuses = await fetchFlagStatuses(
+			API_KEY,
+			'empty-project',
+			'production',
+		);
+		expect(statuses.size).toBe(0);
 	});
 });

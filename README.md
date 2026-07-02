@@ -138,7 +138,7 @@ The tool will walk you through:
 
 1. **Select your provider** — Eppo or LaunchDarkly
 2. **Map environments** — link each source environment (e.g. `production`) to the corresponding Datadog environment
-3. **Select flags** — choose which flags to migrate; flags already in Datadog are marked. Press **Tab** to toggle visibility of already-migrated flags, then **Ctrl+A** to select all remaining flags
+3. **Select flags** — choose which flags to migrate; flags already in Datadog are marked. Press **Tab** to open the advanced-filter screen and narrow the list by flag status (see [Advanced filtering](#advanced-filtering)), then **Ctrl+A** to select all remaining flags
 4. **Confirm and migrate** — flags are created in Datadog and enabled in the mapped environments. A progress bar tracks migration status in real time
 
 API keys are read from environment variables (see [Credentials](#credentials-youll-need)).
@@ -151,8 +151,22 @@ When the migration completes, a record is saved to `~/.dd-flag-migration/migrati
 For large flag sets, the tool supports splitting work across multiple runs:
 
 - **Progress bar** — a sticky progress bar shows how many flags have been migrated so far, updating in real time
-- **Tab to filter** — during flag selection, press **Tab** to hide flags that have already been migrated. Combined with **Ctrl+A**, this makes it easy to select only the remaining flags for the next run
+- **Tab to filter** — during flag selection, press **Tab** to open the advanced-filter screen and hide categories of flags (including already-migrated ones). Combined with **Ctrl+A**, this makes it easy to select only the remaining flags for the next run. See [Advanced filtering](#advanced-filtering)
 - **Ctrl+C to save progress** — pressing **Ctrl+C** during migration saves a partial migration file (`~/.dd-flag-migration/migration-<timestamp>.json`) with all flags that completed successfully before the interruption. You can resume later by filtering out already-migrated flags with **Tab**
+
+### Advanced filtering
+
+During flag selection, press **Tab** to open a multi-select filter screen. All categories start checked; uncheck a category to hide flags in it, then press **Enter** to return to flag selection. Any selected flags that no longer match the active filters are automatically unselected on return.
+
+The available categories are:
+
+- **new** — created fewer than 7 days ago and never requested _(LaunchDarkly only)_
+- **active** — LaunchDarkly is receiving requests, and at least one of: multiple variations are configured, the flag is toggled off, or its configuration changed in the past 7 days _(LaunchDarkly only)_
+- **inactive** — created more than 7 days ago and not requested within the past 7 days _(LaunchDarkly only)_
+- **launched** — LaunchDarkly is receiving requests, the flag is toggled on, there is only one variation configured, and no configuration changes in the past 7 days _(LaunchDarkly only)_
+- **previously-migrated** — the flag has been migrated to Datadog for at least one environment _(both providers)_
+
+The four lifecycle categories are derived from [LaunchDarkly flag statuses](https://launchdarkly.com/docs/api/feature-flags/get-feature-flag-status-across-environments), which are tracked per environment; a flag matches a category if any selected environment has that status. Eppo does not expose flag usage-recency data, so only **previously-migrated** is available when migrating from Eppo.
 
 ### LaunchDarkly-specific workflow
 

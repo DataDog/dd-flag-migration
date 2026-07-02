@@ -16,7 +16,11 @@ import {
 	syncVariantsCreatesAndUpdates,
 	updateFlagTags,
 } from '../datadog.js';
-import { filterableCheckbox } from '../filterable-checkbox.js';
+import {
+	type FilterCategory,
+	filterableCheckbox,
+	MIGRATED_FILTER_ID,
+} from '../filterable-checkbox.js';
 import { toSyncRequests } from '../migration.js';
 import { writeJsonOutput } from '../output.js';
 import { MigrationProgressBar } from '../progress-bar.js';
@@ -261,8 +265,23 @@ async function selectFlags(
 			migrated: datadogKeys.has(flag.key),
 		})),
 		pageSize,
+		filterCategories: EPPO_FILTER_CATEGORIES,
 	});
 }
+
+/**
+ * Advanced-filter categories offered on the Eppo flag-selection screen. Eppo
+ * exposes no flag lifecycle/usage-recency signal (its per-environment `active`
+ * field is a config on/off toggle, not an evaluation-recency status), so the
+ * only category available is `previously-migrated`.
+ */
+const EPPO_FILTER_CATEGORIES: FilterCategory[] = [
+	{
+		id: MIGRATED_FILTER_ID,
+		label: 'previously-migrated',
+		description: 'Flag has been migrated for at least one environment.',
+	},
+];
 
 type ConfirmAction = 'migrate' | 'select-more' | 'cancel';
 
