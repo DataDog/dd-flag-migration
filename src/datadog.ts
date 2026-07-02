@@ -160,11 +160,46 @@ type JsonApiFlag = {
 
 type JsonApiFlagListResponse = {
 	data: JsonApiFlag[];
-	meta?: { page?: { total_count?: number } };
+	meta?: {
+		page?: {
+			total?: number;
+			total_count?: number;
+			total_filtered_count?: number;
+			next_offset?: number | null;
+		};
+	};
 };
 
 export function eppoSourceIdLookupKey(sourceId: string): string {
 	return `eppo:${sourceId}`;
+}
+
+const FEATURE_FLAG_PAGE_LIMIT = 50;
+
+function featureFlagPageTotal(
+	response: JsonApiFlagListResponse,
+): number | undefined {
+	return (
+		response.meta?.page?.total_filtered_count ??
+		response.meta?.page?.total_count ??
+		response.meta?.page?.total
+	);
+}
+
+function nextFeatureFlagOffset(
+	response: JsonApiFlagListResponse,
+	currentOffset: number,
+	loadedCount: number,
+): number | undefined {
+	const nextOffset = response.meta?.page?.next_offset;
+	if (typeof nextOffset === 'number') return nextOffset;
+	if (loadedCount === 0) return undefined;
+
+	const fallbackOffset = currentOffset + loadedCount;
+	const total = featureFlagPageTotal(response);
+	if (total !== undefined && fallbackOffset >= total) return undefined;
+	if (loadedCount < FEATURE_FLAG_PAGE_LIMIT) return undefined;
+	return fallbackOffset;
 }
 
 export async function fetchDatadogFlagKeys(
@@ -175,21 +210,19 @@ export async function fetchDatadogFlagKeys(
 	const baseUrl = `https://api.${site}`;
 	const keys = new Map<string, string>();
 	let offset = 0;
-	const limit = 200;
 	while (true) {
 		const response = await ddClient.get<JsonApiFlagListResponse>(
 			`${baseUrl}/api/v2/feature-flags`,
 			{
 				headers: ddHeaders(apiKey, appKey),
 				params: {
-					'page[limit]': limit,
-					'page[offset]': offset,
+					limit: FEATURE_FLAG_PAGE_LIMIT,
+					offset,
 					is_archived: false,
 				},
 			},
 		);
 		const flags = response.data.data ?? [];
-		const total = response.data.meta?.page?.total_count;
 		for (const f of flags) {
 			keys.set(f.attributes.key, f.id);
 			const metadata = f.attributes.migration_metadata;
@@ -200,8 +233,13 @@ export async function fetchDatadogFlagKeys(
 				}
 			}
 		}
-		offset += flags.length;
-		if (flags.length < limit || (total !== undefined && offset >= total)) break;
+		const nextOffset = nextFeatureFlagOffset(
+			response.data,
+			offset,
+			flags.length,
+		);
+		if (nextOffset === undefined) break;
+		offset = nextOffset;
 	}
 	return keys;
 }
@@ -214,21 +252,19 @@ export async function fetchDatadogFlags(
 	const baseUrl = `https://api.${site}`;
 	const allFlags: DatadogFlagEntry[] = [];
 	let offset = 0;
-	const limit = 200;
 	while (true) {
 		const response = await ddClient.get<JsonApiFlagListResponse>(
 			`${baseUrl}/api/v2/feature-flags`,
 			{
 				headers: ddHeaders(apiKey, appKey),
 				params: {
-					'page[limit]': limit,
-					'page[offset]': offset,
+					limit: FEATURE_FLAG_PAGE_LIMIT,
+					offset,
 					is_archived: false,
 				},
 			},
 		);
 		const data = response.data.data ?? [];
-		const total = response.data.meta?.page?.total_count;
 		for (const f of data) {
 			allFlags.push({
 				id: f.id,
@@ -236,8 +272,13 @@ export async function fetchDatadogFlags(
 				migration_metadata: f.attributes.migration_metadata,
 			});
 		}
-		offset += data.length;
-		if (data.length < limit || (total !== undefined && offset >= total)) break;
+		const nextOffset = nextFeatureFlagOffset(
+			response.data,
+			offset,
+			data.length,
+		);
+		if (nextOffset === undefined) break;
+		offset = nextOffset;
 	}
 	return allFlags;
 }

@@ -485,6 +485,8 @@ type DDFlagListItem = {
 	};
 };
 
+const DD_FEATURE_FLAG_PAGE_LIMIT = 50;
+
 async function fetchDDFlagData(
 	apiKey: string,
 	appKey: string,
@@ -502,22 +504,31 @@ async function fetchDDFlagData(
 	const valueTypeByKey = new Map<string, string>();
 	const migrationMetadataByKey = new Map<string, MigrationMetadata>();
 	let offset = 0;
-	const limit = 200;
 	try {
 		while (true) {
 			const resp = await ddClient.get<{
 				data: DDFlagListItem[];
-				meta?: { page?: { total_count?: number } };
+				meta?: {
+					page?: {
+						total?: number;
+						total_count?: number;
+						total_filtered_count?: number;
+						next_offset?: number | null;
+					};
+				};
 			}>(`${baseUrl}/api/v2/feature-flags`, {
 				headers: { 'DD-API-KEY': apiKey, 'DD-APPLICATION-KEY': appKey },
 				params: {
-					'page[limit]': limit,
-					'page[offset]': offset,
+					limit: DD_FEATURE_FLAG_PAGE_LIMIT,
+					offset,
 					is_archived: false,
 				},
 			});
 			const flags = resp.data.data ?? [];
-			const total = resp.data.meta?.page?.total_count;
+			const total =
+				resp.data.meta?.page?.total_filtered_count ??
+				resp.data.meta?.page?.total_count ??
+				resp.data.meta?.page?.total;
 			for (const f of flags) {
 				keys.add(f.attributes.key);
 				const envEntry = (f.attributes.feature_flag_environments ?? []).find(
@@ -533,9 +544,16 @@ async function fetchDDFlagData(
 						f.attributes.migration_metadata,
 					);
 			}
-			offset += flags.length;
-			if (flags.length < limit || (total !== undefined && offset >= total))
-				break;
+			const nextOffset = resp.data.meta?.page?.next_offset;
+			if (typeof nextOffset === 'number') {
+				offset = nextOffset;
+				continue;
+			}
+			if (flags.length === 0) break;
+			const fallbackOffset = offset + flags.length;
+			if (total !== undefined && fallbackOffset >= total) break;
+			if (flags.length < DD_FEATURE_FLAG_PAGE_LIMIT) break;
+			offset = fallbackOffset;
 		}
 	} catch (err) {
 		if (axios.isAxiosError(err) && err.response?.status === 403) {

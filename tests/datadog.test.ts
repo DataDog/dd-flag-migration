@@ -215,8 +215,8 @@ describe('fetchDatadogFlagKeys', () => {
 		expect(result.get(eppoSourceIdLookupKey('123'))).toBe('uuid-eppo');
 	});
 
-	it('paginates until a page returns fewer items than the limit', async () => {
-		const limit = 200;
+	it('paginates using Datadog next_offset metadata', async () => {
+		const limit = 50;
 		const page1 = Array.from({ length: limit }, (_, i) => ({
 			id: `uuid-${i}`,
 			type: 'feature-flags',
@@ -224,32 +224,34 @@ describe('fetchDatadogFlagKeys', () => {
 		}));
 		const page2 = [
 			{
-				id: 'uuid-200',
+				id: 'uuid-50',
 				type: 'feature-flags',
-				attributes: { key: 'flag-200', name: 'Flag 200' },
+				attributes: { key: 'flag-50', name: 'Flag 50' },
 			},
 		];
 
 		mock
 			.onGet(`${BASE}/api/v2/feature-flags`, {
-				params: { 'page[limit]': limit, 'page[offset]': 0, is_archived: false },
+				params: { limit, offset: 0, is_archived: false },
 			})
-			.reply(200, { data: page1, meta: { page: { total_count: 201 } } });
+			.reply(200, {
+				data: page1,
+				meta: { page: { total: 51, next_offset: 50 } },
+			});
 
 		mock
 			.onGet(`${BASE}/api/v2/feature-flags`, {
-				params: {
-					'page[limit]': limit,
-					'page[offset]': 200,
-					is_archived: false,
-				},
+				params: { limit, offset: 50, is_archived: false },
 			})
-			.reply(200, { data: page2, meta: { page: { total_count: 201 } } });
+			.reply(200, {
+				data: page2,
+				meta: { page: { total: 51, next_offset: null } },
+			});
 
 		const result = await fetchDatadogFlagKeys(API_KEY, APP_KEY, SITE);
-		expect(result.size).toBe(201);
+		expect(result.size).toBe(51);
 		expect(result.get('flag-0')).toBe('uuid-0');
-		expect(result.get('flag-200')).toBe('uuid-200');
+		expect(result.get('flag-50')).toBe('uuid-50');
 	});
 
 	it('uses the site parameter in the request URL', async () => {
@@ -354,8 +356,8 @@ describe('fetchDatadogFlags', () => {
 		expect(result).toEqual([]);
 	});
 
-	it('paginates until a page returns fewer items than the limit', async () => {
-		const limit = 200;
+	it('paginates using Datadog next_offset metadata', async () => {
+		const limit = 50;
 		const page1 = Array.from({ length: limit }, (_, i) => ({
 			id: `uuid-${i}`,
 			type: 'feature-flags',
@@ -363,37 +365,39 @@ describe('fetchDatadogFlags', () => {
 		}));
 		const page2 = [
 			{
-				id: 'uuid-200',
+				id: 'uuid-50',
 				type: 'feature-flags',
 				attributes: {
-					key: 'flag-200',
-					name: 'Flag 200',
-					migration_metadata: { project_key: 'proj-x', flag_key: 'flag-200' },
+					key: 'flag-50',
+					name: 'Flag 50',
+					migration_metadata: { project_key: 'proj-x', flag_key: 'flag-50' },
 				},
 			},
 		];
 
 		mock
 			.onGet(`${BASE}/api/v2/feature-flags`, {
-				params: { 'page[limit]': limit, 'page[offset]': 0, is_archived: false },
+				params: { limit, offset: 0, is_archived: false },
 			})
-			.reply(200, { data: page1, meta: { page: { total_count: 201 } } });
+			.reply(200, {
+				data: page1,
+				meta: { page: { total: 51, next_offset: 50 } },
+			});
 
 		mock
 			.onGet(`${BASE}/api/v2/feature-flags`, {
-				params: {
-					'page[limit]': limit,
-					'page[offset]': 200,
-					is_archived: false,
-				},
+				params: { limit, offset: 50, is_archived: false },
 			})
-			.reply(200, { data: page2, meta: { page: { total_count: 201 } } });
+			.reply(200, {
+				data: page2,
+				meta: { page: { total: 51, next_offset: null } },
+			});
 
 		const result = await fetchDatadogFlags(API_KEY, APP_KEY, SITE);
-		expect(result).toHaveLength(201);
-		expect(result[200].migration_metadata).toEqual({
+		expect(result).toHaveLength(51);
+		expect(result[50].migration_metadata).toEqual({
 			project_key: 'proj-x',
-			flag_key: 'flag-200',
+			flag_key: 'flag-50',
 		});
 	});
 });
