@@ -156,7 +156,7 @@ For large flag sets, the tool supports splitting work across multiple runs:
 
 ### Advanced filtering
 
-During flag selection, press **Tab** to open a multi-select filter screen. All categories start checked; uncheck a category to hide flags in it, then press **Enter** to apply the filter selection and return to flag selection, or **Escape** to cancel filter changes. Any selected flags that no longer match the applied filters are automatically unselected on return.
+During flag selection, press **Tab** to open a multi-select filter screen. All categories start checked; uncheck a category to hide flags in it, then press **Enter** to apply the filter selection and return to flag selection, or **Escape** to cancel filter changes. If every category is unchecked, no flags are visible. Any selected flags that no longer match the applied filters are automatically unselected on return.
 
 The available categories are:
 
@@ -166,7 +166,7 @@ The available categories are:
 - **launched** — any environment — LaunchDarkly reports launched for at least one non-archived environment _(LaunchDarkly only)_
 - **previously-migrated** — any environment — the flag exists in Datadog for at least one environment _(both providers)_
 
-The four lifecycle categories are derived from [LaunchDarkly flag statuses](https://launchdarkly.com/docs/api/feature-flags/get-feature-flag-status-across-environments), which are tracked per environment. Environment selection still controls what gets migrated; lifecycle filters look across all non-archived LaunchDarkly environments in the project so they can answer whether a flag appears to be used anywhere. If a status fetch fails, the tool does not treat that missing data as inactive. Eppo does not expose flag usage-recency data, so only **previously-migrated** is available when migrating from Eppo.
+The four lifecycle categories are derived from [LaunchDarkly flag statuses](https://launchdarkly.com/docs/api/feature-flags/get-feature-flag-status-across-environments), which are tracked per environment. Environment selection still controls what gets migrated; lifecycle filters look across all non-archived LaunchDarkly environments in the project so they can answer whether a flag appears to be used anywhere. If a status fetch fails, the tool does not treat that missing data as inactive. Eppo does not expose flag usage-recency data, so only **previously-migrated** is available when migrating from Eppo; checking it shows previously migrated flags, and unchecking it shows none.
 
 ### LaunchDarkly-specific workflow
 

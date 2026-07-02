@@ -76,11 +76,10 @@ type NormalizedChoice<T> = {
 /**
  * Whether an item is visible given the set of active (checked) filter ids.
  *
- * An item is visible when:
- *  - its lifecycle `category` is active (or it has no category / no category
- *    filters are configured), AND
- *  - if it is a previously-migrated item, the `previously-migrated` filter is
- *    active.
+ * An item is visible when it belongs to at least one active filter category.
+ * The `previously-migrated` category is special because it is derived from the
+ * choice's `migrated` flag, and when it is unchecked migrated items are hidden
+ * even if they also have an active lifecycle category.
  *
  * Exported for unit testing.
  */
@@ -89,34 +88,32 @@ export function itemMatchesFilters(
 	activeFilters: ReadonlySet<string>,
 	filterCategories: readonly FilterCategory[],
 ): boolean {
-	// Previously-migrated gate: if the migrated filter exists and is inactive,
-	// hide migrated items.
+	if (filterCategories.length === 0) return true;
+	if (activeFilters.size === 0) return false;
+
 	const hasMigratedFilter = filterCategories.some(
 		(c) => c.id === MIGRATED_FILTER_ID,
 	);
-	if (
-		hasMigratedFilter &&
-		item.migrated &&
-		!activeFilters.has(MIGRATED_FILTER_ID)
-	) {
+	if (hasMigratedFilter && item.migrated) {
+		if (activeFilters.has(MIGRATED_FILTER_ID)) return true;
 		return false;
 	}
 
-	// Lifecycle gate: only applies when lifecycle categories are configured and
-	// the item declares at least one of them. The item is visible if any of its
-	// lifecycle categories is currently active (union semantics).
 	const lifecycleIds = new Set(
 		filterCategories.map((c) => c.id).filter((id) => id !== MIGRATED_FILTER_ID),
 	);
+	if (lifecycleIds.size === 0) return false;
+
 	const itemLifecycle = (item.categories ?? []).filter((c) =>
 		lifecycleIds.has(c),
 	);
 	if (itemLifecycle.length > 0) {
-		const anyActive = itemLifecycle.some((c) => activeFilters.has(c));
-		if (!anyActive) return false;
+		return itemLifecycle.some((c) => activeFilters.has(c));
 	}
 
-	return true;
+	// A flag with missing lifecycle data should remain visible in the default
+	// all-selected state, but disappear once the user narrows lifecycle filters.
+	return [...lifecycleIds].every((id) => activeFilters.has(id));
 }
 
 const theme = {

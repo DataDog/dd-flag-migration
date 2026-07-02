@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 - Feat: replace the flag-selection **Tab** toggle with an advanced-filter screen
   - Tab now opens a multi-select of flag categories (`new`, `active`, `inactive`, `launched`, `previously-migrated`); all start checked
   - Press Enter to apply filter changes and unselect any already-selected flags that no longer match; press Escape to cancel filter changes
+  - If every category is unchecked, no flags are shown; Eppo's single `previously-migrated` category now shows only flags already found in Datadog
   - The four lifecycle categories are derived from LaunchDarkly flag statuses across all non-archived environments; `active` means active in any environment and `inactive` means inactive in all environments. Eppo offers only `previously-migrated` since it exposes no usage-recency signal
 
 ## [1.1.0] — 2026-06-29

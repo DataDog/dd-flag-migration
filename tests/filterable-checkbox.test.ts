@@ -104,7 +104,7 @@ describe('itemMatchesFilters', () => {
 		).toBe(true);
 	});
 
-	it('applies both gates: a migrated+inactive flag is hidden if either gate is off', () => {
+	it('hides migrated flags when previously-migrated is unchecked even if their lifecycle is active', () => {
 		const base = allActive(LD_CATEGORIES);
 
 		const migratedOff = new Set(base);
@@ -116,7 +116,10 @@ describe('itemMatchesFilters', () => {
 				LD_CATEGORIES,
 			),
 		).toBe(false);
+	});
 
+	it('shows migrated flags when previously-migrated is checked even if their lifecycle is unchecked', () => {
+		const base = allActive(LD_CATEGORIES);
 		const inactiveOff = new Set(base);
 		inactiveOff.delete('inactive');
 		expect(
@@ -125,23 +128,28 @@ describe('itemMatchesFilters', () => {
 				inactiveOff,
 				LD_CATEGORIES,
 			),
-		).toBe(false);
+		).toBe(true);
 	});
 
-	it('ignores lifecycle categories that are not configured (Eppo only has migrated)', () => {
+	it('does not show an Eppo item unless it matches the migrated category', () => {
 		const active = allActive(EPPO_CATEGORIES);
-		// A stray lifecycle category is not part of Eppo's configured filters,
-		// so it must not hide the item.
 		expect(
 			itemMatchesFilters(
 				{ migrated: false, categories: ['inactive'] },
 				active,
 				EPPO_CATEGORIES,
 			),
+		).toBe(false);
+		expect(
+			itemMatchesFilters(
+				{ migrated: true, categories: [] },
+				active,
+				EPPO_CATEGORIES,
+			),
 		).toBe(true);
 	});
 
-	it('hides Eppo migrated flags when previously-migrated is unchecked', () => {
+	it('hides every Eppo flag when previously-migrated is unchecked', () => {
 		const active = allActive(EPPO_CATEGORIES);
 		active.delete(MIGRATED_FILTER_ID);
 		expect(
@@ -151,10 +159,25 @@ describe('itemMatchesFilters', () => {
 				EPPO_CATEGORIES,
 			),
 		).toBe(false);
+		expect(
+			itemMatchesFilters(
+				{ migrated: false, categories: [] },
+				active,
+				EPPO_CATEGORIES,
+			),
+		).toBe(false);
 	});
 
-	it('treats an item with no categories as always visible under lifecycle gate', () => {
+	it('shows uncategorized LD flags only while all lifecycle filters are active', () => {
 		const active = allActive(LD_CATEGORIES);
+		expect(
+			itemMatchesFilters(
+				{ migrated: false, categories: [] },
+				active,
+				LD_CATEGORIES,
+			),
+		).toBe(true);
+
 		active.delete('inactive');
 		active.delete('active');
 		active.delete('new');
@@ -165,6 +188,12 @@ describe('itemMatchesFilters', () => {
 				active,
 				LD_CATEGORIES,
 			),
+		).toBe(false);
+	});
+
+	it('shows items when no category filters are configured', () => {
+		expect(
+			itemMatchesFilters({ migrated: false, categories: [] }, new Set(), []),
 		).toBe(true);
 	});
 });
