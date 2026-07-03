@@ -1063,35 +1063,54 @@ async function executeMigration(
 	try {
 		for (const flag of detailedFlags) {
 			let spinner = createSpinner(`Migrating ${chalk.cyan(flag.key)}…`).start();
-
-			// Check skip conditions
-			const skipResult = shouldSkipFlag(flag, selectedEnvs);
-			if (skipResult.skip) {
-				spinner.warn(`Skipped ${chalk.cyan(flag.key)} — ${skipResult.reason}`);
-				skippedFlags.push({
-					key: flag.key,
-					reason: skipResult.reason ?? 'Unknown',
-				});
-				skipped++;
-				progressBar?.update(flag.key, { created, skipped, failed: errored });
-				continue;
-			}
-
-			// Check progressive rollout status via releases API
-			if (skipResult.hasProgressiveRollout) {
-				try {
-					const release = await fetchFlagRelease(
-						ldApiKey,
-						projectKey,
-						flag.key,
+			try {
+				// Check skip conditions
+				const skipResult = shouldSkipFlag(flag, selectedEnvs);
+				if (skipResult.skip) {
+					spinner.warn(
+						`Skipped ${chalk.cyan(flag.key)} — ${skipResult.reason}`,
 					);
-					if (release && isReleaseInProgress(release)) {
+					skippedFlags.push({
+						key: flag.key,
+						reason: skipResult.reason ?? 'Unknown',
+					});
+					skipped++;
+					progressBar?.update(flag.key, { created, skipped, failed: errored });
+					continue;
+				}
+
+				// Check progressive rollout status via releases API
+				if (skipResult.hasProgressiveRollout) {
+					try {
+						const release = await fetchFlagRelease(
+							ldApiKey,
+							projectKey,
+							flag.key,
+						);
+						if (release && isReleaseInProgress(release)) {
+							spinner.warn(
+								`Skipped ${chalk.cyan(flag.key)} — progressive rollout is in progress`,
+							);
+							skippedFlags.push({
+								key: flag.key,
+								reason: 'Progressive rollout is in progress',
+							});
+							skipped++;
+							progressBar?.update(flag.key, {
+								created,
+								skipped,
+								failed: errored,
+							});
+							continue;
+						}
+						// Release is complete or not found — safe to migrate
+					} catch (_err) {
 						spinner.warn(
-							`Skipped ${chalk.cyan(flag.key)} — progressive rollout is in progress`,
+							`Skipped ${chalk.cyan(flag.key)} — failed to check progressive rollout status`,
 						);
 						skippedFlags.push({
 							key: flag.key,
-							reason: 'Progressive rollout is in progress',
+							reason: 'Failed to check progressive rollout status',
 						});
 						skipped++;
 						progressBar?.update(flag.key, {
@@ -1101,154 +1120,269 @@ async function executeMigration(
 						});
 						continue;
 					}
-					// Release is complete or not found — safe to migrate
-				} catch (_err) {
+				}
+
+				if (skipResult.warn) {
+					console.log(chalk.yellow(`  ⚠ ${flag.key}: ${skipResult.warn}`));
+				}
+
+				if (flag.archived) {
+					spinner.warn(`Skipped ${chalk.cyan(flag.key)} — flag is archived`);
+					skippedFlags.push({ key: flag.key, reason: 'Flag is archived' });
+					skipped++;
+					progressBar?.update(flag.key, { created, skipped, failed: errored });
+					continue;
+				}
+
+				const variants = buildVariants(flag);
+				if (variants.length === 0) {
+					spinner.warn(`Skipped ${chalk.cyan(flag.key)} — no variants`);
+					skippedFlags.push({ key: flag.key, reason: 'No variants' });
+					skipped++;
+					progressBar?.update(flag.key, { created, skipped, failed: errored });
+					continue;
+				}
+
+				const allocationsResult = buildAllocations(
+					flag,
+					envMapping,
+					savedFilterLookup,
+					segmentConstantLookup,
+				);
+				if (!Array.isArray(allocationsResult)) {
 					spinner.warn(
-						`Skipped ${chalk.cyan(flag.key)} — failed to check progressive rollout status`,
+						`Skipped ${chalk.cyan(flag.key)} — ${allocationsResult.flagSkip}`,
 					);
 					skippedFlags.push({
 						key: flag.key,
-						reason: 'Failed to check progressive rollout status',
+						reason: allocationsResult.flagSkip,
 					});
 					skipped++;
 					progressBar?.update(flag.key, { created, skipped, failed: errored });
 					continue;
 				}
-			}
+				const allocations = allocationsResult;
+				const envsToEnable = getEnvsToEnable(flag, envMapping);
+				const targetKey = targetKeyBySource?.get(flag.key) ?? flag.key;
+				const conflict = nonInteractive
+					? classifyNonInteractiveConflict(
+							datadogFlags,
+							projectKey,
+							flag.key,
+							targetKey,
+						)
+					: classifyConflict(datadogFlags, projectKey, flag.key);
 
-			if (skipResult.warn) {
-				console.log(chalk.yellow(`  ⚠ ${flag.key}: ${skipResult.warn}`));
-			}
+				if (nonInteractive && conflict.type === 'duplicate') {
+					const existing = conflict.existingFlag;
+					const metadata = existing?.migration_metadata;
+					const reason =
+						`Duplicate Datadog flag key "${targetKey}" already exists` +
+						(metadata
+							? ` from LaunchDarkly project "${metadata.project_key}"`
+							: ' without LaunchDarkly migration metadata');
+					spinner.fail(`Failed ${chalk.cyan(flag.key)}: ${chalk.red(reason)}`);
+					failures.push({ key: flag.key, error: reason });
+					errored++;
+					progressBar?.update(flag.key, { created, skipped, failed: errored });
+					continue;
+				}
 
-			if (flag.archived) {
-				spinner.warn(`Skipped ${chalk.cyan(flag.key)} — flag is archived`);
-				skippedFlags.push({ key: flag.key, reason: 'Flag is archived' });
-				skipped++;
-				progressBar?.update(flag.key, { created, skipped, failed: errored });
-				continue;
-			}
+				// Cross-project conflict: skip or prefix
+				if (!nonInteractive && conflict.type === 'cross_project') {
+					if (!conflictResolution || conflictResolution.action === 'skip') {
+						spinner.warn(
+							`Skipped ${chalk.cyan(flag.key)} — key already used by a flag from a different LaunchDarkly project`,
+						);
+						skippedFlags.push({
+							key: flag.key,
+							reason:
+								'Key conflict: flag key already exists in Datadog from a different LaunchDarkly project',
+						});
+						skipped++;
+						progressBar?.update(flag.key, {
+							created,
+							skipped,
+							failed: errored,
+						});
+						continue;
+					}
+					// prefix case: fall through to creation below
+				}
 
-			const variants = buildVariants(flag);
-			if (variants.length === 0) {
-				spinner.warn(`Skipped ${chalk.cyan(flag.key)} — no variants`);
-				skippedFlags.push({ key: flag.key, reason: 'No variants' });
-				skipped++;
-				progressBar?.update(flag.key, { created, skipped, failed: errored });
-				continue;
-			}
+				// For same_project and manual conflicts, sync onto the existing flag
+				const existingFlagId =
+					conflict.type === 'same_project' ||
+					(!nonInteractive && conflict.type === 'manual')
+						? conflict.existingFlag?.id
+						: undefined;
 
-			const allocationsResult = buildAllocations(
-				flag,
-				envMapping,
-				savedFilterLookup,
-				segmentConstantLookup,
-			);
-			if (!Array.isArray(allocationsResult)) {
-				spinner.warn(
-					`Skipped ${chalk.cyan(flag.key)} — ${allocationsResult.flagSkip}`,
+				const allRuleCount = allocations.reduce(
+					(sum, a) => sum + (a.targeting_rules?.length ?? 0),
+					0,
 				);
-				skippedFlags.push({
-					key: flag.key,
-					reason: allocationsResult.flagSkip,
-				});
-				skipped++;
-				progressBar?.update(flag.key, { created, skipped, failed: errored });
-				continue;
-			}
-			const allocations = allocationsResult;
-			const envsToEnable = getEnvsToEnable(flag, envMapping);
-			const targetKey = targetKeyBySource?.get(flag.key) ?? flag.key;
-			const conflict = nonInteractive
-				? classifyNonInteractiveConflict(
-						datadogFlags,
+				const allFilterLabel = `${allocations.length} targeting filter(s)`;
+				const allRuleLabel =
+					allRuleCount > 0 ? `, ${allRuleCount} rule(s)` : '';
+
+				if (existingFlagId) {
+					const syncTags = buildFlagTags(
+						flag.tags,
 						projectKey,
-						flag.key,
-						targetKey,
-					)
-				: classifyConflict(datadogFlags, projectKey, flag.key);
-
-			if (nonInteractive && conflict.type === 'duplicate') {
-				const existing = conflict.existingFlag;
-				const metadata = existing?.migration_metadata;
-				const reason =
-					`Duplicate Datadog flag key "${targetKey}" already exists` +
-					(metadata
-						? ` from LaunchDarkly project "${metadata.project_key}"`
-						: ' without LaunchDarkly migration metadata');
-				spinner.fail(`Failed ${chalk.cyan(flag.key)}: ${chalk.red(reason)}`);
-				failures.push({ key: flag.key, error: reason });
-				errored++;
-				progressBar?.update(flag.key, { created, skipped, failed: errored });
-				continue;
-			}
-
-			// Cross-project conflict: skip or prefix
-			if (!nonInteractive && conflict.type === 'cross_project') {
-				if (!conflictResolution || conflictResolution.action === 'skip') {
-					spinner.warn(
-						`Skipped ${chalk.cyan(flag.key)} — key already used by a flag from a different LaunchDarkly project`,
+						editorTeamHandles,
 					);
-					skippedFlags.push({
-						key: flag.key,
-						reason:
-							'Key conflict: flag key already exists in Datadog from a different LaunchDarkly project',
-					});
-					skipped++;
-					progressBar?.update(flag.key, { created, skipped, failed: errored });
-					continue;
-				}
-				// prefix case: fall through to creation below
-			}
 
-			// For same_project and manual conflicts, sync onto the existing flag
-			const existingFlagId =
-				conflict.type === 'same_project' ||
-				(!nonInteractive && conflict.type === 'manual')
-					? conflict.existingFlag?.id
-					: undefined;
+					if (envsToEnable.length === 0) {
+						// Always sync tags and restriction policy even when no new environments need enabling.
+						// Variant deletes are intentionally SKIPPED in this branch: this
+						// path performs no allocation rewrite, so deleting a variant
+						// could orphan existing DD allocation references (allocations
+						// reference variants by UUID). Creates+updates are safe.
+						let variantCounts = { added: 0, updated: 0, deleted: 0 };
+						if (dryRun) {
+							const { variants: existingVariants } = await fetchFlagDetail(
+								ddApiKey,
+								ddAppKey,
+								existingFlagId,
+								ddSite,
+							);
+							const { createUpdateRequests } = buildVariantSyncDryRunRequests(
+								existingFlagId,
+								variants,
+								existingVariants,
+								'launchdarkly',
+							);
+							for (const r of createUpdateRequests) dryRunRequests.push(r);
+							variantCounts = {
+								added: createUpdateRequests.filter((r) => r.method === 'POST')
+									.length,
+								updated: createUpdateRequests.filter((r) => r.method === 'PUT')
+									.length,
+								deleted: 0,
+							};
+							dryRunRequests.push({
+								method: 'PUT',
+								path: `/api/v2/feature-flags/${existingFlagId}`,
+								body: {
+									data: {
+										type: 'feature-flags',
+										attributes: { tags: syncTags },
+									},
+								},
+							});
+							if (editorTeamIds.length > 0) {
+								const existingBindings = await fetchRestrictionPolicy(
+									ddApiKey,
+									ddAppKey,
+									existingFlagId,
+									ddSite,
+								);
+								dryRunRequests.push(
+									buildDryRunRestrictionPolicy(
+										existingFlagId,
+										editorTeamIds,
+										existingBindings,
+									),
+								);
+							}
+						} else {
+							const result = await syncVariantsCreatesAndUpdates(
+								ddApiKey,
+								ddAppKey,
+								existingFlagId,
+								variants,
+								'launchdarkly',
+								ddSite,
+							);
+							variantCounts = { ...result.counts, deleted: 0 };
+							await updateFlagTags(
+								ddApiKey,
+								ddAppKey,
+								existingFlagId,
+								syncTags,
+								ddSite,
+							);
+							if (editorTeamIds.length > 0) {
+								await applyRestrictionPolicyForFlag(
+									ddApiKey,
+									ddAppKey,
+									existingFlagId,
+									editorTeamIds,
+									ddSite,
+									flag.key,
+									restrictionPolicyFailures,
+								);
+							}
+						}
+						const policyLabel =
+							editorTeamIds.length > 0 ? ' (permissions refreshed)' : '';
+						const tagLabel = `${syncTags.length} tag(s)`;
+						const variantLabel = formatVariantLabel(variantCounts);
+						spinner.succeed(
+							dryRun
+								? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (${tagLabel}${variantLabel}${policyLabel})`
+								: `Synced ${chalk.cyan(flag.key)} (${tagLabel}${variantLabel}${policyLabel})`,
+						);
+						syncedFlagKeys.push(flag.key);
+						synced++;
+						progressBar?.update(flag.key, {
+							created,
+							skipped,
+							failed: errored,
+						});
+						continue;
+					}
 
-			const allRuleCount = allocations.reduce(
-				(sum, a) => sum + (a.targeting_rules?.length ?? 0),
-				0,
-			);
-			const allFilterLabel = `${allocations.length} targeting filter(s)`;
-			const allRuleLabel = allRuleCount > 0 ? `, ${allRuleCount} rule(s)` : '';
+					spinner.warn(
+						`${chalk.cyan(flag.key)} exists in Datadog — targeting filters in ${envsToEnable.map((e) => e.name).join(', ')} will be overwritten`,
+					);
+					spinner = createSpinner(`Migrating ${chalk.cyan(flag.key)}…`).start();
 
-			if (existingFlagId) {
-				const syncTags = buildFlagTags(
-					flag.tags,
-					projectKey,
-					editorTeamHandles,
-				);
-
-				if (envsToEnable.length === 0) {
-					// Always sync tags and restriction policy even when no new environments need enabling.
-					// Variant deletes are intentionally SKIPPED in this branch: this
-					// path performs no allocation rewrite, so deleting a variant
-					// could orphan existing DD allocation references (allocations
-					// reference variants by UUID). Creates+updates are safe.
-					let variantCounts = { added: 0, updated: 0, deleted: 0 };
 					if (dryRun) {
-						const { variants: existingVariants } = await fetchFlagDetail(
+						const { variants: existingVariantsDry } = await fetchFlagDetail(
 							ddApiKey,
 							ddAppKey,
 							existingFlagId,
 							ddSite,
 						);
-						const { createUpdateRequests } = buildVariantSyncDryRunRequests(
-							existingFlagId,
-							variants,
-							existingVariants,
-							'launchdarkly',
-						);
+						const { createUpdateRequests, deleteRequests } =
+							buildVariantSyncDryRunRequests(
+								existingFlagId,
+								variants,
+								existingVariantsDry,
+								'launchdarkly',
+							);
+						// Variant creates+updates precede allocation PUTs.
 						for (const r of createUpdateRequests) dryRunRequests.push(r);
-						variantCounts = {
+						const variantCountsDry = {
 							added: createUpdateRequests.filter((r) => r.method === 'POST')
 								.length,
 							updated: createUpdateRequests.filter((r) => r.method === 'PUT')
 								.length,
-							deleted: 0,
+							deleted: deleteRequests.length,
 						};
+						let syncFilterCount = 0;
+						let syncRuleCount = 0;
+						for (const ddEnv of envsToEnable) {
+							const syncReqs = toSyncRequests(allocations, ddEnv.id);
+							syncFilterCount += syncReqs.length;
+							syncRuleCount += syncReqs.reduce(
+								(sum, r) => sum + (r.targeting_rules?.length ?? 0),
+								0,
+							);
+							dryRunRequests.push({
+								method: 'PUT',
+								path: `/api/v2/feature-flags/${existingFlagId}/environments/${ddEnv.id}/allocations`,
+								body: syncReqs,
+							});
+							dryRunRequests.push({
+								method: 'POST',
+								path: `/api/v2/feature-flags/${existingFlagId}/environments/${ddEnv.id}/enable`,
+								body: {},
+							});
+						}
+						// Variant deletes go AFTER allocation PUTs.
+						for (const r of deleteRequests) dryRunRequests.push(r);
 						dryRunRequests.push({
 							method: 'PUT',
 							path: `/api/v2/feature-flags/${existingFlagId}`,
@@ -1274,241 +1408,21 @@ async function executeMigration(
 								),
 							);
 						}
-					} else {
-						const result = await syncVariantsCreatesAndUpdates(
-							ddApiKey,
-							ddAppKey,
-							existingFlagId,
-							variants,
-							'launchdarkly',
-							ddSite,
-						);
-						variantCounts = { ...result.counts, deleted: 0 };
-						await updateFlagTags(
-							ddApiKey,
-							ddAppKey,
-							existingFlagId,
-							syncTags,
-							ddSite,
-						);
-						if (editorTeamIds.length > 0) {
-							await applyRestrictionPolicyForFlag(
-								ddApiKey,
-								ddAppKey,
-								existingFlagId,
-								editorTeamIds,
-								ddSite,
-								flag.key,
-								restrictionPolicyFailures,
-							);
-						}
-					}
-					const policyLabel =
-						editorTeamIds.length > 0 ? ' (permissions refreshed)' : '';
-					const tagLabel = `${syncTags.length} tag(s)`;
-					const variantLabel = formatVariantLabel(variantCounts);
-					spinner.succeed(
-						dryRun
-							? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (${tagLabel}${variantLabel}${policyLabel})`
-							: `Synced ${chalk.cyan(flag.key)} (${tagLabel}${variantLabel}${policyLabel})`,
-					);
-					syncedFlagKeys.push(flag.key);
-					synced++;
-					progressBar?.update(flag.key, { created, skipped, failed: errored });
-					continue;
-				}
-
-				spinner.warn(
-					`${chalk.cyan(flag.key)} exists in Datadog — targeting filters in ${envsToEnable.map((e) => e.name).join(', ')} will be overwritten`,
-				);
-				spinner = createSpinner(`Migrating ${chalk.cyan(flag.key)}…`).start();
-
-				if (dryRun) {
-					const { variants: existingVariantsDry } = await fetchFlagDetail(
-						ddApiKey,
-						ddAppKey,
-						existingFlagId,
-						ddSite,
-					);
-					const { createUpdateRequests, deleteRequests } =
-						buildVariantSyncDryRunRequests(
-							existingFlagId,
-							variants,
-							existingVariantsDry,
-							'launchdarkly',
-						);
-					// Variant creates+updates precede allocation PUTs.
-					for (const r of createUpdateRequests) dryRunRequests.push(r);
-					const variantCountsDry = {
-						added: createUpdateRequests.filter((r) => r.method === 'POST')
-							.length,
-						updated: createUpdateRequests.filter((r) => r.method === 'PUT')
-							.length,
-						deleted: deleteRequests.length,
-					};
-					let syncFilterCount = 0;
-					let syncRuleCount = 0;
-					for (const ddEnv of envsToEnable) {
-						const syncReqs = toSyncRequests(allocations, ddEnv.id);
-						syncFilterCount += syncReqs.length;
-						syncRuleCount += syncReqs.reduce(
-							(sum, r) => sum + (r.targeting_rules?.length ?? 0),
-							0,
-						);
-						dryRunRequests.push({
-							method: 'PUT',
-							path: `/api/v2/feature-flags/${existingFlagId}/environments/${ddEnv.id}/allocations`,
-							body: syncReqs,
-						});
-						dryRunRequests.push({
-							method: 'POST',
-							path: `/api/v2/feature-flags/${existingFlagId}/environments/${ddEnv.id}/enable`,
-							body: {},
-						});
-					}
-					// Variant deletes go AFTER allocation PUTs.
-					for (const r of deleteRequests) dryRunRequests.push(r);
-					dryRunRequests.push({
-						method: 'PUT',
-						path: `/api/v2/feature-flags/${existingFlagId}`,
-						body: {
-							data: {
-								type: 'feature-flags',
-								attributes: { tags: syncTags },
-							},
-						},
-					});
-					if (editorTeamIds.length > 0) {
-						const existingBindings = await fetchRestrictionPolicy(
-							ddApiKey,
-							ddAppKey,
-							existingFlagId,
-							ddSite,
-						);
-						dryRunRequests.push(
-							buildDryRunRestrictionPolicy(
-								existingFlagId,
-								editorTeamIds,
-								existingBindings,
-							),
-						);
-					}
-					const syncFilterLabel = `${syncFilterCount} targeting filter(s)`;
-					const syncRuleLabel =
-						syncRuleCount > 0 ? `, ${syncRuleCount} rule(s)` : '';
-					const tagLabel =
-						syncTags.length > 0
-							? `, ${syncTags.length} tag(s)`
-							: ', tags cleared';
-					const variantLabel = formatVariantLabel(variantCountsDry);
-					const enableLabel =
-						envsToEnable.length > 0
-							? `, would enable in ${envsToEnable.map((e) => e.name).join(', ')}`
-							: '';
-					spinner.succeed(
-						`${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} ` +
-							`(${syncFilterLabel}${syncRuleLabel}${variantLabel}${tagLabel}${enableLabel})`,
-					);
-					syncedFlagKeys.push(flag.key);
-					synced++;
-					progressBar?.update(flag.key, { created, skipped, failed: errored });
-				} else {
-					try {
-						// Apply variant creates+updates first so allocation
-						// variant_id resolution sees new variants. Deletes are
-						// deferred until AFTER allocation sync so we never remove
-						// a variant while an allocation may still reference it.
-						const variantSyncResult = await syncVariantsCreatesAndUpdates(
-							ddApiKey,
-							ddAppKey,
-							existingFlagId,
-							variants,
-							'launchdarkly',
-							ddSite,
-						);
-						const variantCounts = variantSyncResult.counts;
-						let syncedAllocCount = 0;
-						let syncedRuleCount = 0;
-						for (const ddEnv of envsToEnable) {
-							const syncReqs = toSyncRequests(allocations, ddEnv.id);
-							await syncAllocationsForEnvironment(
-								ddApiKey,
-								ddAppKey,
-								existingFlagId,
-								ddEnv.id,
-								syncReqs,
-								ddSite,
-							);
-							syncedAllocCount += syncReqs.length;
-							syncedRuleCount += syncReqs.reduce(
-								(sum, r) => sum + (r.targeting_rules?.length ?? 0),
-								0,
-							);
-						}
-
-						// Now safe to delete: allocations no longer reference these.
-						await applyVariantDeletes(
-							ddApiKey,
-							ddAppKey,
-							existingFlagId,
-							variantSyncResult.pendingDeletes,
-							ddSite,
-						);
-
-						// Update tags on existing flag (replace so removals propagate)
-						await updateFlagTags(
-							ddApiKey,
-							ddAppKey,
-							existingFlagId,
-							syncTags,
-							ddSite,
-						);
-
-						// Apply restriction policy for LD editor teams
-						if (editorTeamIds.length > 0) {
-							await applyRestrictionPolicyForFlag(
-								ddApiKey,
-								ddAppKey,
-								existingFlagId,
-								editorTeamIds,
-								ddSite,
-								flag.key,
-								restrictionPolicyFailures,
-							);
-						}
-
-						let enabledCount = 0;
-						for (const ddEnv of envsToEnable) {
-							try {
-								await enableFeatureFlagEnvironment(
-									ddApiKey,
-									ddAppKey,
-									existingFlagId,
-									ddEnv.id,
-									ddSite,
-								);
-								enabledCount++;
-							} catch (err) {
-								enableFailures.push({
-									key: flag.key,
-									env: ddEnv.name,
-									error: formatAxiosError(err),
-								});
-							}
-						}
-
-						totalEnabled += enabledCount;
-						const syncedRuleLabel =
-							syncedRuleCount > 0 ? `, ${syncedRuleCount} rule(s)` : '';
+						const syncFilterLabel = `${syncFilterCount} targeting filter(s)`;
+						const syncRuleLabel =
+							syncRuleCount > 0 ? `, ${syncRuleCount} rule(s)` : '';
 						const tagLabel =
 							syncTags.length > 0
 								? `, ${syncTags.length} tag(s)`
 								: ', tags cleared';
-						const variantLabel = formatVariantLabel(variantCounts);
+						const variantLabel = formatVariantLabel(variantCountsDry);
 						const enableLabel =
-							enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
+							envsToEnable.length > 0
+								? `, would enable in ${envsToEnable.map((e) => e.name).join(', ')}`
+								: '';
 						spinner.succeed(
-							`Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${variantLabel}${tagLabel}${enableLabel})`,
+							`${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} ` +
+								`(${syncFilterLabel}${syncRuleLabel}${variantLabel}${tagLabel}${enableLabel})`,
 						);
 						syncedFlagKeys.push(flag.key);
 						synced++;
@@ -1517,129 +1431,184 @@ async function executeMigration(
 							skipped,
 							failed: errored,
 						});
-					} catch (err) {
-						spinner.fail(
-							`Failed to sync ${chalk.cyan(flag.key)}: ${chalk.red(formatAxiosError(err))}`,
-						);
-						failures.push({ key: flag.key, error: formatAxiosError(err) });
-						errored++;
-						progressBar?.update(flag.key, {
-							created,
-							skipped,
-							failed: errored,
-						});
-					}
-				}
-			} else {
-				const usePrefix =
-					!nonInteractive &&
-					conflict.type === 'cross_project' &&
-					conflictResolution?.action === 'prefix';
-				const ddKey = usePrefix
-					? `${conflictResolution.prefix}-${flag.key}`
-					: targetKey;
-
-				const tags = buildFlagTags(flag.tags, projectKey, editorTeamHandles);
-
-				const request: DatadogCreateFlagRequest = {
-					key: ddKey,
-					name: flag.name,
-					value_type: mapFlagType(flag),
-					variants,
-					allocations: allocations.length > 0 ? allocations : undefined,
-					migration_metadata: {
-						project_key: projectKey,
-						flag_key: flag.key,
-						...(usePrefix ? { key_prefix: conflictResolution.prefix } : {}),
-					},
-					...(tags.length > 0 ? { tags } : {}),
-					...(hasSemverConditions(allocations)
-						? { distribution_channel: 'CLIENT' }
-						: {}),
-				};
-
-				if (dryRun) {
-					dryRunRequests.push({
-						method: 'POST',
-						path: '/api/v2/feature-flags',
-						body: { data: { type: 'feature-flags', attributes: request } },
-					});
-					for (const ddEnv of envsToEnable) {
-						dryRunRequests.push({
-							method: 'POST',
-							path: `/api/v2/feature-flags/<uuid-for-${ddKey}>/environments/${ddEnv.id}/enable`,
-							body: {},
-						});
-					}
-
-					if (editorTeamIds.length > 0) {
-						dryRunRequests.push(
-							buildDryRunRestrictionPolicy(
-								`<uuid-for-${ddKey}>`,
-								editorTeamIds,
-								[],
-								'Approximate — dd-source adds a creator-team principal on flag creation before this POST runs; that principal is not reflected here.',
-							),
-						);
-					}
-
-					const enableLabel =
-						envsToEnable.length > 0
-							? `, would enable in ${envsToEnable.map((e) => e.name).join(', ')}`
-							: '';
-					spinner.succeed(
-						`${chalk.dim('[dry run]')} Would create ${chalk.cyan(ddKey)} ` +
-							`(${allFilterLabel}${allRuleLabel}${enableLabel})`,
-					);
-					created++;
-					progressBar?.update(flag.key, { created, skipped, failed: errored });
-				} else {
-					try {
-						const createdFlag = await createFeatureFlag(
-							ddApiKey,
-							ddAppKey,
-							request,
-							ddSite,
-						);
-
-						// Apply restriction policy for LD editor teams
-						if (editorTeamIds.length > 0) {
-							await applyRestrictionPolicyForFlag(
+					} else {
+						try {
+							// Apply variant creates+updates first so allocation
+							// variant_id resolution sees new variants. Deletes are
+							// deferred until AFTER allocation sync so we never remove
+							// a variant while an allocation may still reference it.
+							const variantSyncResult = await syncVariantsCreatesAndUpdates(
 								ddApiKey,
 								ddAppKey,
-								createdFlag.id,
-								editorTeamIds,
+								existingFlagId,
+								variants,
+								'launchdarkly',
 								ddSite,
-								ddKey,
-								restrictionPolicyFailures,
+							);
+							const variantCounts = variantSyncResult.counts;
+							let syncedAllocCount = 0;
+							let syncedRuleCount = 0;
+							for (const ddEnv of envsToEnable) {
+								const syncReqs = toSyncRequests(allocations, ddEnv.id);
+								await syncAllocationsForEnvironment(
+									ddApiKey,
+									ddAppKey,
+									existingFlagId,
+									ddEnv.id,
+									syncReqs,
+									ddSite,
+								);
+								syncedAllocCount += syncReqs.length;
+								syncedRuleCount += syncReqs.reduce(
+									(sum, r) => sum + (r.targeting_rules?.length ?? 0),
+									0,
+								);
+							}
+
+							// Now safe to delete: allocations no longer reference these.
+							await applyVariantDeletes(
+								ddApiKey,
+								ddAppKey,
+								existingFlagId,
+								variantSyncResult.pendingDeletes,
+								ddSite,
+							);
+
+							// Update tags on existing flag (replace so removals propagate)
+							await updateFlagTags(
+								ddApiKey,
+								ddAppKey,
+								existingFlagId,
+								syncTags,
+								ddSite,
+							);
+
+							// Apply restriction policy for LD editor teams
+							if (editorTeamIds.length > 0) {
+								await applyRestrictionPolicyForFlag(
+									ddApiKey,
+									ddAppKey,
+									existingFlagId,
+									editorTeamIds,
+									ddSite,
+									flag.key,
+									restrictionPolicyFailures,
+								);
+							}
+
+							let enabledCount = 0;
+							for (const ddEnv of envsToEnable) {
+								try {
+									await enableFeatureFlagEnvironment(
+										ddApiKey,
+										ddAppKey,
+										existingFlagId,
+										ddEnv.id,
+										ddSite,
+									);
+									enabledCount++;
+								} catch (err) {
+									enableFailures.push({
+										key: flag.key,
+										env: ddEnv.name,
+										error: formatAxiosError(err),
+									});
+								}
+							}
+
+							totalEnabled += enabledCount;
+							const syncedRuleLabel =
+								syncedRuleCount > 0 ? `, ${syncedRuleCount} rule(s)` : '';
+							const tagLabel =
+								syncTags.length > 0
+									? `, ${syncTags.length} tag(s)`
+									: ', tags cleared';
+							const variantLabel = formatVariantLabel(variantCounts);
+							const enableLabel =
+								enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
+							spinner.succeed(
+								`Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${variantLabel}${tagLabel}${enableLabel})`,
+							);
+							syncedFlagKeys.push(flag.key);
+							synced++;
+							progressBar?.update(flag.key, {
+								created,
+								skipped,
+								failed: errored,
+							});
+						} catch (err) {
+							spinner.fail(
+								`Failed to sync ${chalk.cyan(flag.key)}: ${chalk.red(formatAxiosError(err))}`,
+							);
+							failures.push({ key: flag.key, error: formatAxiosError(err) });
+							errored++;
+							progressBar?.update(flag.key, {
+								created,
+								skipped,
+								failed: errored,
+							});
+						}
+					}
+				} else {
+					const usePrefix =
+						!nonInteractive &&
+						conflict.type === 'cross_project' &&
+						conflictResolution?.action === 'prefix';
+					const ddKey = usePrefix
+						? `${conflictResolution.prefix}-${flag.key}`
+						: targetKey;
+
+					const tags = buildFlagTags(flag.tags, projectKey, editorTeamHandles);
+
+					const request: DatadogCreateFlagRequest = {
+						key: ddKey,
+						name: flag.name,
+						value_type: mapFlagType(flag),
+						variants,
+						allocations: allocations.length > 0 ? allocations : undefined,
+						migration_metadata: {
+							project_key: projectKey,
+							flag_key: flag.key,
+							...(usePrefix ? { key_prefix: conflictResolution.prefix } : {}),
+						},
+						...(tags.length > 0 ? { tags } : {}),
+						...(hasSemverConditions(allocations)
+							? { distribution_channel: 'CLIENT' }
+							: {}),
+					};
+
+					if (dryRun) {
+						dryRunRequests.push({
+							method: 'POST',
+							path: '/api/v2/feature-flags',
+							body: { data: { type: 'feature-flags', attributes: request } },
+						});
+						for (const ddEnv of envsToEnable) {
+							dryRunRequests.push({
+								method: 'POST',
+								path: `/api/v2/feature-flags/<uuid-for-${ddKey}>/environments/${ddEnv.id}/enable`,
+								body: {},
+							});
+						}
+
+						if (editorTeamIds.length > 0) {
+							dryRunRequests.push(
+								buildDryRunRestrictionPolicy(
+									`<uuid-for-${ddKey}>`,
+									editorTeamIds,
+									[],
+									'Approximate — dd-source adds a creator-team principal on flag creation before this POST runs; that principal is not reflected here.',
+								),
 							);
 						}
 
-						let enabledCount = 0;
-						for (const ddEnv of envsToEnable) {
-							try {
-								await enableFeatureFlagEnvironment(
-									ddApiKey,
-									ddAppKey,
-									createdFlag.id,
-									ddEnv.id,
-									ddSite,
-								);
-								enabledCount++;
-							} catch (err) {
-								enableFailures.push({
-									key: ddKey,
-									env: ddEnv.name,
-									error: formatAxiosError(err),
-								});
-							}
-						}
-
-						totalEnabled += enabledCount;
 						const enableLabel =
-							enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
+							envsToEnable.length > 0
+								? `, would enable in ${envsToEnable.map((e) => e.name).join(', ')}`
+								: '';
 						spinner.succeed(
-							`Created ${chalk.cyan(ddKey)} (${allFilterLabel}${allRuleLabel}${enableLabel})`,
+							`${chalk.dim('[dry run]')} Would create ${chalk.cyan(ddKey)} ` +
+								`(${allFilterLabel}${allRuleLabel}${enableLabel})`,
 						);
 						created++;
 						progressBar?.update(flag.key, {
@@ -1647,19 +1616,84 @@ async function executeMigration(
 							skipped,
 							failed: errored,
 						});
-					} catch (err) {
-						spinner.fail(
-							`Failed ${chalk.cyan(ddKey)}: ${chalk.red(formatAxiosError(err))}`,
-						);
-						failures.push({ key: ddKey, error: formatAxiosError(err) });
-						errored++;
-						progressBar?.update(flag.key, {
-							created,
-							skipped,
-							failed: errored,
-						});
+					} else {
+						try {
+							const createdFlag = await createFeatureFlag(
+								ddApiKey,
+								ddAppKey,
+								request,
+								ddSite,
+							);
+
+							// Apply restriction policy for LD editor teams
+							if (editorTeamIds.length > 0) {
+								await applyRestrictionPolicyForFlag(
+									ddApiKey,
+									ddAppKey,
+									createdFlag.id,
+									editorTeamIds,
+									ddSite,
+									ddKey,
+									restrictionPolicyFailures,
+								);
+							}
+
+							let enabledCount = 0;
+							for (const ddEnv of envsToEnable) {
+								try {
+									await enableFeatureFlagEnvironment(
+										ddApiKey,
+										ddAppKey,
+										createdFlag.id,
+										ddEnv.id,
+										ddSite,
+									);
+									enabledCount++;
+								} catch (err) {
+									enableFailures.push({
+										key: ddKey,
+										env: ddEnv.name,
+										error: formatAxiosError(err),
+									});
+								}
+							}
+
+							totalEnabled += enabledCount;
+							const enableLabel =
+								enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
+							spinner.succeed(
+								`Created ${chalk.cyan(ddKey)} (${allFilterLabel}${allRuleLabel}${enableLabel})`,
+							);
+							created++;
+							progressBar?.update(flag.key, {
+								created,
+								skipped,
+								failed: errored,
+							});
+						} catch (err) {
+							spinner.fail(
+								`Failed ${chalk.cyan(ddKey)}: ${chalk.red(formatAxiosError(err))}`,
+							);
+							failures.push({ key: ddKey, error: formatAxiosError(err) });
+							errored++;
+							progressBar?.update(flag.key, {
+								created,
+								skipped,
+								failed: errored,
+							});
+						}
 					}
 				}
+			} catch (err) {
+				const error = formatAxiosError(err);
+				spinner.fail(`Failed ${chalk.cyan(flag.key)}: ${chalk.red(error)}`);
+				failures.push({ key: flag.key, error });
+				errored++;
+				progressBar?.update(flag.key, {
+					created,
+					skipped,
+					failed: errored,
+				});
 			}
 		}
 	} finally {
