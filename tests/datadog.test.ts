@@ -400,6 +400,62 @@ describe('fetchDatadogFlags', () => {
 			flag_key: 'flag-50',
 		});
 	});
+
+	it('falls back to total_count when next_offset is absent', async () => {
+		const limit = 50;
+		const page1 = Array.from({ length: limit }, (_, i) => ({
+			id: `uuid-${i}`,
+			type: 'feature-flags',
+			attributes: { key: `flag-${i}`, name: `Flag ${i}` },
+		}));
+		const page2 = [
+			{
+				id: 'uuid-50',
+				type: 'feature-flags',
+				attributes: { key: 'flag-50', name: 'Flag 50' },
+			},
+		];
+
+		mock
+			.onGet(`${BASE}/api/v2/feature-flags`, {
+				params: { limit, offset: 0, is_archived: false },
+			})
+			.reply(200, {
+				data: page1,
+				meta: { page: { total_count: 51 } },
+			});
+
+		mock
+			.onGet(`${BASE}/api/v2/feature-flags`, {
+				params: { limit, offset: 50, is_archived: false },
+			})
+			.reply(200, {
+				data: page2,
+				meta: { page: { total_count: 51 } },
+			});
+
+		const result = await fetchDatadogFlags(API_KEY, APP_KEY, SITE);
+		expect(result).toHaveLength(51);
+		expect(result[50].key).toBe('flag-50');
+	});
+
+	it('stops when a short page is returned without next_offset or total', async () => {
+		const limit = 50;
+		const page1 = Array.from({ length: limit - 1 }, (_, i) => ({
+			id: `uuid-${i}`,
+			type: 'feature-flags',
+			attributes: { key: `flag-${i}`, name: `Flag ${i}` },
+		}));
+
+		mock
+			.onGet(`${BASE}/api/v2/feature-flags`, {
+				params: { limit, offset: 0, is_archived: false },
+			})
+			.reply(200, { data: page1 });
+
+		const result = await fetchDatadogFlags(API_KEY, APP_KEY, SITE);
+		expect(result).toHaveLength(limit - 1);
+	});
 });
 
 // ─── createFeatureFlag ────────────────────────────────────────────────────────

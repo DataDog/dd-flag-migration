@@ -174,10 +174,21 @@ export function eppoSourceIdLookupKey(sourceId: string): string {
 	return `eppo:${sourceId}`;
 }
 
-const FEATURE_FLAG_PAGE_LIMIT = 50;
+export const FEATURE_FLAG_PAGE_LIMIT = 50;
 
-function featureFlagPageTotal(
-	response: JsonApiFlagListResponse,
+export type FeatureFlagPageMeta = {
+	meta?: {
+		page?: {
+			total?: number;
+			total_count?: number;
+			total_filtered_count?: number;
+			next_offset?: number | null;
+		};
+	};
+};
+
+export function featureFlagPageTotal(
+	response: FeatureFlagPageMeta,
 ): number | undefined {
 	return (
 		response.meta?.page?.total_filtered_count ??
@@ -186,8 +197,8 @@ function featureFlagPageTotal(
 	);
 }
 
-function nextFeatureFlagOffset(
-	response: JsonApiFlagListResponse,
+export function nextFeatureFlagOffset(
+	response: FeatureFlagPageMeta,
 	currentOffset: number,
 	loadedCount: number,
 ): number | undefined {
