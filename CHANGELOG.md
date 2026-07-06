@@ -2,16 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [1.2.0] — 2026-07-06
 
 ### CLI
 
-- Feat: replace the flag-selection **Tab** toggle with an advanced-filter screen
-  - Tab now opens a multi-select of flag categories (`new`, `active`, `inactive`, `launched`, `previously-migrated`, `not-yet-migrated`); none start checked, which means no category filter is applied
-  - Press Enter to apply filter changes and unselect any already-selected flags that no longer match; press Escape to cancel filter changes
-  - Selecting every category is equivalent to no category filter; partial selections narrow the visible flags to any selected category
-  - The four lifecycle categories are derived from LaunchDarkly flag statuses across all non-archived environments; `active` means active in any environment and `inactive` means inactive in all environments. Eppo offers only migration-state categories since it exposes no usage-recency signal
-- Feat: record `migration_metadata` (`provider: 'eppo'`, `source_id`, `source_key`) on Eppo flags created in Datadog, and resolve previously-migrated Eppo flags by those source aliases in addition to the flag key. This makes Eppo re-migration matching robust when the Datadog-facing key differs from the Eppo source key
+- Feat: Tab opens a multi-select advanced-filter screen (#96)
+
+### Migration — LaunchDarkly
+
+- Feat: tag migrated flags with the source LaunchDarkly project key as `project:<key>` (#93)
+- Feat: tag migrated flags with Datadog team handles for LD teams with editor access (#94)
+- Fix: show progress while downloading LD flag details (#97)
+- Fix: fetch all pages of Datadog flags during the sync check, not just the first page (#97)
+- Fix: treat per-flag migration failures as non-fatal so the batch continues (#97)
+
+### Migration — Eppo
+
+- Feat: record `migration_metadata` (`provider: 'eppo'`, `source_id`, `source_key`) on migrated Eppo flags; re-migration now resolves flags by source aliases in addition to the flag key (#97)
 
 ## [1.1.0] — 2026-06-29
 
