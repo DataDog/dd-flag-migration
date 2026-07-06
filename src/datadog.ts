@@ -163,6 +163,10 @@ type JsonApiFlagListResponse = {
 	meta?: { page?: { total_count?: number } };
 };
 
+export function eppoSourceIdLookupKey(sourceId: string): string {
+	return `eppo:${sourceId}`;
+}
+
 export async function fetchDatadogFlagKeys(
 	apiKey: string,
 	appKey: string,
@@ -186,7 +190,16 @@ export async function fetchDatadogFlagKeys(
 		);
 		const flags = response.data.data ?? [];
 		const total = response.data.meta?.page?.total_count;
-		for (const f of flags) keys.set(f.attributes.key, f.id);
+		for (const f of flags) {
+			keys.set(f.attributes.key, f.id);
+			const metadata = f.attributes.migration_metadata;
+			if (metadata?.provider === 'eppo') {
+				if (metadata.source_key) keys.set(metadata.source_key, f.id);
+				if (metadata.source_id) {
+					keys.set(eppoSourceIdLookupKey(metadata.source_id), f.id);
+				}
+			}
+		}
 		offset += flags.length;
 		if (flags.length < limit || (total !== undefined && offset >= total)) break;
 	}

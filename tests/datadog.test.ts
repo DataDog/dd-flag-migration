@@ -16,6 +16,7 @@ import {
 	ddClient,
 	deleteVariant,
 	enableFeatureFlagEnvironment,
+	eppoSourceIdLookupKey,
 	fetchCurrentUserPermissions,
 	fetchDatadogEnvironments,
 	fetchDatadogFlagKeys,
@@ -187,6 +188,31 @@ describe('fetchDatadogFlagKeys', () => {
 
 		const result = await fetchDatadogFlagKeys(API_KEY, APP_KEY, SITE);
 		expect(result.size).toBe(0);
+	});
+
+	it('indexes Eppo flags by source metadata aliases', async () => {
+		mock.onGet(`${BASE}/api/v2/feature-flags`).reply(200, {
+			data: [
+				{
+					id: 'uuid-eppo',
+					type: 'feature-flags',
+					attributes: {
+						key: 'datadog-facing-key',
+						name: 'Eppo Flag',
+						migration_metadata: {
+							provider: 'eppo',
+							source_id: '123',
+							source_key: 'eppo-source-key',
+						},
+					},
+				},
+			],
+		});
+
+		const result = await fetchDatadogFlagKeys(API_KEY, APP_KEY, SITE);
+		expect(result.get('datadog-facing-key')).toBe('uuid-eppo');
+		expect(result.get('eppo-source-key')).toBe('uuid-eppo');
+		expect(result.get(eppoSourceIdLookupKey('123'))).toBe('uuid-eppo');
 	});
 
 	it('paginates until a page returns fewer items than the limit', async () => {
