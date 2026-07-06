@@ -18,6 +18,7 @@ import {
 	parseCsv,
 	validateHeader,
 } from './evaluate/csv.js';
+import { fetchDDFlagData } from './evaluate/dd-flags.js';
 import type { ClassifiedRow, RowColor } from './evaluate/result-classifier.js';
 import { classifyRow } from './evaluate/result-classifier.js';
 import {
@@ -471,90 +472,6 @@ async function mapWithConcurrency<T, R>(
 	);
 	await Promise.all(workers);
 	return results;
-}
-
-type DDFlagListItem = {
-	attributes: {
-		key: string;
-		value_type?: string;
-		migration_metadata?: MigrationMetadata;
-		feature_flag_environments?: Array<{
-			environment_id: string;
-			status: 'ENABLED' | 'DISABLED';
-		}>;
-	};
-};
-
-async function fetchDDFlagData(
-	apiKey: string,
-	appKey: string,
-	site: string,
-	envId: string,
-): Promise<{
-	keys: Set<string>;
-	enabledByKey: Map<string, boolean>;
-	valueTypeByKey: Map<string, string>;
-	migrationMetadataByKey: Map<string, MigrationMetadata>;
-}> {
-	const baseUrl = `https://api.${site}`;
-	const keys = new Set<string>();
-	const enabledByKey = new Map<string, boolean>();
-	const valueTypeByKey = new Map<string, string>();
-	const migrationMetadataByKey = new Map<string, MigrationMetadata>();
-	let offset = 0;
-	const limit = 200;
-	try {
-		while (true) {
-			const resp = await ddClient.get<{
-				data: DDFlagListItem[];
-				meta?: { page?: { total_count?: number } };
-			}>(`${baseUrl}/api/v2/feature-flags`, {
-				headers: { 'DD-API-KEY': apiKey, 'DD-APPLICATION-KEY': appKey },
-				params: {
-					'page[limit]': limit,
-					'page[offset]': offset,
-					is_archived: false,
-				},
-			});
-			const flags = resp.data.data ?? [];
-			const total = resp.data.meta?.page?.total_count;
-			for (const f of flags) {
-				keys.add(f.attributes.key);
-				const envEntry = (f.attributes.feature_flag_environments ?? []).find(
-					(e) => e.environment_id === envId,
-				);
-				if (envEntry !== undefined)
-					enabledByKey.set(f.attributes.key, envEntry.status === 'ENABLED');
-				if (f.attributes.value_type)
-					valueTypeByKey.set(f.attributes.key, f.attributes.value_type);
-				if (f.attributes.migration_metadata)
-					migrationMetadataByKey.set(
-						f.attributes.key,
-						f.attributes.migration_metadata,
-					);
-			}
-			offset += flags.length;
-			if (flags.length < limit || (total !== undefined && offset >= total))
-				break;
-		}
-	} catch (err) {
-		if (axios.isAxiosError(err) && err.response?.status === 403) {
-			throw new Error(
-				'Datadog API returned 403 Forbidden when fetching feature flags.\n' +
-					'  Please check that:\n' +
-					'  • Your Datadog API key and Application key are valid\n' +
-					'  • Your Application key has permission to read feature flags',
-			);
-		}
-		if (axios.isAxiosError(err) && err.response?.status === 401) {
-			throw new Error(
-				'Datadog API returned 401 Unauthorized.\n' +
-					'  Your API key or Application key is invalid.',
-			);
-		}
-		throw err;
-	}
-	return { keys, enabledByKey, valueTypeByKey, migrationMetadataByKey };
 }
 
 async function fetchDDFlags(
