@@ -13,11 +13,19 @@ Thank you for your interest in contributing to the Datadog Feature Flag Migratio
 
 2. **Install dependencies:**
 
+   On a fresh clone, run the two commands directly (before `node_modules` exists, yarn cannot find the `setup` script):
+
+   ```bash
+   yarn install && yarn allow-scripts
+   ```
+
+   On subsequent installs (after `node_modules` is already initialized), you can use the shorthand:
+
    ```bash
    yarn setup
    ```
 
-   > **Note:** Use `yarn setup` instead of `yarn install`. This project uses [`@lavamoat/allow-scripts`](https://www.npmjs.com/package/@lavamoat/allow-scripts) to protect against supply-chain attacks by blocking all dependency lifecycle scripts by default. `yarn setup` runs `yarn install` and then selectively executes only the explicitly allowed postinstall scripts.
+   > **Note:** This project uses [`@lavamoat/allow-scripts`](https://www.npmjs.com/package/@lavamoat/allow-scripts) to protect against supply-chain attacks by blocking all dependency lifecycle scripts by default. `yarn setup` runs `yarn install` and then selectively executes only the explicitly allowed postinstall scripts.
 
 3. **Build:**
 
