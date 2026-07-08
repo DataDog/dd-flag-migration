@@ -211,7 +211,7 @@ export function FilterableCheckboxView<T>(props: Props<T>): JSX.Element {
 			setActive(0);
 		} else if (!key.ctrl && !key.meta && inputChar) {
 			const printable = [...inputChar]
-				.filter((c) => c.charCodeAt(0) >= 32 && c !== ' ')
+				.filter((c) => c.charCodeAt(0) >= 32)
 				.join('');
 			if (printable.length > 0) {
 				setFilterText(filterText + printable);

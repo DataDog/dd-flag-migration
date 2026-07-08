@@ -85,8 +85,7 @@ Required when --interactive=false:
   Output is a JSON result document on stdout; status logs go to stderr.
   --provider <Eppo|LaunchDarkly>   Source feature flag provider (case-insensitive)
   --env-map <source,target>        Map a source env to a Datadog env (repeatable; ≥1)
-  --feature-flag <key>[,<dd-key>]  Flag key to migrate; LaunchDarkly may include a Datadog rename
-(repeatable; ≥1)
+  --feature-flag <key>[,<dd-key>]  Flag key to migrate; LaunchDarkly may include a Datadog rename (…
   --project <key>                  LaunchDarkly project key (LaunchDarkly only)
 
 Options for evaluate:
@@ -119,9 +118,9 @@ Examples:
 "Missing required Datadog permissions:
   • feature_flag_config_read
   • teams_read
-
+ 
 Ensure your Datadog application key has the required permissions and try again.
-"
+ "
 `);
 	});
 
@@ -131,23 +130,15 @@ Ensure your Datadog application key has the required permissions and try again.
 		);
 		expect(stripAnsi(lastFrame() ?? '')).toMatchInlineSnapshot(`
 "
-Flag Key                         │ Test Case                  │ LaunchDarkly   │ Datadog        │
-Migration    │ Enabled
-─────────────────────────────────┼────────────────────────────┼────────────────┼────────────────┼───
-───────────┼───────────
-checkout-flag                    │ default                    │ on             │ on             │ ⚠
- Partial    │ ✓ Enabled
-                                 │ vip-user                   │ off            │ on             │
-           │
+Flag Key                         │ Test Case                  │ LaunchDarkly   │ Datadog        │ M…
+─────────────────────────────────┼────────────────────────────┼────────────────┼────────────────┼──…
+checkout-flag                    │ default                    │ on             │ on             │ ⚠…
+                                 │ vip-user                   │ off            │ on             │  …
                                    ⚠ Could not enable (1 env(s))
-─────────────────────────────────┼────────────────────────────┼────────────────┼────────────────┼───
-───────────┼───────────
-manual-flag                      │ qa-user                    │ control        │ treatment      │ —
-           │ —
-                                   ℹ Flag not in selected migration file — possible targeting rule
-drift — Manually created in Datadog
-─────────────────────────────────┼────────────────────────────┼────────────────┼────────────────┼───
-───────────┼───────────
+─────────────────────────────────┼────────────────────────────┼────────────────┼────────────────┼──…
+manual-flag                      │ qa-user                    │ control        │ treatment      │ —…
+                                   ℹ Flag not in selected migration file — possible targeting rule …
+─────────────────────────────────┼────────────────────────────┼────────────────┼────────────────┼──…
 
   Migration:
   • ✓ Created — flag was successfully created during migration

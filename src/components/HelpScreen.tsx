@@ -1,5 +1,5 @@
 import { Box, Text, useApp } from 'ink';
-import { useEffect } from 'react';
+import { cloneElement, useEffect } from 'react';
 import { HEADER_SUBTITLES, Header } from './Header.js';
 
 type HelpItem = { id: string; render: () => JSX.Element };
@@ -325,7 +325,9 @@ export function HelpScreen(): JSX.Element {
 		<Box flexDirection="column">
 			<Header subtitle={HEADER_SUBTITLES.migrate} exitOnRender={false} />
 			{items.map((item) => (
-				<Box key={item.id}>{item.render()}</Box>
+				<Box key={item.id}>
+					{cloneElement(item.render(), { wrap: 'truncate' })}
+				</Box>
 			))}
 		</Box>
 	);

@@ -260,7 +260,7 @@ export function ResultsTable({
 		<Box flexDirection="column">
 			{buildResultsTableLines(rows, providerLabel).map((item) => (
 				<Box key={item.id}>
-					<Text>{item.text}</Text>
+					<Text wrap="truncate">{item.text}</Text>
 				</Box>
 			))}
 		</Box>
