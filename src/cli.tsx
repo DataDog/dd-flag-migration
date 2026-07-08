@@ -17,7 +17,12 @@ const subcommand = process.argv[2];
 if (subcommand === '--version' || subcommand === '-V') {
 	console.log(version);
 	process.exit(0);
-} else if (!subcommand || subcommand === '--help' || subcommand === '-h') {
+} else if (
+	!subcommand ||
+	subcommand === '--help' ||
+	subcommand === '-h' ||
+	subcommand === 'help'
+) {
 	await printHelp(subcommand ? 0 : 1);
 } else if (subcommand === 'migrate') {
 	process.argv.splice(2, 1);
