@@ -16,6 +16,7 @@ import {
 import { renderStatic } from '../components/mount.js';
 import { select } from '../components/Select.js';
 import { spinner as createSpinner } from '../components/Spinner.js';
+import { formatVariantLabel } from '../components/VariantCounts.js';
 import {
 	applyVariantDeletes,
 	buildVariantSyncDryRunRequests,
@@ -30,6 +31,7 @@ import {
 	updateFlagTags,
 } from '../datadog.js';
 import { CONFIG_DIR } from '../helpers/config.js';
+import { formatAxiosError } from '../helpers/format-axios-error.js';
 import { writeJsonOutput } from '../helpers/output.js';
 import { toSyncRequests } from '../migration.js';
 import type {
@@ -39,6 +41,7 @@ import type {
 } from '../types.js';
 import { extractEnvironments, fetchEppoFlags } from './api.js';
 import { migrateAudiences } from './audiences.js';
+import { EppoMigrationSummary } from './components/EppoMigrationSummary.js';
 import {
 	buildAllocations,
 	buildDefaultVariantKeyPerEnv,
@@ -75,31 +78,6 @@ function ddEnvLabel(env: DatadogEnvironment): string {
 function envLabel(env: EppoFlagEnvironment, flagCount: number): string {
 	const prodBadge = env.is_production ? `  ${chalk.bgRed.white(' Prod ')}` : '';
 	return `${env.name}${prodBadge}  ${chalk.gray(`(${flagCount} flags)`)}`;
-}
-
-function formatVariantLabel(counts: {
-	added: number;
-	updated: number;
-	deleted: number;
-}): string {
-	const parts: string[] = [];
-	if (counts.added > 0) parts.push(`${counts.added} variant(s) added`);
-	if (counts.updated > 0) parts.push(`${counts.updated} variant(s) updated`);
-	if (counts.deleted > 0) parts.push(`${counts.deleted} variant(s) deleted`);
-	return parts.length > 0 ? `, ${parts.join(', ')}` : '';
-}
-
-function formatAxiosError(err: unknown): string {
-	if (!axios.isAxiosError(err)) return String(err);
-	const status = err.response?.status;
-	const data = err.response?.data;
-	const detail = (data as { errors?: Array<{ detail?: string }> })?.errors?.[0]
-		?.detail;
-	if (detail) return detail;
-	const method = err.config?.method?.toUpperCase() ?? '?';
-	const url = err.config?.url ?? '';
-	const bodyPreview = data ? JSON.stringify(data).slice(0, 300) : 'no body';
-	return `${method} ${url} — ${status ?? 'no status'}: ${bodyPreview}`;
 }
 
 function datadogIdForEppoFlag(
@@ -960,36 +938,14 @@ async function confirmMigration(
 		activeRunner.finalize();
 	}
 
-	console.log();
-	console.log(chalk.bold(dryRun ? 'Dry run complete!' : 'Migration complete!'));
-	const syncedSummary =
-		synced > 0
-			? `  ${chalk.hex('#632CA6')(String(synced))} ${dryRun ? 'would be synced' : 'synced'}`
-			: '';
-	const enabledSummary =
-		!dryRun && totalEnabled > 0
-			? `  ${chalk.hex('#632CA6')(String(totalEnabled))} enabled`
-			: '';
-	console.log(
-		`  ${chalk.green(String(created))} ${dryRun ? 'would be created' : 'created'}${syncedSummary}  ${chalk.yellow(String(skipped))} skipped  ${chalk.red(String(errored))} failed${enabledSummary}`,
+	await renderStatic(
+		<EppoMigrationSummary
+			dryRun={dryRun}
+			counts={{ created, synced, skipped, errored, enabled: totalEnabled }}
+			failures={failures}
+			enableFailures={enableFailures}
+		/>,
 	);
-	if (failures.length > 0) {
-		console.log();
-		failures.forEach((f) => {
-			console.log(`  ${chalk.red('✗')} ${f.key}: ${f.error}`);
-		});
-	}
-	if (enableFailures.length > 0) {
-		console.log();
-		console.log(
-			chalk.yellow(
-				'  Flags created but could not be enabled in some environments:',
-			),
-		);
-		enableFailures.forEach((f) => {
-			console.log(`  ${chalk.yellow('⚠')} ${f.key} / ${f.env}: ${f.error}`);
-		});
-	}
 
 	const timestamp = new Date().toISOString();
 	let outputData: DryRunFile | MigrationFile | undefined;
