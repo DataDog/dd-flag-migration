@@ -1,100 +1,14 @@
 #!/usr/bin/env node
 import { createRequire } from 'node:module';
 import chalk from 'chalk';
-import { HEADER_SUBTITLES, Header } from './components/Header.js';
+import { HelpScreen } from './components/HelpScreen.js';
 import { renderStatic } from './components/mount.js';
 
 const require = createRequire(import.meta.url);
 const { version } = require('../package.json') as { version: string };
 
 async function printHelp(exitCode = 0): Promise<never> {
-	await renderStatic(<Header subtitle={HEADER_SUBTITLES.migrate} />);
-	console.log(`${chalk.bold('Usage:')}  dd-flag-migration <command> [options]`);
-	console.log();
-	console.log(chalk.bold('Global options:'));
-	console.log(
-		`  ${chalk.cyan('-V, --version')}               Print version and exit`,
-	);
-	console.log(
-		`  ${chalk.cyan('-h, --help')}                  Show this help message`,
-	);
-	console.log();
-	console.log(chalk.bold('Commands:'));
-	console.log(
-		`  ${chalk.cyan('migrate')}    Migrate feature flags from Eppo or LaunchDarkly into Datadog`,
-	);
-	console.log(
-		`  ${chalk.cyan('evaluate')}   Compare flag evaluations side-by-side after migrating`,
-	);
-	console.log();
-	console.log(`${chalk.bold('Options for')} ${chalk.cyan('migrate')}:`);
-	console.log(
-		'  --dry-run                    Preview changes without creating flags',
-	);
-	console.log(
-		'  --datadog-site=<site>        Set the Datadog site non-interactively',
-	);
-	console.log(
-		'  --interactive=<bool>         Set to false to run without prompts (default: true)',
-	);
-	console.log(
-		'  --export=<bool>              Non-interactive only: export results to xlsx (default: false)',
-	);
-	console.log();
-	console.log(
-		`${chalk.bold('Required when')} ${chalk.cyan('--interactive=false')}:`,
-	);
-	console.log(
-		'  Output is a JSON result document on stdout; status logs go to stderr.',
-	);
-	console.log(
-		'  --provider <Eppo|LaunchDarkly>   Source feature flag provider (case-insensitive)',
-	);
-	console.log(
-		'  --env-map <source,target>        Map a source env to a Datadog env (repeatable; ≥1)',
-	);
-	console.log(
-		'  --feature-flag <key>[,<dd-key>]  Flag key to migrate; LaunchDarkly may include a Datadog rename (repeatable; ≥1)',
-	);
-	console.log(
-		'  --project <key>                  LaunchDarkly project key (LaunchDarkly only)',
-	);
-	console.log();
-	console.log(`${chalk.bold('Options for')} ${chalk.cyan('evaluate')}:`);
-	console.log(
-		'  --use-latest-migration       Skip migration file selector; use most recent',
-	);
-	console.log(
-		'  --test-subject-id=<id>       Set the subject ID non-interactively',
-	);
-	console.log(
-		'  --flag-environment=<name>    Set the Datadog environment non-interactively',
-	);
-	console.log(
-		'  --datadog-site=<site>        Set the Datadog site non-interactively',
-	);
-	console.log(
-		'  --csv=<path>                 Path to a CSV file for advanced evaluation',
-	);
-	console.log(
-		'  --show-table                 Force table output even for large result sets',
-	);
-	console.log();
-	console.log(chalk.bold('Examples:'));
-	console.log(`  ${chalk.gray('$')} dd-flag-migration migrate`);
-	console.log(`  ${chalk.gray('$')} dd-flag-migration migrate --dry-run`);
-	console.log(
-		`  ${chalk.gray('$')} dd-flag-migration migrate --interactive=false \\\n` +
-			`      --provider LaunchDarkly --project my-ld-project \\\n` +
-			`      --datadog-site datadoghq.com \\\n` +
-			`      --env-map Production,Production --env-map Staging,QA \\\n` +
-			`      --feature-flag flag-one --feature-flag flag-two`,
-	);
-	console.log(`  ${chalk.gray('$')} dd-flag-migration evaluate`);
-	console.log(
-		`  ${chalk.gray('$')} dd-flag-migration evaluate --use-latest-migration --datadog-site=datadoghq.com`,
-	);
-	console.log();
+	await renderStatic(<HelpScreen />, { stream: process.stdout });
 	process.exit(exitCode);
 }
 

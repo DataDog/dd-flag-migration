@@ -1,4 +1,4 @@
-import { Box, Static, Text, useApp } from 'ink';
+import { Box, Text, useApp } from 'ink';
 import { useEffect } from 'react';
 
 const PURPLE = '#632CA6';
@@ -9,18 +9,23 @@ const TITLE = '   🚩  Feature Flag Migration Tool  🚩    ';
 
 export type HeaderProps = {
 	subtitle: string;
+	exitOnRender?: boolean;
 };
 
 /**
  * Prints the shared purple banner. `subtitle` is the second line inside the
  * box (e.g. "Migrate to Datadog", "Eppo → Datadog"). Callers should ensure
- * `subtitle` is exactly 42 characters wide (padded with spaces).
+ * `subtitle` is exactly 42 characters wide (padded with spaces). Set
+ * `exitOnRender=false` when composing Header inside another static screen.
  */
-export const Header = ({ subtitle }: HeaderProps): JSX.Element => {
+export const Header = ({
+	subtitle,
+	exitOnRender = true,
+}: HeaderProps): JSX.Element => {
 	const { exit } = useApp();
 	useEffect(() => {
-		exit();
-	}, [exit]);
+		if (exitOnRender) exit();
+	}, [exit, exitOnRender]);
 	const items: Array<{ id: string; render: () => JSX.Element }> = [
 		{ id: 'blank-top', render: () => <Text> </Text> },
 		{
@@ -72,9 +77,11 @@ export const Header = ({ subtitle }: HeaderProps): JSX.Element => {
 		{ id: 'blank-bottom', render: () => <Text> </Text> },
 	];
 	return (
-		<Static items={items}>
-			{(item) => <Box key={item.id}>{item.render()}</Box>}
-		</Static>
+		<Box flexDirection="column">
+			{items.map((item) => (
+				<Box key={item.id}>{item.render()}</Box>
+			))}
+		</Box>
 	);
 };
 

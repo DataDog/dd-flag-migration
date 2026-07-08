@@ -10,6 +10,7 @@ import { confirm } from './components/Confirm.js';
 import { HEADER_SUBTITLES, Header } from './components/Header.js';
 import { input } from './components/Input.js';
 import { PromptCancelledError, renderStatic } from './components/mount.js';
+import { PermissionsError } from './components/PermissionsError.js';
 import { select } from './components/Select.js';
 import { fetchCurrentUserPermissions } from './datadog.js';
 import { getDatadogSite, saveDatadogSite } from './helpers/config.js';
@@ -122,15 +123,7 @@ async function checkRequiredPermissions(
 	}
 	const missing = ALL_REQUIRED_PERMISSIONS.filter((p) => !actual.includes(p));
 	if (missing.length > 0) {
-		console.error(chalk.red('\nMissing required Datadog permissions:'));
-		for (const p of missing) {
-			console.error(chalk.red(`  • ${p}`));
-		}
-		console.error(
-			chalk.red(
-				'\nEnsure your Datadog application key has the required permissions and try again.\n',
-			),
-		);
+		await renderStatic(<PermissionsError missing={missing} />);
 		process.exit(1);
 	}
 }
