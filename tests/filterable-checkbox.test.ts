@@ -8,7 +8,7 @@ import {
 	itemMatchesFilters,
 	MIGRATED_FILTER_ID,
 	NOT_MIGRATED_FILTER_ID,
-} from '../src/filterable-checkbox.js';
+} from '../src/components/filter-matching.js';
 
 const LD_CATEGORIES: FilterCategory[] = [
 	{ id: 'new', label: 'new', description: '' },

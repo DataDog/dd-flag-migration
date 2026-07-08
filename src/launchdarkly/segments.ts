@@ -1,6 +1,7 @@
-import { input, select } from '@inquirer/prompts';
 import axios from 'axios';
 import chalk from 'chalk';
+import { input } from '../components/Input.js';
+import { select } from '../components/Select.js';
 import { spinner as createSpinner } from '../components/Spinner.js';
 import {
 	createSavedFilter,

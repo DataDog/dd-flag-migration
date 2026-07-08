@@ -1,14 +1,20 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { select } from '@inquirer/prompts';
 import axios from 'axios';
 import chalk from 'chalk';
+import {
+	type FilterCategory,
+	filterableCheckbox,
+	MIGRATED_FILTER_ID,
+	NOT_MIGRATED_FILTER_ID,
+} from '../components/FilterableCheckbox.js';
 import { HEADER_SUBTITLES, Header } from '../components/Header.js';
 import {
 	type MigrationRunnerHandle,
 	migrationRunner,
 } from '../components/MigrationRunner.js';
 import { renderStatic } from '../components/mount.js';
+import { select } from '../components/Select.js';
 import { spinner as createSpinner } from '../components/Spinner.js';
 import {
 	applyVariantDeletes,
@@ -23,12 +29,6 @@ import {
 	syncVariantsCreatesAndUpdates,
 	updateFlagTags,
 } from '../datadog.js';
-import {
-	type FilterCategory,
-	filterableCheckbox,
-	MIGRATED_FILTER_ID,
-	NOT_MIGRATED_FILTER_ID,
-} from '../filterable-checkbox.js';
 import { CONFIG_DIR } from '../helpers/config.js';
 import { writeJsonOutput } from '../helpers/output.js';
 import { toSyncRequests } from '../migration.js';
@@ -1041,7 +1041,7 @@ async function confirmMigration(
 			if (nonInteractive) {
 				exportToSheets = doExport;
 			} else {
-				const { confirm } = await import('@inquirer/prompts');
+				const { confirm } = await import('../components/Confirm.js');
 				exportToSheets = await confirm({
 					message:
 						'Would you like to export migration results to an .xlsx file?',

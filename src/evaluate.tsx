@@ -2,11 +2,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { getInstance as getEppoInstance } from '@eppo/node-server-sdk';
-import { confirm, input, select } from '@inquirer/prompts';
 import axios from 'axios';
 import chalk from 'chalk';
+import { confirm } from './components/Confirm.js';
 import { HEADER_SUBTITLES, Header } from './components/Header.js';
-import { renderStatic } from './components/mount.js';
+import { input } from './components/Input.js';
+import { PromptCancelledError, renderStatic } from './components/mount.js';
+import { select } from './components/Select.js';
 import { spinner as createSpinner } from './components/Spinner.js';
 import { ddClient } from './datadog.js';
 import {
@@ -1356,7 +1358,7 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
-	if (err instanceof Error && err.name === 'ExitPromptError') {
+	if (err instanceof PromptCancelledError) {
 		console.log(chalk.gray('\nBye!'));
 		process.exit(0);
 	}

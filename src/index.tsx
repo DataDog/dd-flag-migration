@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { select } from '@inquirer/prompts';
 import chalk from 'chalk';
 import {
 	ArgParseError,
@@ -7,8 +6,11 @@ import {
 	type ProviderValue,
 	parseMigrateArgs,
 } from './args.js';
+import { confirm } from './components/Confirm.js';
 import { HEADER_SUBTITLES, Header } from './components/Header.js';
-import { renderStatic } from './components/mount.js';
+import { input } from './components/Input.js';
+import { PromptCancelledError, renderStatic } from './components/mount.js';
+import { select } from './components/Select.js';
 import { fetchCurrentUserPermissions } from './datadog.js';
 import { getDatadogSite, saveDatadogSite } from './helpers/config.js';
 import { requireEnvVars } from './helpers/env.js';
@@ -69,8 +71,6 @@ async function selectProvider(): Promise<ProviderValue> {
 async function promptForDatadogSite(
 	datadogSiteArg: string | undefined,
 ): Promise<string> {
-	const { confirm, input } = await import('@inquirer/prompts');
-
 	if (datadogSiteArg !== undefined) {
 		console.log(
 			chalk.gray(`  Using Datadog site: ${chalk.cyan(datadogSiteArg)}\n`),
@@ -232,8 +232,8 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
-	// Gracefully handle Ctrl+C
-	if (err instanceof Error && err.name === 'ExitPromptError') {
+	// Gracefully handle Ctrl+C / escape
+	if (err instanceof PromptCancelledError) {
 		console.log(chalk.gray('\nBye!'));
 		process.exit(0);
 	}

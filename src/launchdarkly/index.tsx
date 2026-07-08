@@ -1,14 +1,23 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { confirm, input, select } from '@inquirer/prompts';
 import axios from 'axios';
 import chalk from 'chalk';
+import { confirm } from '../components/Confirm.js';
+import {
+	type FilterCategory,
+	filterableCheckbox,
+	MIGRATED_FILTER_ID,
+	NOT_MIGRATED_FILTER_ID,
+} from '../components/FilterableCheckbox.js';
+import { filterableSelect } from '../components/FilterableSelect.js';
 import { HEADER_SUBTITLES, Header } from '../components/Header.js';
+import { input } from '../components/Input.js';
 import {
 	type MigrationRunnerHandle,
 	migrationRunner,
 } from '../components/MigrationRunner.js';
 import { renderStatic } from '../components/mount.js';
+import { select } from '../components/Select.js';
 import { spinner as createSpinner } from '../components/Spinner.js';
 import {
 	applyRestrictionPolicy,
@@ -27,13 +36,6 @@ import {
 	syncVariantsCreatesAndUpdates,
 	updateFlagTags,
 } from '../datadog.js';
-import {
-	type FilterCategory,
-	filterableCheckbox,
-	filterableSelect,
-	MIGRATED_FILTER_ID,
-	NOT_MIGRATED_FILTER_ID,
-} from '../filterable-checkbox.js';
 import { CONFIG_DIR } from '../helpers/config.js';
 import { writeJsonOutput } from '../helpers/output.js';
 import { toSyncRequests } from '../migration.js';
