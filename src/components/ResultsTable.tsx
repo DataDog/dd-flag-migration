@@ -1,6 +1,5 @@
 import chalk from 'chalk';
-import { Box, Text, useApp } from 'ink';
-import { useEffect } from 'react';
+import { Box, Text } from 'ink';
 import {
 	type ClassifiedRow,
 	classifyRow,
@@ -251,11 +250,6 @@ export function ResultsTable({
 	rows,
 	providerLabel,
 }: ResultsTableProps): JSX.Element {
-	const { exit } = useApp();
-	useEffect(() => {
-		exit();
-	}, [exit]);
-
 	return (
 		<Box flexDirection="column">
 			{buildResultsTableLines(rows, providerLabel).map((item) => (

@@ -1,6 +1,5 @@
 import chalk from 'chalk';
-import { Box, Text, useApp } from 'ink';
-import { useEffect } from 'react';
+import { Box, Text } from 'ink';
 import type { TableRow } from './ResultsTable.js';
 
 type EvaluationSummaryProps = {
@@ -61,11 +60,6 @@ function buildEvaluationSummaryLines(rows: TableRow[]): LineItem[] {
 export function EvaluationSummary({
 	rows,
 }: EvaluationSummaryProps): JSX.Element {
-	const { exit } = useApp();
-	useEffect(() => {
-		exit();
-	}, [exit]);
-
 	return (
 		<Box flexDirection="column">
 			{buildEvaluationSummaryLines(rows).map((item) => (

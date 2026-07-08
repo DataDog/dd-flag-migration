@@ -1,5 +1,4 @@
-import { Box, Text, useApp } from 'ink';
-import { useEffect } from 'react';
+import { Box, Text } from 'ink';
 
 type PermissionsErrorProps = {
 	missing: readonly string[];
@@ -8,11 +7,6 @@ type PermissionsErrorProps = {
 export function PermissionsError({
 	missing,
 }: PermissionsErrorProps): JSX.Element {
-	const { exit } = useApp();
-	useEffect(() => {
-		exit();
-	}, [exit]);
-
 	const items = [
 		{
 			id: 'title',

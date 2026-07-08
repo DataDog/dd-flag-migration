@@ -1,6 +1,5 @@
 import chalk from 'chalk';
-import { Box, Text, useApp } from 'ink';
-import { useEffect } from 'react';
+import { Box, Text } from 'ink';
 
 export type MigrationSummaryCounts = {
 	created: number;
@@ -122,11 +121,6 @@ function buildMigrationSummaryLines({
 }
 
 export function MigrationSummary(props: MigrationSummaryProps): JSX.Element {
-	const { exit } = useApp();
-	useEffect(() => {
-		exit();
-	}, [exit]);
-
 	return (
 		<Box flexDirection="column">
 			{buildMigrationSummaryLines(props).map((item) => (

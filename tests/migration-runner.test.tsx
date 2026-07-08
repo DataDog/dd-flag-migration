@@ -1,4 +1,11 @@
-import { afterEach, describe, expect, it, jest } from '@jest/globals';
+import {
+	afterEach,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	jest,
+} from '@jest/globals';
 import { migrationRunner } from '../src/components/MigrationRunner.js';
 
 /**
@@ -7,8 +14,24 @@ import { migrationRunner } from '../src/components/MigrationRunner.js';
  * migrations. The interactive Ink-rendered path is verified visually.
  */
 describe('migrationRunner (non-TTY)', () => {
+	let originalIsTTY: boolean | undefined;
+
+	beforeEach(() => {
+		originalIsTTY = process.stderr.isTTY;
+		Object.defineProperty(process.stderr, 'isTTY', {
+			value: undefined,
+			writable: true,
+			configurable: true,
+		});
+	});
+
 	afterEach(() => {
 		jest.restoreAllMocks();
+		Object.defineProperty(process.stderr, 'isTTY', {
+			value: originalIsTTY,
+			writable: true,
+			configurable: true,
+		});
 	});
 
 	it('is a no-op for beginFlag/updateText/finalize', () => {

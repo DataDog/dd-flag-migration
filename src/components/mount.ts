@@ -1,5 +1,5 @@
-import { type Instance, render } from 'ink';
-import type { ReactElement } from 'react';
+import { type Instance, render, useApp } from 'ink';
+import { createElement, type ReactElement, useEffect } from 'react';
 
 export type MountOptions = {
 	stream?: NodeJS.WriteStream;
@@ -110,6 +110,18 @@ function createInstance(
 	return instance;
 }
 
+function ExitAfterRender({
+	children,
+}: {
+	children: ReactElement;
+}): ReactElement {
+	const { exit } = useApp();
+	useEffect(() => {
+		exit();
+	}, [exit]);
+	return children;
+}
+
 /**
  * Renders an interactive Ink element. The returned promise resolves when the
  * component calls `useApp().exit()` (or exits with an error). Used by prompts
@@ -157,14 +169,16 @@ export function mountLive(
 }
 
 /**
- * Convenience helper: render an Ink element that calls `useApp().exit()` on
- * mount (a fire-and-forget "print this static block" pattern), and resolve
- * once it has exited.
+ * Convenience helper: render an Ink element once, exit the Ink app after the
+ * first render, and resolve once it has exited.
  */
 export async function renderStatic(
 	element: ReactElement,
 	options: MountOptions = {},
 ): Promise<void> {
-	const instance = createInstance(element, options);
+	const instance = createInstance(
+		createElement(ExitAfterRender, null, element),
+		options,
+	);
 	await instance.waitUntilExit();
 }
