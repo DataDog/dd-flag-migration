@@ -35,9 +35,9 @@ export function SelectView<T>(props: SelectProps<T>): JSX.Element {
 	const [done, setDone] = useState<SelectChoice<T> | null>(null);
 	const pageSize = props.pageSize ?? 10;
 
-	useInput((_ch, key) => {
+	useInput((inputChar, key) => {
 		if (done !== null) return;
-		if (key.escape) {
+		if (key.escape || (key.ctrl && inputChar === 'c')) {
 			props.onCancel();
 			exit();
 			return;

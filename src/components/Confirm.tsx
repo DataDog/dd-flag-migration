@@ -20,7 +20,7 @@ export function ConfirmView(props: ConfirmProps): JSX.Element {
 
 	useInput((inputChar, key) => {
 		if (answered !== null) return;
-		if (key.escape) {
+		if (key.escape || (key.ctrl && inputChar === 'c')) {
 			setAnswered(false);
 			props.onCancel();
 			exit();

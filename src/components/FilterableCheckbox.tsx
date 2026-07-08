@@ -9,7 +9,7 @@ import {
 	MIGRATED_FILTER_ID,
 	NOT_MIGRATED_FILTER_ID,
 } from './filter-matching.js';
-import { mount } from './mount.js';
+import { mount, PromptCancelledError } from './mount.js';
 
 export type FilterableChoice<T> = {
 	name: string;
@@ -110,6 +110,12 @@ export function FilterableCheckboxView<T>(props: Props<T>): JSX.Element {
 
 	useInput((inputChar, key) => {
 		if (status !== 'idle') return;
+		if (key.ctrl && inputChar === 'c') {
+			setStatus('escaped');
+			props.onCancel();
+			exit(new PromptCancelledError());
+			return;
+		}
 
 		// ── Advanced-filter sub-screen ─────────────────────────────
 		if (mode === 'filter') {

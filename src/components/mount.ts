@@ -19,6 +19,7 @@ export class PromptCancelledError extends Error {
 }
 
 const activeInstances = new Set<Instance>();
+const sigintCancellableInstances = new Map<Instance, (error: Error) => void>();
 let exitHandlerInstalled = false;
 let sigintHandlerInstalled = false;
 
@@ -41,30 +42,51 @@ function installExitHandler(): void {
 function installSigintHandler(): void {
 	if (sigintHandlerInstalled) return;
 	sigintHandlerInstalled = true;
-	process.on('SIGINT', () => {
-		const hadActive = activeInstances.size > 0;
-		for (const inst of activeInstances) {
-			try {
-				inst.unmount(new PromptCancelledError());
-			} catch {
-				// ignore
-			}
+	process.on('SIGINT', sigintHandler);
+}
+
+function uninstallSigintHandlerIfIdle(): void {
+	if (!sigintHandlerInstalled || sigintCancellableInstances.size > 0) {
+		return;
+	}
+	sigintHandlerInstalled = false;
+	process.removeListener('SIGINT', sigintHandler);
+}
+
+function unregisterInstance(instance: Instance): void {
+	activeInstances.delete(instance);
+	sigintCancellableInstances.delete(instance);
+	uninstallSigintHandlerIfIdle();
+}
+
+function sigintHandler(): void {
+	if (sigintCancellableInstances.size === 0) {
+		uninstallSigintHandlerIfIdle();
+		process.kill(process.pid, 'SIGINT');
+		return;
+	}
+	for (const [inst, cancel] of sigintCancellableInstances) {
+		const error = new PromptCancelledError();
+		cancel(error);
+		try {
+			inst.unmount();
+		} catch {
+			// ignore
+		} finally {
+			unregisterInstance(inst);
 		}
-		activeInstances.clear();
-		// If nothing was mounted, exit normally (top-level catch handles the
-		// PromptCancelledError otherwise).
-		if (!hadActive) {
-			process.exit(0);
-		}
-	});
+	}
+	sigintCancellableInstances.clear();
+	uninstallSigintHandlerIfIdle();
 }
 
 function createInstance(
 	element: ReactElement,
 	options: MountOptions,
+	cancelOnSigint?: (error: Error) => void,
 ): Instance {
 	installExitHandler();
-	installSigintHandler();
+	if (cancelOnSigint) installSigintHandler();
 	const stream = (options.stream ?? process.stderr) as NodeJS.WriteStream;
 	const stdin = (options.stdin ?? process.stdin) as NodeJS.ReadStream;
 	const instance = render(element, {
@@ -75,9 +97,14 @@ function createInstance(
 		exitOnCtrlC: false,
 	});
 	activeInstances.add(instance);
+	if (cancelOnSigint) sigintCancellableInstances.set(instance, cancelOnSigint);
+	void instance.waitUntilExit().then(
+		() => unregisterInstance(instance),
+		() => unregisterInstance(instance),
+	);
 	const wrappedUnmount = instance.unmount.bind(instance);
 	instance.unmount = ((...args: Parameters<typeof wrappedUnmount>) => {
-		activeInstances.delete(instance);
+		unregisterInstance(instance);
 		return wrappedUnmount(...args);
 	}) as typeof instance.unmount;
 	return instance;
@@ -92,9 +119,18 @@ export function mount<T = void>(
 	element: ReactElement,
 	options: MountOptions = {},
 ): { promise: Promise<T>; unmount: () => void; instance: Instance } {
-	const instance = createInstance(element, options);
+	// Ink's public render wrapper ignores unmount(error), so keep the
+	// cancellation error on the promise we hand to prompt callers.
+	let cancel!: (error: Error) => void;
+	const cancellationPromise = new Promise<never>((_, reject) => {
+		cancel = reject;
+	});
+	const instance = createInstance(element, options, cancel);
 	return {
-		promise: instance.waitUntilExit() as Promise<T>,
+		promise: Promise.race([
+			instance.waitUntilExit() as Promise<T>,
+			cancellationPromise,
+		]),
 		unmount: () => instance.unmount(),
 		instance,
 	};
@@ -129,6 +165,6 @@ export async function renderStatic(
 	element: ReactElement,
 	options: MountOptions = {},
 ): Promise<void> {
-	const { promise } = mount(element, options);
-	await promise;
+	const instance = createInstance(element, options);
+	await instance.waitUntilExit();
 }

@@ -2,7 +2,7 @@ import chalk from 'chalk';
 import { Box, Text, useApp, useInput } from 'ink';
 import { useMemo, useState } from 'react';
 import stripAnsi from 'strip-ansi';
-import { mount } from './mount.js';
+import { mount, PromptCancelledError } from './mount.js';
 
 export type FilterableSelectChoice<T> = {
 	name: string;
@@ -40,6 +40,18 @@ export function FilterableSelectView<T>(props: Props<T>): JSX.Element {
 
 	useInput((inputChar, key) => {
 		if (status !== 'idle') return;
+		if (key.ctrl && inputChar === 'c') {
+			setStatus('escaped');
+			props.onCancel();
+			exit(new PromptCancelledError());
+			return;
+		}
+		if (key.escape) {
+			setStatus('escaped');
+			props.onCancel();
+			exit();
+			return;
+		}
 		if (key.return) {
 			const selected = filteredItems[safeActive];
 			if (selected) {
@@ -52,12 +64,6 @@ export function FilterableSelectView<T>(props: Props<T>): JSX.Element {
 				props.onCancel();
 				exit();
 			}
-			return;
-		}
-		if (key.escape) {
-			setStatus('escaped');
-			props.onCancel();
-			exit();
 			return;
 		}
 		if (key.upArrow) {

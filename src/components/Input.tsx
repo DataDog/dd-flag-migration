@@ -23,7 +23,7 @@ export function InputView(props: InputProps): JSX.Element {
 
 	useInput((inputChar, key) => {
 		if (submitted !== null) return;
-		if (key.escape) {
+		if (key.escape || (key.ctrl && inputChar === 'c')) {
 			props.onCancel();
 			exit();
 			return;

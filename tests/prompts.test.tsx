@@ -59,6 +59,24 @@ describe('SelectView', () => {
 		await tick();
 		expect(cancel).toHaveBeenCalled();
 	});
+
+	it('cancels on Ctrl+C input', async () => {
+		const done = jest.fn<(v: string) => void>();
+		const cancel = jest.fn();
+		const { stdin } = render(
+			<SelectView<string>
+				message="Pick"
+				choices={[{ name: 'a', value: 'a' }]}
+				onDone={done}
+				onCancel={cancel}
+			/>,
+		);
+		await ready();
+		stdin.write('\x03');
+		await tick();
+		expect(done).not.toHaveBeenCalled();
+		expect(cancel).toHaveBeenCalled();
+	});
 });
 
 describe('ConfirmView', () => {
