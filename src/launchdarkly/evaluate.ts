@@ -6,7 +6,7 @@ import type {
 	SubjectAttributes,
 	TestCase,
 } from '../types.js';
-import { mapFlagType } from './migration.js';
+import { mapFlagType } from './helpers/migration.js';
 import type { LDClause, LDFlag } from './types.js';
 
 type LDClient = LDSdk.LDClient;

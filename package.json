@@ -8,8 +8,8 @@
 	"bin": "dist/cli.js",
 	"scripts": {
 		"setup": "yarn install && yarn allow-scripts",
-		"migrate": "tsx src/cli.ts migrate",
-		"evaluate": "tsx src/cli.ts evaluate",
+		"migrate": "tsx src/cli.tsx migrate",
+		"evaluate": "tsx src/cli.tsx evaluate",
 		"build": "tsc -p tsconfig.build.json",
 		"start": "node dist/index.js",
 		"lint": "biome check",
@@ -25,7 +25,10 @@
 		"axios": "^1.15.1",
 		"chalk": "^5.3.0",
 		"exceljs": "^4.4.0",
-		"ora": "^9.3.0"
+		"ink": "^5",
+		"ink-spinner": "^5",
+		"react": "^18",
+		"strip-ansi": "^7"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.4.12",
@@ -33,7 +36,9 @@
 		"@lavamoat/preinstall-always-fail": "^2.1.0",
 		"@types/jest": "^30.0.0",
 		"@types/node": "^25.6.0",
+		"@types/react": "^18",
 		"axios-mock-adapter": "^2.1.0",
+		"ink-testing-library": "^4",
 		"jest": "^30.3.0",
 		"ts-jest": "^29.4.9",
 		"tsx": "^4.0.0",

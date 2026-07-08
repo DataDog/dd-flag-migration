@@ -12,7 +12,7 @@ import {
 	mapVariationType,
 	normalizeJsonVariantValue,
 	slugify,
-} from '../../src/eppo/migration.js';
+} from '../../src/eppo/helpers/migration.js';
 import type { EppoFlag } from '../../src/eppo/types.js';
 import type {
 	DatadogCreateFlagRequest,

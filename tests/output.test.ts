@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
-import { withConsoleLogToStderr, writeJsonOutput } from '../src/output.js';
+import {
+	withConsoleLogToStderr,
+	writeJsonOutput,
+} from '../src/helpers/output.js';
 
 describe('output helpers', () => {
 	afterEach(() => {

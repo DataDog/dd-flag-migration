@@ -7,18 +7,18 @@
 import { describe, expect, it } from '@jest/globals';
 import type { LDFlagStatus } from '../../src/launchdarkly/api.js';
 import {
-	type ConflictResolution,
-	classifyConflict,
-	flagCategories,
-} from '../../src/launchdarkly/index.js';
-import {
 	buildAllocations,
 	buildFlagTags,
 	buildVariants,
 	getEnvsToEnable,
 	mapFlagType,
 	shouldSkipFlag,
-} from '../../src/launchdarkly/migration.js';
+} from '../../src/launchdarkly/helpers/migration.js';
+import {
+	type ConflictResolution,
+	classifyConflict,
+	flagCategories,
+} from '../../src/launchdarkly/index.js';
 import type {
 	LDEnvironmentConfig,
 	LDFlag,

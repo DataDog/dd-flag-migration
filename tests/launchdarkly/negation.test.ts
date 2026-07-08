@@ -3,7 +3,7 @@ import {
 	cartesianProduct,
 	negateCondition,
 	negateTargetingRules,
-} from '../../src/launchdarkly/negation.js';
+} from '../../src/launchdarkly/helpers/negation.js';
 import type {
 	DatadogCondition,
 	DatadogTargetingRule,

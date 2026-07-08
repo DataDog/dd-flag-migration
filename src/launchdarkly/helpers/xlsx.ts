@@ -6,8 +6,8 @@ import {
 	addHeaderRow,
 	addSheetHeader,
 	colorRow,
-} from '../xlsx-helpers.js';
-import type { LDFlag, LDMigrationFile } from './types.js';
+} from '../../helpers/xlsx-helpers.js';
+import type { LDFlag, LDMigrationFile } from '../types.js';
 
 // ─── LaunchDarkly Migration Export ───────────────────────────────────────────
 

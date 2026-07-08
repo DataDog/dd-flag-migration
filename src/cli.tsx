@@ -1,26 +1,14 @@
 #!/usr/bin/env node
 import { createRequire } from 'node:module';
 import chalk from 'chalk';
+import { HEADER_SUBTITLES, Header } from './components/Header.js';
+import { renderStatic } from './components/mount.js';
 
 const require = createRequire(import.meta.url);
 const { version } = require('../package.json') as { version: string };
 
-function printHelp(exitCode = 0): never {
-	const purple = chalk.bold.hex('#632CA6');
-	console.log();
-	console.log(purple('╔══════════════════════════════════════════╗'));
-	console.log(
-		purple('║') +
-			chalk.bold.white('   🚩  Feature Flag Migration Tool  🚩    ') +
-			purple('║'),
-	);
-	console.log(
-		purple('║') +
-			chalk.hex('#632CA6')('            Migrate to Datadog            ') +
-			purple('║'),
-	);
-	console.log(purple('╚══════════════════════════════════════════╝'));
-	console.log();
+async function printHelp(exitCode = 0): Promise<never> {
+	await renderStatic(<Header subtitle={HEADER_SUBTITLES.migrate} />);
 	console.log(`${chalk.bold('Usage:')}  dd-flag-migration <command> [options]`);
 	console.log();
 	console.log(chalk.bold('Global options:'));
@@ -116,7 +104,7 @@ if (subcommand === '--version' || subcommand === '-V') {
 	console.log(version);
 	process.exit(0);
 } else if (!subcommand || subcommand === '--help' || subcommand === '-h') {
-	printHelp(subcommand ? 0 : 1);
+	await printHelp(subcommand ? 0 : 1);
 } else if (subcommand === 'migrate') {
 	process.argv.splice(2, 1);
 	await import('./index.js');

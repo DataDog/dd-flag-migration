@@ -16,7 +16,7 @@ import AxiosMockAdapter from 'axios-mock-adapter';
 import { ddClient } from '../../src/datadog.js';
 import { eppoClient, fetchEppoAudiences } from '../../src/eppo/api.js';
 import { migrateAudiences } from '../../src/eppo/audiences.js';
-import { fingerprintConditions } from '../../src/eppo/migration.js';
+import { fingerprintConditions } from '../../src/eppo/helpers/migration.js';
 import type { EppoAudience } from '../../src/eppo/types.js';
 
 // ─── fingerprintConditions ────────────────────────────────────────────────────
@@ -89,7 +89,7 @@ describe('fingerprintConditions', () => {
 
 // ─── buildTargetingRules with fingerprintLookup ──────────────────────────────
 
-import { buildTargetingRules } from '../../src/eppo/migration.js';
+import { buildTargetingRules } from '../../src/eppo/helpers/migration.js';
 import { makeAllocation } from './helpers.js';
 
 describe('buildTargetingRules with fingerprintLookup', () => {

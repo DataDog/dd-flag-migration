@@ -1,12 +1,12 @@
 import { input, select } from '@inquirer/prompts';
 import axios from 'axios';
 import chalk from 'chalk';
+import { spinner as createSpinner } from '../components/Spinner.js';
 import {
 	createSavedFilter,
 	listSavedFilters,
 	updateSavedFilter,
 } from '../datadog.js';
-import { createSpinner } from '../spinner.js';
 import type {
 	DatadogCondition,
 	DatadogEnvironment,
@@ -15,8 +15,8 @@ import type {
 	SavedFilterSummary,
 } from '../types.js';
 import { fetchSegment, fetchSegments } from './api.js';
-import { mapOperator } from './migration.js';
-import { negateTargetingRules } from './negation.js';
+import { mapOperator } from './helpers/migration.js';
+import { negateTargetingRules } from './helpers/negation.js';
 import type { LDFlag, LDSegment } from './types.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────

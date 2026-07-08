@@ -362,6 +362,7 @@ const _filterableCheckbox = createPrompt(
 
 		// usePagination is a hook and must be called on every render, even when
 		// the filter sub-screen is showing.
+		// biome-ignore lint/correctness/useHookAtTopLevel: @inquirer/core prompt hooks aren't subject to React's rules.
 		const page = usePagination({
 			items: filteredItems,
 			active: safeActive,
@@ -542,6 +543,7 @@ const _filterableSelect = createPrompt(
 			chalk.cyan('Filter: ') +
 			(filterText ? chalk.bold(filterText) : chalk.dim('type to filter…'));
 
+		// biome-ignore lint/correctness/useHookAtTopLevel: @inquirer/core prompt hooks aren't subject to React's rules.
 		const page = usePagination({
 			items: filteredItems,
 			active: safeActive,

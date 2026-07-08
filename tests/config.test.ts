@@ -50,7 +50,7 @@ describe('config', () => {
 		}));
 
 		const { getDatadogSite, saveDatadogSite } = await import(
-			'../src/config.js'
+			'../src/helpers/config.js'
 		);
 
 		expect(getDatadogSite()).toBe('datadoghq.com');

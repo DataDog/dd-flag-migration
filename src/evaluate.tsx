@@ -5,9 +5,10 @@ import type { getInstance as getEppoInstance } from '@eppo/node-server-sdk';
 import { confirm, input, select } from '@inquirer/prompts';
 import axios from 'axios';
 import chalk from 'chalk';
-import { CONFIG_DIR, getDatadogSite, saveDatadogSite } from './config.js';
+import { HEADER_SUBTITLES, Header } from './components/Header.js';
+import { renderStatic } from './components/mount.js';
+import { spinner as createSpinner } from './components/Spinner.js';
 import { ddClient } from './datadog.js';
-import { requireEnvVars } from './env.js';
 import {
 	evaluateEppoFlag,
 	evaluateEppoFlagAdvanced,
@@ -27,6 +28,12 @@ import {
 	SyntheticSource,
 	type TestCaseSource,
 } from './evaluate/test-case-sources.js';
+import {
+	CONFIG_DIR,
+	getDatadogSite,
+	saveDatadogSite,
+} from './helpers/config.js';
+import { requireEnvVars } from './helpers/env.js';
 import { fetchEnvironmentSdkKey, findSdkKeyOwner } from './launchdarkly/api.js';
 import {
 	evaluateLDFlag,
@@ -34,9 +41,8 @@ import {
 	initializeLaunchDarkly,
 	type LDClient,
 } from './launchdarkly/evaluate.js';
-import { mapFlagType } from './launchdarkly/migration.js';
+import { mapFlagType } from './launchdarkly/helpers/migration.js';
 import type { LDFlag, LDMigrationFile } from './launchdarkly/types.js';
-import { createSpinner } from './spinner.js';
 import type {
 	DDFlagValue,
 	DDStatus,
@@ -52,22 +58,8 @@ type EppoClient = ReturnType<typeof getEppoInstance>;
 
 // ─── UI Helpers ───────────────────────────────────────────────────────────────
 
-function printHeader(): void {
-	const purple = chalk.bold.hex('#632CA6');
-	console.log();
-	console.log(purple('╔══════════════════════════════════════════╗'));
-	console.log(
-		purple('║') +
-			chalk.bold.white('   🚩  Feature Flag Migration Tool  🚩    ') +
-			purple('║'),
-	);
-	console.log(
-		purple('║') +
-			chalk.hex('#632CA6')('           Evaluate Migration             ') +
-			purple('║'),
-	);
-	console.log(purple('╚══════════════════════════════════════════╝'));
-	console.log();
+async function printHeader(): Promise<void> {
+	await renderStatic(<Header subtitle={HEADER_SUBTITLES.evaluate} />);
 }
 
 // ─── LD SDK Key Validation ────────────────────────────────────────────────────
@@ -800,7 +792,7 @@ async function main(): Promise<void> {
 	const ddAppKey = ddEnvVars.DD_APP_KEY;
 	const ddClientToken = ddEnvVars.DD_CLIENT_TOKEN;
 
-	printHeader();
+	await printHeader();
 
 	// 1. Select migration file
 	const migration = await selectMigrationFile(useLatestMigration);

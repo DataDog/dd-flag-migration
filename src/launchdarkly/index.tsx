@@ -3,7 +3,13 @@ import path from 'node:path';
 import { confirm, input, select } from '@inquirer/prompts';
 import axios from 'axios';
 import chalk from 'chalk';
-import { CONFIG_DIR } from '../config.js';
+import { HEADER_SUBTITLES, Header } from '../components/Header.js';
+import {
+	type MigrationRunnerHandle,
+	migrationRunner,
+} from '../components/MigrationRunner.js';
+import { renderStatic } from '../components/mount.js';
+import { spinner as createSpinner } from '../components/Spinner.js';
 import {
 	applyRestrictionPolicy,
 	applyVariantDeletes,
@@ -28,10 +34,9 @@ import {
 	MIGRATED_FILTER_ID,
 	NOT_MIGRATED_FILTER_ID,
 } from '../filterable-checkbox.js';
+import { CONFIG_DIR } from '../helpers/config.js';
+import { writeJsonOutput } from '../helpers/output.js';
 import { toSyncRequests } from '../migration.js';
-import { writeJsonOutput } from '../output.js';
-import { MigrationProgressBar } from '../progress-bar.js';
-import { createSpinner } from '../spinner.js';
 import type {
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,
@@ -61,7 +66,7 @@ import {
 	hasSemverConditions,
 	mapFlagType,
 	shouldSkipFlag,
-} from './migration.js';
+} from './helpers/migration.js';
 import {
 	discoverSegmentRefs,
 	migrateSegments,
@@ -75,22 +80,8 @@ function clearScreen(): void {
 	process.stdout.write('\x1Bc');
 }
 
-function printHeader(): void {
-	const purple = chalk.bold.hex('#632CA6');
-	console.log();
-	console.log(purple('╔══════════════════════════════════════════╗'));
-	console.log(
-		purple('║') +
-			chalk.bold.white('   🚩  Feature Flag Migration Tool  🚩    ') +
-			purple('║'),
-	);
-	console.log(
-		purple('║') +
-			chalk.hex('#632CA6')('          LaunchDarkly → Datadog          ') +
-			purple('║'),
-	);
-	console.log(purple('╚══════════════════════════════════════════╝'));
-	console.log();
+async function printHeader(): Promise<void> {
+	await renderStatic(<Header subtitle={HEADER_SUBTITLES.launchdarkly} />);
 }
 
 function ddEnvLabel(env: DatadogEnvironment): string {
@@ -440,7 +431,7 @@ async function linkEnvironments(
 		const prevChoice = mapping.get(ldEnv.key);
 
 		clearScreen();
-		printHeader();
+		await printHeader();
 		console.log(
 			chalk.bold('Linking environment ') +
 				chalk.green(`${i + 1}`) +
@@ -1009,9 +1000,7 @@ async function executeMigration(
 						datadogKey: targetKeyBySource.get(flag.key) ?? flag.key,
 					}))
 					.filter((mapping) => mapping.datadogKey !== mapping.sourceKey);
-	const progressBar = nonInteractive
-		? undefined
-		: new MigrationProgressBar(detailedFlags.length, phase1Subheader);
+	let runner: MigrationRunnerHandle | undefined;
 
 	const environmentMappingArr: LDMigrationFile['environmentMapping'] = [];
 	for (const [ldEnvKey, ddEnv] of envMapping) {
@@ -1025,7 +1014,8 @@ async function executeMigration(
 	}
 
 	const sigintHandler = () => {
-		progressBar ? progressBar.finalize() : process.stderr.write('\n');
+		if (runner) runner.finalize();
+		else process.stderr.write('\n');
 		if (!dryRun && (created > 0 || synced > 0 || errored > 0)) {
 			console.log(
 				chalk.yellow('\n  Migration interrupted — saving partial results…'),
@@ -1059,23 +1049,62 @@ async function executeMigration(
 	};
 	process.once('SIGINT', sigintHandler);
 	if (!nonInteractive) clearScreen();
-	progressBar?.start();
+	runner = migrationRunner({
+		total: detailedFlags.length,
+		subheader: phase1Subheader,
+	});
+	const activeRunner: MigrationRunnerHandle = runner;
+	const settleStats = (): {
+		created: number;
+		skipped: number;
+		failed: number;
+	} => ({ created, skipped, failed: errored });
+	const doSkip = (key: string, message: string, reason: string): void => {
+		skippedFlags.push({ key, reason });
+		skipped++;
+		activeRunner.settleFlag({
+			status: 'skipped',
+			message,
+			stats: settleStats(),
+		});
+	};
+	const doCreate = (message: string): void => {
+		created++;
+		activeRunner.settleFlag({
+			status: 'created',
+			message,
+			stats: settleStats(),
+		});
+	};
+	const doSync = (message: string): void => {
+		synced++;
+		activeRunner.settleFlag({
+			status: 'synced',
+			message,
+			stats: settleStats(),
+		});
+	};
+	const doFail = (key: string, error: string, message?: string): void => {
+		failures.push({ key, error });
+		errored++;
+		activeRunner.settleFlag({
+			status: 'failed',
+			message: message ?? `Failed ${chalk.cyan(key)}: ${chalk.red(error)}`,
+			stats: settleStats(),
+		});
+	};
 	try {
 		for (const flag of detailedFlags) {
-			let spinner = createSpinner(`Migrating ${chalk.cyan(flag.key)}…`).start();
+			activeRunner.beginFlag(flag.key);
 			try {
 				// Check skip conditions
 				const skipResult = shouldSkipFlag(flag, selectedEnvs);
 				if (skipResult.skip) {
-					spinner.warn(
+					doSkip(
+						flag.key,
 						`Skipped ${chalk.cyan(flag.key)} — ${skipResult.reason}`,
+						skipResult.reason ?? 'Unknown',
 					);
-					skippedFlags.push({
-						key: flag.key,
-						reason: skipResult.reason ?? 'Unknown',
-					});
-					skipped++;
-					progressBar?.update(flag.key, { created, skipped, failed: errored });
 					continue;
 				}
 
@@ -1088,36 +1117,20 @@ async function executeMigration(
 							flag.key,
 						);
 						if (release && isReleaseInProgress(release)) {
-							spinner.warn(
+							doSkip(
+								flag.key,
 								`Skipped ${chalk.cyan(flag.key)} — progressive rollout is in progress`,
+								'Progressive rollout is in progress',
 							);
-							skippedFlags.push({
-								key: flag.key,
-								reason: 'Progressive rollout is in progress',
-							});
-							skipped++;
-							progressBar?.update(flag.key, {
-								created,
-								skipped,
-								failed: errored,
-							});
 							continue;
 						}
 						// Release is complete or not found — safe to migrate
 					} catch (_err) {
-						spinner.warn(
+						doSkip(
+							flag.key,
 							`Skipped ${chalk.cyan(flag.key)} — failed to check progressive rollout status`,
+							'Failed to check progressive rollout status',
 						);
-						skippedFlags.push({
-							key: flag.key,
-							reason: 'Failed to check progressive rollout status',
-						});
-						skipped++;
-						progressBar?.update(flag.key, {
-							created,
-							skipped,
-							failed: errored,
-						});
 						continue;
 					}
 				}
@@ -1127,19 +1140,21 @@ async function executeMigration(
 				}
 
 				if (flag.archived) {
-					spinner.warn(`Skipped ${chalk.cyan(flag.key)} — flag is archived`);
-					skippedFlags.push({ key: flag.key, reason: 'Flag is archived' });
-					skipped++;
-					progressBar?.update(flag.key, { created, skipped, failed: errored });
+					doSkip(
+						flag.key,
+						`Skipped ${chalk.cyan(flag.key)} — flag is archived`,
+						'Flag is archived',
+					);
 					continue;
 				}
 
 				const variants = buildVariants(flag);
 				if (variants.length === 0) {
-					spinner.warn(`Skipped ${chalk.cyan(flag.key)} — no variants`);
-					skippedFlags.push({ key: flag.key, reason: 'No variants' });
-					skipped++;
-					progressBar?.update(flag.key, { created, skipped, failed: errored });
+					doSkip(
+						flag.key,
+						`Skipped ${chalk.cyan(flag.key)} — no variants`,
+						'No variants',
+					);
 					continue;
 				}
 
@@ -1150,15 +1165,11 @@ async function executeMigration(
 					segmentConstantLookup,
 				);
 				if (!Array.isArray(allocationsResult)) {
-					spinner.warn(
+					doSkip(
+						flag.key,
 						`Skipped ${chalk.cyan(flag.key)} — ${allocationsResult.flagSkip}`,
+						allocationsResult.flagSkip,
 					);
-					skippedFlags.push({
-						key: flag.key,
-						reason: allocationsResult.flagSkip,
-					});
-					skipped++;
-					progressBar?.update(flag.key, { created, skipped, failed: errored });
 					continue;
 				}
 				const allocations = allocationsResult;
@@ -1181,30 +1192,18 @@ async function executeMigration(
 						(metadata
 							? ` from LaunchDarkly project "${metadata.project_key}"`
 							: ' without LaunchDarkly migration metadata');
-					spinner.fail(`Failed ${chalk.cyan(flag.key)}: ${chalk.red(reason)}`);
-					failures.push({ key: flag.key, error: reason });
-					errored++;
-					progressBar?.update(flag.key, { created, skipped, failed: errored });
+					doFail(flag.key, reason);
 					continue;
 				}
 
 				// Cross-project conflict: skip or prefix
 				if (!nonInteractive && conflict.type === 'cross_project') {
 					if (!conflictResolution || conflictResolution.action === 'skip') {
-						spinner.warn(
+						doSkip(
+							flag.key,
 							`Skipped ${chalk.cyan(flag.key)} — key already used by a flag from a different LaunchDarkly project`,
+							'Key conflict: flag key already exists in Datadog from a different LaunchDarkly project',
 						);
-						skippedFlags.push({
-							key: flag.key,
-							reason:
-								'Key conflict: flag key already exists in Datadog from a different LaunchDarkly project',
-						});
-						skipped++;
-						progressBar?.update(flag.key, {
-							created,
-							skipped,
-							failed: errored,
-						});
 						continue;
 					}
 					// prefix case: fall through to creation below
@@ -1318,25 +1317,19 @@ async function executeMigration(
 							editorTeamIds.length > 0 ? ' (permissions refreshed)' : '';
 						const tagLabel = `${syncTags.length} tag(s)`;
 						const variantLabel = formatVariantLabel(variantCounts);
-						spinner.succeed(
+						syncedFlagKeys.push(flag.key);
+						doSync(
 							dryRun
 								? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (${tagLabel}${variantLabel}${policyLabel})`
 								: `Synced ${chalk.cyan(flag.key)} (${tagLabel}${variantLabel}${policyLabel})`,
 						);
-						syncedFlagKeys.push(flag.key);
-						synced++;
-						progressBar?.update(flag.key, {
-							created,
-							skipped,
-							failed: errored,
-						});
 						continue;
 					}
 
-					spinner.warn(
-						`${chalk.cyan(flag.key)} exists in Datadog — targeting filters in ${envsToEnable.map((e) => e.name).join(', ')} will be overwritten`,
+					activeRunner.printMessage(
+						`⚠ ${chalk.cyan(flag.key)} exists in Datadog — targeting filters in ${envsToEnable.map((e) => e.name).join(', ')} will be overwritten`,
 					);
-					spinner = createSpinner(`Migrating ${chalk.cyan(flag.key)}…`).start();
+					activeRunner.beginFlag(flag.key);
 
 					if (dryRun) {
 						const { variants: existingVariantsDry } = await fetchFlagDetail(
@@ -1420,17 +1413,11 @@ async function executeMigration(
 							envsToEnable.length > 0
 								? `, would enable in ${envsToEnable.map((e) => e.name).join(', ')}`
 								: '';
-						spinner.succeed(
+						syncedFlagKeys.push(flag.key);
+						doSync(
 							`${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} ` +
 								`(${syncFilterLabel}${syncRuleLabel}${variantLabel}${tagLabel}${enableLabel})`,
 						);
-						syncedFlagKeys.push(flag.key);
-						synced++;
-						progressBar?.update(flag.key, {
-							created,
-							skipped,
-							failed: errored,
-						});
 					} else {
 						try {
 							// Apply variant creates+updates first so allocation
@@ -1526,27 +1513,17 @@ async function executeMigration(
 							const variantLabel = formatVariantLabel(variantCounts);
 							const enableLabel =
 								enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
-							spinner.succeed(
+							syncedFlagKeys.push(flag.key);
+							doSync(
 								`Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${variantLabel}${tagLabel}${enableLabel})`,
 							);
-							syncedFlagKeys.push(flag.key);
-							synced++;
-							progressBar?.update(flag.key, {
-								created,
-								skipped,
-								failed: errored,
-							});
 						} catch (err) {
-							spinner.fail(
-								`Failed to sync ${chalk.cyan(flag.key)}: ${chalk.red(formatAxiosError(err))}`,
+							const error = formatAxiosError(err);
+							doFail(
+								flag.key,
+								error,
+								`Failed to sync ${chalk.cyan(flag.key)}: ${chalk.red(error)}`,
 							);
-							failures.push({ key: flag.key, error: formatAxiosError(err) });
-							errored++;
-							progressBar?.update(flag.key, {
-								created,
-								skipped,
-								failed: errored,
-							});
 						}
 					}
 				} else {
@@ -1606,16 +1583,10 @@ async function executeMigration(
 							envsToEnable.length > 0
 								? `, would enable in ${envsToEnable.map((e) => e.name).join(', ')}`
 								: '';
-						spinner.succeed(
+						doCreate(
 							`${chalk.dim('[dry run]')} Would create ${chalk.cyan(ddKey)} ` +
 								`(${allFilterLabel}${allRuleLabel}${enableLabel})`,
 						);
-						created++;
-						progressBar?.update(flag.key, {
-							created,
-							skipped,
-							failed: errored,
-						});
 					} else {
 						try {
 							const createdFlag = await createFeatureFlag(
@@ -1661,44 +1632,23 @@ async function executeMigration(
 							totalEnabled += enabledCount;
 							const enableLabel =
 								enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
-							spinner.succeed(
+							doCreate(
 								`Created ${chalk.cyan(ddKey)} (${allFilterLabel}${allRuleLabel}${enableLabel})`,
 							);
-							created++;
-							progressBar?.update(flag.key, {
-								created,
-								skipped,
-								failed: errored,
-							});
 						} catch (err) {
-							spinner.fail(
-								`Failed ${chalk.cyan(ddKey)}: ${chalk.red(formatAxiosError(err))}`,
-							);
-							failures.push({ key: ddKey, error: formatAxiosError(err) });
-							errored++;
-							progressBar?.update(flag.key, {
-								created,
-								skipped,
-								failed: errored,
-							});
+							const error = formatAxiosError(err);
+							doFail(ddKey, error);
 						}
 					}
 				}
 			} catch (err) {
 				const error = formatAxiosError(err);
-				spinner.fail(`Failed ${chalk.cyan(flag.key)}: ${chalk.red(error)}`);
-				failures.push({ key: flag.key, error });
-				errored++;
-				progressBar?.update(flag.key, {
-					created,
-					skipped,
-					failed: errored,
-				});
+				doFail(flag.key, error);
 			}
 		}
 	} finally {
 		process.removeListener('SIGINT', sigintHandler);
-		progressBar?.finalize();
+		activeRunner.finalize();
 	}
 
 	// ─── Summary ───────────────────────────────────────────────────────────────
@@ -1812,7 +1762,7 @@ async function executeMigration(
 				});
 			}
 			if (exportToSheets) {
-				const { exportLDMigrationToXlsx } = await import('./xlsx.js');
+				const { exportLDMigrationToXlsx } = await import('./helpers/xlsx.js');
 				await exportLDMigrationToXlsx(migrationData);
 			}
 		}
@@ -1866,7 +1816,7 @@ export async function runLaunchDarklyMigration(
 
 	// Fetch projects from LD API
 	clearScreen();
-	printHeader();
+	await printHeader();
 	if (dryRun) {
 		console.log(
 			chalk.bold.yellow('  Dry run mode — no flags will be created\n'),
@@ -2007,7 +1957,7 @@ export async function runLaunchDarklyMigration(
 	outer: while (true) {
 		// Select LD environments
 		clearScreen();
-		printHeader();
+		await printHeader();
 		const envResult = await selectLDEnvironments(
 			ldEnvironments,
 			prevSelectedEnvKeys,
@@ -2071,7 +2021,7 @@ export async function runLaunchDarklyMigration(
 			// Select flags
 			while (true) {
 				clearScreen();
-				printHeader();
+				await printHeader();
 				const flagResult = await selectFlags(
 					allFlags,
 					datadogFlags,
@@ -2084,7 +2034,7 @@ export async function runLaunchDarklyMigration(
 
 				prevSelectedFlags = flagResult;
 				clearScreen();
-				printHeader();
+				await printHeader();
 				const action = await executeMigration(
 					prevSelectedFlags,
 					prevEnvMapping,
@@ -2159,7 +2109,6 @@ async function runLaunchDarklyMigrationNonInteractive(
 	ni: LDNonInteractiveOptions,
 	doExport: boolean,
 ): Promise<void> {
-	printHeader();
 	console.log(chalk.gray('  Running in non-interactive mode\n'));
 	if (dryRun) {
 		console.log(
