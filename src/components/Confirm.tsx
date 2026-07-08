@@ -16,12 +16,13 @@ type ConfirmProps = ConfirmOptions & {
 export function ConfirmView(props: ConfirmProps): JSX.Element {
 	const { exit } = useApp();
 	const [answered, setAnswered] = useState<boolean | null>(null);
+	const [cancelled, setCancelled] = useState(false);
 	const defaultValue = props.default ?? true;
 
 	useInput((inputChar, key) => {
-		if (answered !== null) return;
+		if (answered !== null || cancelled) return;
 		if (key.escape || (key.ctrl && inputChar === 'c')) {
-			setAnswered(false);
+			setCancelled(true);
 			props.onCancel();
 			exit();
 			return;
@@ -49,6 +50,15 @@ export function ConfirmView(props: ConfirmProps): JSX.Element {
 
 	const hint = defaultValue ? chalk.dim('(Y/n)') : chalk.dim('(y/N)');
 
+	if (cancelled) {
+		return (
+			<Box>
+				<Text color="green">? </Text>
+				<Text>{props.message} </Text>
+				<Text color="yellow">cancelled</Text>
+			</Box>
+		);
+	}
 	if (answered !== null) {
 		return (
 			<Box>
