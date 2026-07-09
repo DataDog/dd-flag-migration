@@ -1080,7 +1080,7 @@ async function main(): Promise<void> {
 	});
 
 	// 10. Optional .xlsx export
-	const { exportEvaluationToXlsx } = await import('./xlsx.js');
+	const { exportEvaluationToXlsx } = await import('./eppo/helpers/xlsx.js');
 
 	const ldProjectInfo =
 		migration.provider === 'launchdarkly'
