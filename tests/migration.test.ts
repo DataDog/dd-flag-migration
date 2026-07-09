@@ -7,8 +7,8 @@ import {
 	mapOperator,
 	mapVariationType,
 } from '../src/eppo/helpers/migration.js';
-import { toSyncRequests } from '../src/helpers/migration.js';
 import type { EppoAllocation, EppoFlag } from '../src/eppo/types.js';
+import { toSyncRequests } from '../src/helpers/migration.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

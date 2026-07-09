@@ -7,11 +7,11 @@ import {
 	it,
 	jest,
 } from '@jest/globals';
+import type { MigrationFile } from '../src/eppo/types.js';
 import {
 	CsvSource,
 	SyntheticSource,
 } from '../src/evaluate/test-case-sources.js';
-import type { MigrationFile } from '../src/eppo/types.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

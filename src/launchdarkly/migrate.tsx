@@ -3,13 +3,13 @@ import path from 'node:path';
 import axios from 'axios';
 import chalk from 'chalk';
 import { confirm } from '../components/Confirm.js';
+import { filterableCheckbox } from '../components/FilterableCheckbox.js';
+import { filterableSelect } from '../components/FilterableSelect.js';
 import {
 	type FilterCategory,
 	MIGRATED_FILTER_ID,
 	NOT_MIGRATED_FILTER_ID,
 } from '../components/filter-matching.js';
-import { filterableCheckbox } from '../components/FilterableCheckbox.js';
-import { filterableSelect } from '../components/FilterableSelect.js';
 import { HEADER_SUBTITLES, Header } from '../components/Header.js';
 import { input } from '../components/Input.js';
 import {

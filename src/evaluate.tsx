@@ -27,6 +27,7 @@ import {
 	evaluateEppoFlagAdvanced,
 	initializeEppo,
 } from './eppo/evaluate.js';
+import type { MigrationFile } from './eppo/types.js';
 import {
 	formatExampleTable,
 	parseCsv,
@@ -54,7 +55,6 @@ import {
 } from './launchdarkly/evaluate.js';
 import { mapFlagType } from './launchdarkly/helpers/migration.js';
 import type { LDFlag, LDMigrationFile } from './launchdarkly/types.js';
-import type { MigrationFile } from './eppo/types.js';
 import type {
 	DDFlagValue,
 	DDStatus,
