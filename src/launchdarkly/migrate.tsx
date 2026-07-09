@@ -5,10 +5,10 @@ import chalk from 'chalk';
 import { confirm } from '../components/Confirm.js';
 import {
 	type FilterCategory,
-	filterableCheckbox,
 	MIGRATED_FILTER_ID,
 	NOT_MIGRATED_FILTER_ID,
-} from '../components/FilterableCheckbox.js';
+} from '../components/filter-matching.js';
+import { filterableCheckbox } from '../components/FilterableCheckbox.js';
 import { filterableSelect } from '../components/FilterableSelect.js';
 import { HEADER_SUBTITLES, Header } from '../components/Header.js';
 import { input } from '../components/Input.js';

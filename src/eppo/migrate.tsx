@@ -4,10 +4,10 @@ import axios from 'axios';
 import chalk from 'chalk';
 import {
 	type FilterCategory,
-	filterableCheckbox,
 	MIGRATED_FILTER_ID,
 	NOT_MIGRATED_FILTER_ID,
-} from '../components/FilterableCheckbox.js';
+} from '../components/filter-matching.js';
+import { filterableCheckbox } from '../components/FilterableCheckbox.js';
 import { HEADER_SUBTITLES, Header } from '../components/Header.js';
 import {
 	type MigrationRunnerHandle,

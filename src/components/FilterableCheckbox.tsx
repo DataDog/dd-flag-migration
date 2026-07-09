@@ -396,10 +396,3 @@ export async function filterableCheckbox<T>(
 	return resolved;
 }
 
-// Re-export for backwards compatibility with existing imports.
-export {
-	type FilterCategory,
-	type FilterCategoryScope,
-	MIGRATED_FILTER_ID,
-	NOT_MIGRATED_FILTER_ID,
-};

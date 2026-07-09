@@ -1,9 +1,8 @@
 import type * as EppoSdk from '@eppo/node-server-sdk';
+import type { EppoCondition, EppoFlag } from './types.js';
 import type {
 	DDFlagValue,
 	DDStatus,
-	EppoCondition,
-	EppoFlag,
 	EvaluationResult,
 	SubjectAttributes,
 	TestCase,

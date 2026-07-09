@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import { generateEppoTestCases } from '../eppo/evaluate.js';
 import { generateLDTestCases } from '../launchdarkly/evaluate.js';
 import type { LDFlag } from '../launchdarkly/types.js';
-import type { MigrationFile, TestCase } from '../types.js';
+import type { MigrationFile } from '../eppo/types.js';
+import type { TestCase } from '../types.js';
 import { csvRowsToFlagTestCases, parseCsv, validateHeader } from './csv.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────

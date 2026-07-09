@@ -1,19 +1,3 @@
-// ─── Re-export Eppo types for backward compatibility ─────────────────────────
-
-export type {
-	DryRunFile,
-	EppoAllocation,
-	EppoCondition,
-	EppoFlag,
-	EppoFlagEnvironment,
-	EppoFlagVariation,
-	EppoTargetingRule,
-	EppoVariationWeight,
-	MigrationEnvFailure,
-	MigrationFile,
-	MigrationFlagFailure,
-} from './eppo/types.js';
-
 import type { MigrationMetadata } from './datadog/types.js';
 
 // ─── Evaluation Types ────────────────────────────────────────────────────────

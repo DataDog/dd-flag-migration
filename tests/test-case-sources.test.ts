@@ -11,7 +11,7 @@ import {
 	CsvSource,
 	SyntheticSource,
 } from '../src/evaluate/test-case-sources.js';
-import type { MigrationFile } from '../src/types.js';
+import type { MigrationFile } from '../src/eppo/types.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

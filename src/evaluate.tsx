@@ -54,11 +54,11 @@ import {
 } from './launchdarkly/evaluate.js';
 import { mapFlagType } from './launchdarkly/helpers/migration.js';
 import type { LDFlag, LDMigrationFile } from './launchdarkly/types.js';
+import type { MigrationFile } from './eppo/types.js';
 import type {
 	DDFlagValue,
 	DDStatus,
 	EvaluationExportRow,
-	MigrationFile,
 	SubjectAttributes,
 } from './types.js';
 
