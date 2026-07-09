@@ -6,8 +6,8 @@ import {
 	getEnvsToEnable,
 	mapOperator,
 	mapVariationType,
-	toSyncRequests,
-} from '../src/helpers/migration.js';
+} from '../src/eppo/helpers/migration.js';
+import { toSyncRequests } from '../src/helpers/migration.js';
 import type { EppoAllocation, EppoFlag } from '../src/types.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
