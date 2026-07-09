@@ -17,7 +17,11 @@ import {
 } from './components/ResultsTable.js';
 import { select } from './components/Select.js';
 import { spinner as createSpinner } from './components/Spinner.js';
-import { ddClient } from './datadog.js';
+import { ddClient } from './datadog/api.js';
+import type {
+	MigrationEnvironmentMapping,
+	MigrationMetadata,
+} from './datadog/types.js';
 import {
 	evaluateEppoFlag,
 	evaluateEppoFlagAdvanced,
@@ -54,9 +58,7 @@ import type {
 	DDFlagValue,
 	DDStatus,
 	EvaluationExportRow,
-	MigrationEnvironmentMapping,
 	MigrationFile,
-	MigrationMetadata,
 	SubjectAttributes,
 } from './types.js';
 

@@ -1,10 +1,10 @@
 import axios from 'axios';
+import { ddClient } from '../datadog/api.js';
 import {
-	ddClient,
 	FEATURE_FLAG_PAGE_LIMIT,
 	nextFeatureFlagOffset,
-} from '../datadog.js';
-import type { MigrationMetadata } from '../types.js';
+} from '../datadog/helpers.js';
+import type { MigrationMetadata } from '../datadog/types.js';
 
 type DDFlagListItem = {
 	attributes: {

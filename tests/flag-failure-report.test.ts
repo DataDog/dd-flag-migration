@@ -8,12 +8,12 @@ import {
 	jest,
 } from '@jest/globals';
 import AxiosMockAdapter from 'axios-mock-adapter';
-import { ddClient } from '../src/datadog.js';
+import { ddClient } from '../src/datadog/api.js';
 import { eppoClient } from '../src/eppo/api.js';
-import { runEppoMigration } from '../src/eppo/index.js';
+import { runEppoMigration } from '../src/eppo/migrate.js';
 import type { EppoFlag } from '../src/eppo/types.js';
 import { ldClient } from '../src/launchdarkly/api.js';
-import { runLaunchDarklyMigration } from '../src/launchdarkly/index.js';
+import { runLaunchDarklyMigration } from '../src/launchdarkly/migrate.js';
 import type { LDFlag } from '../src/launchdarkly/types.js';
 
 const DD_SITE = 'test.invalid';

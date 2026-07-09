@@ -1,4 +1,10 @@
 import axios, { type AxiosInstance } from 'axios';
+import {
+	eppoSourceIdLookupKey,
+	FEATURE_FLAG_PAGE_LIMIT,
+	nextFeatureFlagOffset,
+	planVariantSync,
+} from './helpers.js';
 import type {
 	CreateSavedFilterRequest,
 	DatadogAllocationSyncRequest,
@@ -17,12 +23,6 @@ import type {
 	VariantMigrationMetadata,
 	VariantSyncCounts,
 } from './types.js';
-import {
-	FEATURE_FLAG_PAGE_LIMIT,
-	eppoSourceIdLookupKey,
-	nextFeatureFlagOffset,
-	planVariantSync,
-} from './helpers.js';
 
 // ─── Rate Limiting ──────────────────────────────────────────────────────────
 

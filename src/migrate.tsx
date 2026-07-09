@@ -12,7 +12,7 @@ import { input } from './components/Input.js';
 import { PromptCancelledError, renderStatic } from './components/mount.js';
 import { PermissionsError } from './components/PermissionsError.js';
 import { select } from './components/Select.js';
-import { fetchCurrentUserPermissions } from './datadog.js';
+import { fetchCurrentUserPermissions } from './datadog/api.js';
 import { getDatadogSite, saveDatadogSite } from './helpers/config.js';
 import { requireEnvVars } from './helpers/env.js';
 import { withConsoleLogToStderr } from './helpers/output.js';
@@ -156,7 +156,7 @@ async function main(): Promise<void> {
 
 			if (ni.provider === 'launchdarkly') {
 				const { runLaunchDarklyMigration } = await import(
-					'./launchdarkly/index.js'
+					'./launchdarkly/migrate.js'
 				);
 				await runLaunchDarklyMigration(
 					ddApiKey,
@@ -174,7 +174,7 @@ async function main(): Promise<void> {
 					},
 				);
 			} else {
-				const { runEppoMigration } = await import('./eppo/index.js');
+				const { runEppoMigration } = await import('./eppo/migrate.js');
 				await runEppoMigration(ddApiKey, ddAppKey, ddSite, args.dryRun, {
 					doExport: args.doExport,
 					nonInteractive: {
@@ -215,11 +215,11 @@ async function main(): Promise<void> {
 
 	if (provider === 'launchdarkly') {
 		const { runLaunchDarklyMigration } = await import(
-			'./launchdarkly/index.js'
+			'./launchdarkly/migrate.js'
 		);
 		await runLaunchDarklyMigration(ddApiKey, ddAppKey, ddSite, args.dryRun);
 	} else {
-		const { runEppoMigration } = await import('./eppo/index.js');
+		const { runEppoMigration } = await import('./eppo/migrate.js');
 		await runEppoMigration(ddApiKey, ddAppKey, ddSite, args.dryRun);
 	}
 }

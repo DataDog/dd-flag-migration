@@ -1,5 +1,5 @@
+import type { DatadogEnvironment } from '../../src/datadog/types.js';
 import type { EppoAllocation, EppoFlag } from '../../src/eppo/types.js';
-import type { DatadogEnvironment } from '../../src/types.js';
 
 export const ddDev: DatadogEnvironment = {
 	id: 'dd-dev',

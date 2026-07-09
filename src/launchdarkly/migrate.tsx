@@ -23,10 +23,7 @@ import { formatVariantLabel } from '../components/VariantCounts.js';
 import {
 	applyRestrictionPolicy,
 	applyVariantDeletes,
-	buildVariantSyncDryRunRequests,
 	createFeatureFlag,
-	type DatadogTeam,
-	type DDRestrictionBinding,
 	enableFeatureFlagEnvironment,
 	fetchDatadogEnvironments,
 	fetchDatadogFlags,
@@ -36,16 +33,19 @@ import {
 	syncAllocationsForEnvironment,
 	syncVariantsCreatesAndUpdates,
 	updateFlagTags,
-} from '../datadog.js';
-import { CONFIG_DIR } from '../helpers/config.js';
-import { formatAxiosError } from '../helpers/format-axios-error.js';
-import { writeJsonOutput } from '../helpers/output.js';
-import { toSyncRequests } from '../migration.js';
+} from '../datadog/api.js';
+import { buildVariantSyncDryRunRequests } from '../datadog/helpers.js';
 import type {
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,
 	DatadogFlagEntry,
-} from '../types.js';
+	DatadogTeam,
+	DDRestrictionBinding,
+} from '../datadog/types.js';
+import { CONFIG_DIR } from '../helpers/config.js';
+import { formatAxiosError } from '../helpers/format-axios-error.js';
+import { toSyncRequests } from '../helpers/migration.js';
+import { writeJsonOutput } from '../helpers/output.js';
 import {
 	fetchCustomRoles,
 	fetchFlag,

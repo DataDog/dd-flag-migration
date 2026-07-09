@@ -12,7 +12,6 @@
 		"help": "tsx src/cli.tsx --help",
 		"evaluate": "tsx src/cli.tsx evaluate",
 		"build": "tsc -p tsconfig.build.json",
-		"start": "node dist/index.js",
 		"lint": "biome check",
 		"lint:fix": "biome check --write",
 		"typecheck": "tsc",

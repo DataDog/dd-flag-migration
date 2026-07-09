@@ -5,6 +5,10 @@
  * and asserts on the Datadog create-flag request that would be produced.
  */
 import { describe, expect, it } from '@jest/globals';
+import type {
+	DatadogCreateFlagRequest,
+	DatadogEnvironment,
+} from '../../src/datadog/types.js';
 import {
 	buildAllocations,
 	getEnvsToEnable,
@@ -14,10 +18,6 @@ import {
 	slugify,
 } from '../../src/eppo/helpers/migration.js';
 import type { EppoFlag } from '../../src/eppo/types.js';
-import type {
-	DatadogCreateFlagRequest,
-	DatadogEnvironment,
-} from '../../src/types.js';
 import { ddProd, ddStaging, makeAllocation, makeFlag } from './helpers.js';
 
 /** Simulate the full migration pipeline for a single Eppo flag. */

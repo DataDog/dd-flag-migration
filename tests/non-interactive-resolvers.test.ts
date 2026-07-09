@@ -1,13 +1,16 @@
 import { describe, expect, it } from '@jest/globals';
-import { resolveEppoEnvMap, resolveEppoFlags } from '../src/eppo/index.js';
+import type {
+	DatadogEnvironment,
+	DatadogFlagEntry,
+} from '../src/datadog/types.js';
+import { resolveEppoEnvMap, resolveEppoFlags } from '../src/eppo/migrate.js';
 import type { EppoFlag, EppoFlagEnvironment } from '../src/eppo/types.js';
 import {
 	classifyNonInteractiveConflict,
 	parseLDFlagMigrationSpecs,
 	resolveLDEnvMap,
-} from '../src/launchdarkly/index.js';
+} from '../src/launchdarkly/migrate.js';
 import type { LDEnvironment } from '../src/launchdarkly/types.js';
-import type { DatadogEnvironment, DatadogFlagEntry } from '../src/types.js';
 
 const ddEnvs: DatadogEnvironment[] = [
 	{ id: 'dd1', name: 'Production', is_production: true, queries: ['prod'] },

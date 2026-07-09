@@ -1,13 +1,13 @@
 import { describe, expect, it } from '@jest/globals';
+import type {
+	DatadogCondition,
+	DatadogTargetingRule,
+} from '../../src/datadog/types.js';
 import {
 	cartesianProduct,
 	negateCondition,
 	negateTargetingRules,
 } from '../../src/launchdarkly/helpers/negation.js';
-import type {
-	DatadogCondition,
-	DatadogTargetingRule,
-} from '../../src/types.js';
 
 // ─── negateCondition ──────────────────────────────────────────────────────────
 

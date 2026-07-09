@@ -19,26 +19,28 @@ import { spinner as createSpinner } from '../components/Spinner.js';
 import { formatVariantLabel } from '../components/VariantCounts.js';
 import {
 	applyVariantDeletes,
-	buildVariantSyncDryRunRequests,
 	createFeatureFlag,
 	enableFeatureFlagEnvironment,
-	eppoSourceIdLookupKey,
 	fetchDatadogEnvironments,
 	fetchDatadogFlagKeys,
 	fetchFlagDetail,
 	syncAllocationsForEnvironment,
 	syncVariantsCreatesAndUpdates,
 	updateFlagTags,
-} from '../datadog.js';
-import { CONFIG_DIR } from '../helpers/config.js';
-import { formatAxiosError } from '../helpers/format-axios-error.js';
-import { writeJsonOutput } from '../helpers/output.js';
-import { toSyncRequests } from '../migration.js';
+} from '../datadog/api.js';
+import {
+	buildVariantSyncDryRunRequests,
+	eppoSourceIdLookupKey,
+} from '../datadog/helpers.js';
 import type {
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,
 	MigrationEnvironmentMapping,
-} from '../types.js';
+} from '../datadog/types.js';
+import { CONFIG_DIR } from '../helpers/config.js';
+import { formatAxiosError } from '../helpers/format-axios-error.js';
+import { toSyncRequests } from '../helpers/migration.js';
+import { writeJsonOutput } from '../helpers/output.js';
 import { extractEnvironments, fetchEppoFlags } from './api.js';
 import { migrateAudiences } from './audiences.js';
 import { EppoMigrationSummary } from './components/EppoMigrationSummary.js';

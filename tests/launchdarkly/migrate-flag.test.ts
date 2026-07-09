@@ -5,6 +5,12 @@
  * and asserts on the Datadog create-flag request that would be produced.
  */
 import { describe, expect, it } from '@jest/globals';
+import type {
+	DatadogCreateFlagRequest,
+	DatadogEnvironment,
+	DatadogFlagEntry,
+	MigrationMetadata,
+} from '../../src/datadog/types.js';
 import type { LDFlagStatus } from '../../src/launchdarkly/api.js';
 import {
 	buildAllocations,
@@ -18,17 +24,11 @@ import {
 	type ConflictResolution,
 	classifyConflict,
 	flagCategories,
-} from '../../src/launchdarkly/index.js';
+} from '../../src/launchdarkly/migrate.js';
 import type {
 	LDEnvironmentConfig,
 	LDFlag,
 } from '../../src/launchdarkly/types.js';
-import type {
-	DatadogCreateFlagRequest,
-	DatadogEnvironment,
-	DatadogFlagEntry,
-	MigrationMetadata,
-} from '../../src/types.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

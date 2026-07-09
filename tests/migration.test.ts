@@ -1,4 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
+import type { DatadogEnvironment } from '../src/datadog/types.js';
 import {
 	buildAllocations,
 	buildTargetingRules,
@@ -6,12 +7,8 @@ import {
 	mapOperator,
 	mapVariationType,
 	toSyncRequests,
-} from '../src/migration.js';
-import type {
-	DatadogEnvironment,
-	EppoAllocation,
-	EppoFlag,
-} from '../src/types.js';
+} from '../src/helpers/migration.js';
+import type { EppoAllocation, EppoFlag } from '../src/types.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

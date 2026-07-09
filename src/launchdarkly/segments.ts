@@ -7,14 +7,14 @@ import {
 	createSavedFilter,
 	listSavedFilters,
 	updateSavedFilter,
-} from '../datadog.js';
+} from '../datadog/api.js';
 import type {
 	DatadogCondition,
 	DatadogEnvironment,
 	DatadogTargetingRule,
 	LDSavedFilterMigrationMetadata,
 	SavedFilterSummary,
-} from '../types.js';
+} from '../datadog/types.js';
 import { fetchSegment, fetchSegments } from './api.js';
 import { mapOperator } from './helpers/migration.js';
 import { negateTargetingRules } from './helpers/negation.js';

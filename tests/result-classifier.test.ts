@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
+import type { MigrationMetadata } from '../src/datadog/types.js';
 import { classifyRow } from '../src/evaluate/result-classifier.js';
-import type { MigrationMetadata } from '../src/types.js';
 
 const META: MigrationMetadata = { project_key: 'proj', flag_key: 'my-flag' };
 

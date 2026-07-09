@@ -16,7 +16,6 @@ import {
 	ddClient,
 	deleteVariant,
 	enableFeatureFlagEnvironment,
-	eppoSourceIdLookupKey,
 	fetchCurrentUserPermissions,
 	fetchDatadogEnvironments,
 	fetchDatadogFlagKeys,
@@ -24,17 +23,20 @@ import {
 	fetchDatadogTeams,
 	fetchFlagTags,
 	fetchRestrictionPolicy,
-	planVariantSync,
 	syncAllocationsForEnvironment,
 	syncVariants,
 	syncVariantsCreatesAndUpdates,
 	updateFlagTags,
 	updateVariant,
-} from '../src/datadog.js';
+} from '../src/datadog/api.js';
+import {
+	eppoSourceIdLookupKey,
+	planVariantSync,
+} from '../src/datadog/helpers.js';
 import type {
 	DatadogAllocationSyncRequest,
 	DatadogCreateFlagRequest,
-} from '../src/types.js';
+} from '../src/datadog/types.js';
 
 const API_KEY = 'test-api-key';
 const APP_KEY = 'test-app-key';

@@ -5,12 +5,12 @@ import {
 	createSavedFilter,
 	listSavedFilters,
 	updateSavedFilter,
-} from '../datadog.js';
+} from '../datadog/api.js';
 import type {
 	DatadogTargetingRule,
 	EppoSavedFilterMigrationMetadata,
 	SavedFilterSummary,
-} from '../types.js';
+} from '../datadog/types.js';
 import { fetchEppoAudiences } from './api.js';
 import { fingerprintConditions, mapOperator } from './helpers/migration.js';
 import type { EppoAudience } from './types.js';

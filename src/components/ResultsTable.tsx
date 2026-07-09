@@ -1,11 +1,12 @@
 import chalk from 'chalk';
 import { Box, Text } from 'ink';
+import type { MigrationMetadata } from '../datadog/types.js';
 import {
 	type ClassifiedRow,
 	classifyRow,
 	type RowColor,
 } from '../evaluate/result-classifier.js';
-import type { DDStatus, MigrationMetadata, TestCase } from '../types.js';
+import type { DDStatus, TestCase } from '../types.js';
 
 export type MigrationStatus =
 	| 'created'
