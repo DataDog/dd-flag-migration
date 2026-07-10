@@ -1,4 +1,10 @@
 import axios, { type AxiosInstance } from 'axios';
+import {
+	eppoSourceIdLookupKey,
+	FEATURE_FLAG_PAGE_LIMIT,
+	nextFeatureFlagOffset,
+	planVariantSync,
+} from './helpers.js';
 import type {
 	CreateSavedFilterRequest,
 	DatadogAllocationSyncRequest,
@@ -6,9 +12,16 @@ import type {
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,
 	DatadogFlagEntry,
+	DatadogTeam,
+	DatadogVariantDetail,
+	DDRestrictionBinding,
 	MigrationMetadata,
+	PendingVariantDelete,
 	SavedFilterMigrationMetadata,
 	SavedFilterSummary,
+	SourceVariant,
+	VariantMigrationMetadata,
+	VariantSyncCounts,
 } from './types.js';
 
 // ─── Rate Limiting ──────────────────────────────────────────────────────────
@@ -170,49 +183,6 @@ type JsonApiFlagListResponse = {
 	};
 };
 
-export function eppoSourceIdLookupKey(sourceId: string): string {
-	return `eppo:${sourceId}`;
-}
-
-export const FEATURE_FLAG_PAGE_LIMIT = 50;
-
-export type FeatureFlagPageMeta = {
-	meta?: {
-		page?: {
-			total?: number;
-			total_count?: number;
-			total_filtered_count?: number;
-			next_offset?: number | null;
-		};
-	};
-};
-
-export function featureFlagPageTotal(
-	response: FeatureFlagPageMeta,
-): number | undefined {
-	return (
-		response.meta?.page?.total_filtered_count ??
-		response.meta?.page?.total_count ??
-		response.meta?.page?.total
-	);
-}
-
-export function nextFeatureFlagOffset(
-	response: FeatureFlagPageMeta,
-	currentOffset: number,
-	loadedCount: number,
-): number | undefined {
-	const nextOffset = response.meta?.page?.next_offset;
-	if (typeof nextOffset === 'number') return nextOffset;
-	if (loadedCount === 0) return undefined;
-
-	const fallbackOffset = currentOffset + loadedCount;
-	const total = featureFlagPageTotal(response);
-	if (total !== undefined && fallbackOffset >= total) return undefined;
-	if (loadedCount < FEATURE_FLAG_PAGE_LIMIT) return undefined;
-	return fallbackOffset;
-}
-
 export async function fetchDatadogFlagKeys(
 	apiKey: string,
 	appKey: string,
@@ -347,12 +317,6 @@ export async function updateFlagTags(
 	});
 }
 
-export interface DatadogTeam {
-	id: string;
-	handle: string;
-	name: string;
-}
-
 export async function fetchDatadogTeams(
 	apiKey: string,
 	appKey: string,
@@ -429,14 +393,6 @@ type JsonApiFlagDetail = {
 	};
 };
 
-export interface DatadogVariantDetail {
-	id: string;
-	key: string;
-	name: string;
-	value: string;
-	migration_metadata?: Record<string, unknown>;
-}
-
 export async function fetchFlagDetail(
 	apiKey: string,
 	appKey: string,
@@ -484,23 +440,6 @@ export async function fetchFlagDetail(
 }
 
 // ─── Variants ────────────────────────────────────────────────────────────────
-
-export interface VariantMigrationMetadata {
-	provider: 'launchdarkly' | 'eppo';
-	/** Stable identifier from the source variation — survives rename. */
-	source_id: string;
-	/** Slugified source key at migration time — useful for debugging drift. */
-	source_key: string;
-}
-
-export interface SourceVariant {
-	key: string;
-	name: string;
-	value: string;
-	/** Stable identifier from the source platform's variation. Required so the
-	 * diff can survive renames of the variation name (which feeds `key`). */
-	sourceId: string;
-}
 
 export async function createVariant(
 	apiKey: string,
@@ -597,108 +536,6 @@ export async function deleteVariant(
 		`${baseUrl}/api/v2/feature-flags/${flagId}/variants/${variantId}`,
 		{ headers: ddHeaders(apiKey, appKey) },
 	);
-}
-
-export interface VariantSyncCounts {
-	added: number;
-	updated: number;
-	deleted: number;
-}
-
-export interface VariantSyncPlan {
-	toCreate: SourceVariant[];
-	/**
-	 * Updates carry the **existing DD key** (immutable on the backend — only
-	 * name/value/migration_metadata are updatable per the variant DTO). When a
-	 * rename is matched by `source_id`, `key` here is the DD-side key and may
-	 * drift from `sourceKey` (the new slugified source key). UUID stability is
-	 * what matters: allocations reference variants by UUID, not by key.
-	 */
-	toUpdate: Array<{
-		id: string;
-		/** Existing DD key — never changes (variant key is immutable). */
-		key: string;
-		name: string;
-		value: string;
-		/** Stable source identifier — propagated into migration_metadata. */
-		sourceId: string;
-		/** Current slugified source key — propagated into migration_metadata
-		 * for traceability even though the DD key itself stays the same. */
-		sourceKey: string;
-	}>;
-	toDelete: Array<{ id: string; key: string }>;
-}
-
-function readSourceIdFromMetadata(
-	meta: Record<string, unknown> | undefined,
-): string | undefined {
-	if (!meta) return undefined;
-	const sid = meta.source_id;
-	return typeof sid === 'string' && sid.length > 0 ? sid : undefined;
-}
-
-export function planVariantSync(
-	sourceVariants: SourceVariant[],
-	existingVariants: DatadogVariantDetail[],
-): VariantSyncPlan {
-	// Index existing variants by their migration_metadata.source_id (preferred,
-	// survives source-side renames) and by key (fallback for legacy variants
-	// migrated before source_id metadata existed).
-	const existingBySourceId = new Map<string, DatadogVariantDetail>();
-	const existingByKey = new Map<string, DatadogVariantDetail>();
-	for (const ev of existingVariants) {
-		existingByKey.set(ev.key, ev);
-		const sid = readSourceIdFromMetadata(ev.migration_metadata);
-		if (sid !== undefined) existingBySourceId.set(sid, ev);
-	}
-
-	const toCreate: SourceVariant[] = [];
-	const toUpdate: VariantSyncPlan['toUpdate'] = [];
-	const matchedExistingIds = new Set<string>();
-
-	for (const sv of sourceVariants) {
-		// 1. Prefer match on stable source_id (survives rename).
-		// 2. Fall back to key match (for legacy variants with no source_id meta).
-		const existing =
-			existingBySourceId.get(sv.sourceId) ?? existingByKey.get(sv.key);
-		if (!existing) {
-			toCreate.push(sv);
-			continue;
-		}
-		matchedExistingIds.add(existing.id);
-
-		// Rename detection: if we matched by source_id but the slugified key
-		// drifted, treat it as an update (name almost certainly changed too).
-		// Otherwise update only on actual name/value drift.
-		const renamed = existing.key !== sv.key;
-
-		if (existing.name !== sv.name || existing.value !== sv.value || renamed) {
-			toUpdate.push({
-				id: existing.id,
-				// Keep the DD-side key: variant key is immutable on the backend.
-				// After a source rename the DD key may drift from sv.key — that's
-				// expected. UUID stability is the contract that matters.
-				key: existing.key,
-				name: sv.name,
-				value: sv.value,
-				sourceId: sv.sourceId,
-				sourceKey: sv.key,
-			});
-		}
-	}
-
-	const toDelete: Array<{ id: string; key: string }> = [];
-	for (const ev of existingVariants) {
-		if (!matchedExistingIds.has(ev.id)) {
-			toDelete.push({ id: ev.id, key: ev.key });
-		}
-	}
-	return { toCreate, toUpdate, toDelete };
-}
-
-export interface PendingVariantDelete {
-	id: string;
-	key: string;
 }
 
 /**
@@ -833,87 +670,6 @@ export async function syncVariants(
 	return { variantKeyToId, counts };
 }
 
-/**
- * Build dry-run request descriptors for a variant sync. Order matches the live
- * code path: creates + updates first (before allocation sync) and deletes
- * last (after allocation sync) — variants must outlive references.
- */
-export function buildVariantSyncDryRunRequests(
-	flagId: string,
-	sourceVariants: SourceVariant[],
-	existingVariants: DatadogVariantDetail[],
-	provider: 'launchdarkly' | 'eppo',
-): {
-	createUpdateRequests: Array<{
-		method: 'POST' | 'PUT';
-		path: string;
-		body: unknown;
-	}>;
-	deleteRequests: Array<{ method: 'DELETE'; path: string; body: unknown }>;
-} {
-	const plan = planVariantSync(sourceVariants, existingVariants);
-	const createUpdateRequests: Array<{
-		method: 'POST' | 'PUT';
-		path: string;
-		body: unknown;
-	}> = [];
-	for (const v of plan.toUpdate) {
-		createUpdateRequests.push({
-			method: 'PUT',
-			path: `/api/v2/feature-flags/${flagId}/variants/${v.id}`,
-			body: {
-				data: {
-					type: 'variants',
-					id: v.id,
-					attributes: {
-						name: v.name,
-						value: v.value,
-						migration_metadata: {
-							provider,
-							source_id: v.sourceId,
-							source_key: v.sourceKey,
-						},
-					},
-				},
-			},
-		});
-	}
-	for (const v of plan.toCreate) {
-		createUpdateRequests.push({
-			method: 'POST',
-			path: `/api/v2/feature-flags/${flagId}/variants`,
-			body: {
-				data: {
-					type: 'variants',
-					attributes: {
-						key: v.key,
-						name: v.name,
-						value: v.value,
-						migration_metadata: {
-							provider,
-							source_id: v.sourceId,
-							source_key: v.key,
-						},
-					},
-				},
-			},
-		});
-	}
-	const deleteRequests: Array<{
-		method: 'DELETE';
-		path: string;
-		body: unknown;
-	}> = [];
-	for (const v of plan.toDelete) {
-		deleteRequests.push({
-			method: 'DELETE',
-			path: `/api/v2/feature-flags/${flagId}/variants/${v.id}`,
-			body: {},
-		});
-	}
-	return { createUpdateRequests, deleteRequests };
-}
-
 export async function syncAllocationsForEnvironment(
 	apiKey: string,
 	appKey: string,
@@ -964,10 +720,7 @@ export async function syncAllocationsForEnvironment(
 	);
 }
 
-export type DDRestrictionBinding = {
-	principals: string[];
-	relation: string;
-};
+// ─── Restriction Policy ───────────────────────────────────────────────────────
 
 /**
  * Fetch the current restriction policy bindings for a feature flag.

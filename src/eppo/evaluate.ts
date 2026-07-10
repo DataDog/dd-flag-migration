@@ -2,12 +2,11 @@ import type * as EppoSdk from '@eppo/node-server-sdk';
 import type {
 	DDFlagValue,
 	DDStatus,
-	EppoCondition,
-	EppoFlag,
 	EvaluationResult,
 	SubjectAttributes,
 	TestCase,
 } from '../types.js';
+import type { EppoCondition, EppoFlag } from './types.js';
 
 type EppoClient = ReturnType<typeof EppoSdk.getInstance>;
 

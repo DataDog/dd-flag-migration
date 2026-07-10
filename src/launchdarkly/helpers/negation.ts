@@ -1,4 +1,7 @@
-import type { DatadogCondition, DatadogTargetingRule } from '../../types.js';
+import type {
+	DatadogCondition,
+	DatadogTargetingRule,
+} from '../../datadog/types.js';
 
 export const NEGATION_TABLE: Record<string, string> = {
 	ONE_OF: 'NOT_ONE_OF',

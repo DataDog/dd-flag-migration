@@ -6,8 +6,6 @@ import {
 	type FilterCategory,
 	type FilterCategoryScope,
 	itemMatchesFilters,
-	MIGRATED_FILTER_ID,
-	NOT_MIGRATED_FILTER_ID,
 } from './filter-matching.js';
 import { mount, PromptCancelledError } from './mount.js';
 
@@ -395,11 +393,3 @@ export async function filterableCheckbox<T>(
 	if (cancelled) return null;
 	return resolved;
 }
-
-// Re-export for backwards compatibility with existing imports.
-export {
-	type FilterCategory,
-	type FilterCategoryScope,
-	MIGRATED_FILTER_ID,
-	NOT_MIGRATED_FILTER_ID,
-};

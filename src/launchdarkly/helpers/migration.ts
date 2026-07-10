@@ -3,7 +3,7 @@ import type {
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,
 	DatadogTargetingRule,
-} from '../../types.js';
+} from '../../datadog/types.js';
 import type {
 	LDClause,
 	LDCustomRole,

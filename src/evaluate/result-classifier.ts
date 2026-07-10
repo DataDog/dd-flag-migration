@@ -1,4 +1,5 @@
-import type { DDStatus, MigrationMetadata } from '../types.js';
+import type { MigrationMetadata } from '../datadog/types.js';
+import type { DDStatus } from '../types.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

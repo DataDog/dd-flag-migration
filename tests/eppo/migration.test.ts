@@ -4,6 +4,10 @@
  * hasSemverConditions, buildDefaultVariantKeyPerEnv.
  */
 import { describe, expect, it } from '@jest/globals';
+import type {
+	DatadogAllocationForFlagCreation,
+	DatadogEnvironment,
+} from '../../src/datadog/types.js';
 import {
 	buildAllocations,
 	buildDefaultVariantKeyPerEnv,
@@ -13,10 +17,6 @@ import {
 	mapOperator,
 	mapVariationType,
 } from '../../src/eppo/helpers/migration.js';
-import type {
-	DatadogAllocationForFlagCreation,
-	DatadogEnvironment,
-} from '../../src/types.js';
 import { ddDev, ddProd, makeAllocation, makeFlag } from './helpers.js';
 
 // ─── mapVariationType ─────────────────────────────────────────────────────────

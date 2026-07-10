@@ -26,7 +26,7 @@ if (subcommand === '--version' || subcommand === '-V') {
 	await printHelp(subcommand ? 0 : 1);
 } else if (subcommand === 'migrate') {
 	process.argv.splice(2, 1);
-	await import('./index.js');
+	await import('./migrate.js');
 } else if (subcommand === 'evaluate') {
 	process.argv.splice(2, 1);
 	await import('./evaluate.js');

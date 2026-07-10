@@ -13,7 +13,7 @@ import {
 	jest,
 } from '@jest/globals';
 import AxiosMockAdapter from 'axios-mock-adapter';
-import { ddClient } from '../../src/datadog.js';
+import { ddClient } from '../../src/datadog/api.js';
 import { eppoClient, fetchEppoAudiences } from '../../src/eppo/api.js';
 import { migrateAudiences } from '../../src/eppo/audiences.js';
 import { fingerprintConditions } from '../../src/eppo/helpers/migration.js';

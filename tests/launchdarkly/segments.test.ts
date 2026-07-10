@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import AxiosMockAdapter from 'axios-mock-adapter';
+import type { DatadogEnvironment } from '../../src/datadog/types.js';
 import { ldClient } from '../../src/launchdarkly/api.js';
 import {
 	buildNegatedRules,
@@ -15,7 +16,6 @@ import type {
 	LDRule,
 	LDSegment,
 } from '../../src/launchdarkly/types.js';
-import type { DatadogEnvironment } from '../../src/types.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

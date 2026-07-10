@@ -1,4 +1,9 @@
 import { describe, expect, it } from '@jest/globals';
+import type {
+	DatadogAllocationForFlagCreation,
+	DatadogEnvironment,
+	DatadogTargetingRule,
+} from '../../src/datadog/types.js';
 import {
 	isReleaseInProgress,
 	type LDRelease,
@@ -23,11 +28,6 @@ import type {
 	LDFlag,
 	LDTeamWithRoles,
 } from '../../src/launchdarkly/types.js';
-import type {
-	DatadogAllocationForFlagCreation,
-	DatadogEnvironment,
-	DatadogTargetingRule,
-} from '../../src/types.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

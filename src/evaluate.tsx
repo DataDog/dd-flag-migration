@@ -17,12 +17,17 @@ import {
 } from './components/ResultsTable.js';
 import { select } from './components/Select.js';
 import { spinner as createSpinner } from './components/Spinner.js';
-import { ddClient } from './datadog.js';
+import { ddClient } from './datadog/api.js';
+import type {
+	MigrationEnvironmentMapping,
+	MigrationMetadata,
+} from './datadog/types.js';
 import {
 	evaluateEppoFlag,
 	evaluateEppoFlagAdvanced,
 	initializeEppo,
 } from './eppo/evaluate.js';
+import type { MigrationFile } from './eppo/types.js';
 import {
 	formatExampleTable,
 	parseCsv,
@@ -54,9 +59,6 @@ import type {
 	DDFlagValue,
 	DDStatus,
 	EvaluationExportRow,
-	MigrationEnvironmentMapping,
-	MigrationFile,
-	MigrationMetadata,
 	SubjectAttributes,
 } from './types.js';
 
@@ -1078,7 +1080,7 @@ async function main(): Promise<void> {
 	});
 
 	// 10. Optional .xlsx export
-	const { exportEvaluationToXlsx } = await import('./xlsx.js');
+	const { exportEvaluationToXlsx } = await import('./eppo/helpers/xlsx.js');
 
 	const ldProjectInfo =
 		migration.provider === 'launchdarkly'

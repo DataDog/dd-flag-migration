@@ -1,16 +1,7 @@
 import type {
 	DatadogAllocationForFlagCreation,
 	DatadogAllocationSyncRequest,
-} from './types.js';
-
-// Re-export Eppo-specific migration functions for backward compatibility
-export {
-	buildAllocations,
-	buildTargetingRules,
-	getEnvsToEnable,
-	mapOperator,
-	mapVariationType,
-} from './eppo/helpers/migration.js';
+} from '../datadog/types.js';
 
 // Convert allocations built for flag creation into the sync request format
 // (strips environment_id which is passed as a path parameter instead)

@@ -121,4 +121,4 @@ as-is; only the array case needs the wrapper.
 
 ## Required verification
 
-Per `CLAUDE.md`: `yarn typecheck && yarn lint:fix && yarn test` must pass before claiming a change complete. Do not skip.
+`yarn typecheck && yarn lint:fix && yarn test` must pass before claiming a change complete. Do not skip.

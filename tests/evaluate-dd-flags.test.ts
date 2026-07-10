@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import AxiosMockAdapter from 'axios-mock-adapter';
-import { ddClient } from '../src/datadog.js';
+import { ddClient } from '../src/datadog/api.js';
 import { fetchDDFlagData } from '../src/evaluate/dd-flags.js';
 
 const API_KEY = 'test-api-key';

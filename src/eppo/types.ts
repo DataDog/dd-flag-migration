@@ -115,7 +115,7 @@ export interface MigrationFile {
 	}>;
 	skippedFlags?: Array<{ key: string; reason: string }>;
 	flags: EppoFlag[];
-	environmentMapping: import('../types.js').MigrationEnvironmentMapping[];
+	environmentMapping: import('../datadog/types.js').MigrationEnvironmentMapping[];
 }
 
 export interface DryRunFile extends MigrationFile {
