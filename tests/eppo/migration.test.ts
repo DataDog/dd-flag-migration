@@ -12,7 +12,7 @@ import {
 	hasSemverConditions,
 	mapOperator,
 	mapVariationType,
-} from '../../src/eppo/migration.js';
+} from '../../src/eppo/helpers/migration.js';
 import type {
 	DatadogAllocationForFlagCreation,
 	DatadogEnvironment,

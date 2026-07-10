@@ -1,16 +1,16 @@
 import path from 'node:path';
 import chalk from 'chalk';
 import ExcelJS from 'exceljs';
-import type { RowColor } from '../evaluate/result-classifier.js';
-import { classifyRow } from '../evaluate/result-classifier.js';
-import type { EvaluationExportRow } from '../types.js';
+import type { RowColor } from '../../evaluate/result-classifier.js';
+import { classifyRow } from '../../evaluate/result-classifier.js';
 import {
 	ARGB,
 	addHeaderRow,
 	addSheetHeader,
 	colorRow,
-} from '../xlsx-helpers.js';
-import type { EppoFlag, MigrationFile } from './types.js';
+} from '../../helpers/xlsx-helpers.js';
+import type { EvaluationExportRow } from '../../types.js';
+import type { EppoFlag, MigrationFile } from '../types.js';
 
 // ─── Migration Export ─────────────────────────────────────────────────────────
 

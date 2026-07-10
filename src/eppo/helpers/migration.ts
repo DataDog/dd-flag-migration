@@ -4,8 +4,8 @@ import type {
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,
 	DatadogTargetingRule,
-} from '../types.js';
-import type { EppoAllocation, EppoFlag } from './types.js';
+} from '../../types.js';
+import type { EppoAllocation, EppoFlag } from '../types.js';
 
 export function slugify(s: string): string {
 	return (

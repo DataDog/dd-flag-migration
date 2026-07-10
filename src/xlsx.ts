@@ -2,4 +2,4 @@
 export {
 	exportEvaluationToXlsx,
 	exportMigrationToXlsx,
-} from './eppo/xlsx.js';
+} from './eppo/helpers/xlsx.js';

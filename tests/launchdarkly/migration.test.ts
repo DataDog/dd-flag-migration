@@ -16,7 +16,7 @@ import {
 	mapOperator,
 	resolveSegmentMatch,
 	shouldSkipFlag,
-} from '../../src/launchdarkly/migration.js';
+} from '../../src/launchdarkly/helpers/migration.js';
 import type {
 	LDClause,
 	LDCustomRole,

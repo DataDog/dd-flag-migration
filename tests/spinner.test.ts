@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
-import { createSpinner } from '../src/spinner.js';
+import { spinner as createSpinner } from '../src/components/Spinner.js';
 
-describe('createSpinner', () => {
+describe('spinner', () => {
 	const originalIsTTY = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
 	const originalSetRawMode = Object.getOwnPropertyDescriptor(
 		process.stdin,

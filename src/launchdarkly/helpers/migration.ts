@@ -3,8 +3,7 @@ import type {
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,
 	DatadogTargetingRule,
-} from '../types.js';
-import { NEGATION_TABLE } from './negation.js';
+} from '../../types.js';
 import type {
 	LDClause,
 	LDCustomRole,
@@ -12,7 +11,8 @@ import type {
 	LDPolicyStatement,
 	LDRollout,
 	LDTeamWithRoles,
-} from './types.js';
+} from '../types.js';
+import { NEGATION_TABLE } from './negation.js';
 
 // ─── Flag Type Mapping ───────────────────────────────────────────────────────
 

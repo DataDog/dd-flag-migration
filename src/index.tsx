@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { select } from '@inquirer/prompts';
 import chalk from 'chalk';
 import {
 	ArgParseError,
@@ -7,10 +6,16 @@ import {
 	type ProviderValue,
 	parseMigrateArgs,
 } from './args.js';
-import { getDatadogSite, saveDatadogSite } from './config.js';
+import { confirm } from './components/Confirm.js';
+import { HEADER_SUBTITLES, Header } from './components/Header.js';
+import { input } from './components/Input.js';
+import { PromptCancelledError, renderStatic } from './components/mount.js';
+import { PermissionsError } from './components/PermissionsError.js';
+import { select } from './components/Select.js';
 import { fetchCurrentUserPermissions } from './datadog.js';
-import { requireEnvVars } from './env.js';
-import { withConsoleLogToStderr } from './output.js';
+import { getDatadogSite, saveDatadogSite } from './helpers/config.js';
+import { requireEnvVars } from './helpers/env.js';
+import { withConsoleLogToStderr } from './helpers/output.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -43,22 +48,8 @@ function parseArgs(): MigrateArgs {
 
 // ─── UI Helpers ───────────────────────────────────────────────────────────────
 
-function printHeader(): void {
-	const purple = chalk.bold.hex('#632CA6');
-	console.log();
-	console.log(purple('╔══════════════════════════════════════════╗'));
-	console.log(
-		purple('║') +
-			chalk.bold.white('   🚩  Feature Flag Migration Tool  🚩    ') +
-			purple('║'),
-	);
-	console.log(
-		purple('║') +
-			chalk.hex('#632CA6')('            Migrate to Datadog            ') +
-			purple('║'),
-	);
-	console.log(purple('╚══════════════════════════════════════════╝'));
-	console.log();
+async function printHeader(): Promise<void> {
+	await renderStatic(<Header subtitle={HEADER_SUBTITLES.migrate} />);
 }
 
 function clearScreen(): void {
@@ -81,8 +72,6 @@ async function selectProvider(): Promise<ProviderValue> {
 async function promptForDatadogSite(
 	datadogSiteArg: string | undefined,
 ): Promise<string> {
-	const { confirm, input } = await import('@inquirer/prompts');
-
 	if (datadogSiteArg !== undefined) {
 		console.log(
 			chalk.gray(`  Using Datadog site: ${chalk.cyan(datadogSiteArg)}\n`),
@@ -134,15 +123,7 @@ async function checkRequiredPermissions(
 	}
 	const missing = ALL_REQUIRED_PERMISSIONS.filter((p) => !actual.includes(p));
 	if (missing.length > 0) {
-		console.error(chalk.red('\nMissing required Datadog permissions:'));
-		for (const p of missing) {
-			console.error(chalk.red(`  • ${p}`));
-		}
-		console.error(
-			chalk.red(
-				'\nEnsure your Datadog application key has the required permissions and try again.\n',
-			),
-		);
+		await renderStatic(<PermissionsError missing={missing} />);
 		process.exit(1);
 	}
 }
@@ -207,7 +188,7 @@ async function main(): Promise<void> {
 	}
 
 	clearScreen();
-	printHeader();
+	await printHeader();
 	if (args.dryRun) {
 		console.log(
 			chalk.bold.yellow('  Dry run mode — no flags will be created\n'),
@@ -244,8 +225,8 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
-	// Gracefully handle Ctrl+C
-	if (err instanceof Error && err.name === 'ExitPromptError') {
+	// Gracefully handle Ctrl+C / escape
+	if (err instanceof PromptCancelledError) {
 		console.log(chalk.gray('\nBye!'));
 		process.exit(0);
 	}

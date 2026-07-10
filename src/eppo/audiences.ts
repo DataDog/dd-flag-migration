@@ -1,18 +1,18 @@
 import axios from 'axios';
 import chalk from 'chalk';
+import { spinner as createSpinner } from '../components/Spinner.js';
 import {
 	createSavedFilter,
 	listSavedFilters,
 	updateSavedFilter,
 } from '../datadog.js';
-import { createSpinner } from '../spinner.js';
 import type {
 	DatadogTargetingRule,
 	EppoSavedFilterMigrationMetadata,
 	SavedFilterSummary,
 } from '../types.js';
 import { fetchEppoAudiences } from './api.js';
-import { fingerprintConditions, mapOperator } from './migration.js';
+import { fingerprintConditions, mapOperator } from './helpers/migration.js';
 import type { EppoAudience } from './types.js';
 
 // ─── Rule Building ────────────────────────────────────────────────────────────

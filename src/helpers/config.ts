@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { Config } from './types.js';
+import type { Config } from '../types.js';
 
 export const CONFIG_DIR = path.join(os.homedir(), '.dd-flag-migration');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');

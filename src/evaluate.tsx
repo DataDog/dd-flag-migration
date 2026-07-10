@@ -2,12 +2,22 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { getInstance as getEppoInstance } from '@eppo/node-server-sdk';
-import { confirm, input, select } from '@inquirer/prompts';
 import axios from 'axios';
 import chalk from 'chalk';
-import { CONFIG_DIR, getDatadogSite, saveDatadogSite } from './config.js';
+import { confirm } from './components/Confirm.js';
+import { EvaluationSummary } from './components/EvaluationSummary.js';
+import { HEADER_SUBTITLES, Header } from './components/Header.js';
+import { input } from './components/Input.js';
+import { PromptCancelledError, renderStatic } from './components/mount.js';
+import {
+	type FlagTestResult,
+	type MigrationStatus,
+	ResultsTable,
+	type TableRow,
+} from './components/ResultsTable.js';
+import { select } from './components/Select.js';
+import { spinner as createSpinner } from './components/Spinner.js';
 import { ddClient } from './datadog.js';
-import { requireEnvVars } from './env.js';
 import {
 	evaluateEppoFlag,
 	evaluateEppoFlagAdvanced,
@@ -19,14 +29,18 @@ import {
 	validateHeader,
 } from './evaluate/csv.js';
 import { fetchDDFlagData } from './evaluate/dd-flags.js';
-import type { ClassifiedRow, RowColor } from './evaluate/result-classifier.js';
-import { classifyRow } from './evaluate/result-classifier.js';
 import {
 	CsvSource,
 	type FlagWithTestCases,
 	SyntheticSource,
 	type TestCaseSource,
 } from './evaluate/test-case-sources.js';
+import {
+	CONFIG_DIR,
+	getDatadogSite,
+	saveDatadogSite,
+} from './helpers/config.js';
+import { requireEnvVars } from './helpers/env.js';
 import { fetchEnvironmentSdkKey, findSdkKeyOwner } from './launchdarkly/api.js';
 import {
 	evaluateLDFlag,
@@ -34,9 +48,8 @@ import {
 	initializeLaunchDarkly,
 	type LDClient,
 } from './launchdarkly/evaluate.js';
-import { mapFlagType } from './launchdarkly/migration.js';
+import { mapFlagType } from './launchdarkly/helpers/migration.js';
 import type { LDFlag, LDMigrationFile } from './launchdarkly/types.js';
-import { createSpinner } from './spinner.js';
 import type {
 	DDFlagValue,
 	DDStatus,
@@ -45,29 +58,14 @@ import type {
 	MigrationFile,
 	MigrationMetadata,
 	SubjectAttributes,
-	TestCase,
 } from './types.js';
 
 type EppoClient = ReturnType<typeof getEppoInstance>;
 
 // ─── UI Helpers ───────────────────────────────────────────────────────────────
 
-function printHeader(): void {
-	const purple = chalk.bold.hex('#632CA6');
-	console.log();
-	console.log(purple('╔══════════════════════════════════════════╗'));
-	console.log(
-		purple('║') +
-			chalk.bold.white('   🚩  Feature Flag Migration Tool  🚩    ') +
-			purple('║'),
-	);
-	console.log(
-		purple('║') +
-			chalk.hex('#632CA6')('           Evaluate Migration             ') +
-			purple('║'),
-	);
-	console.log(purple('╚══════════════════════════════════════════╝'));
-	console.log();
+async function printHeader(): Promise<void> {
+	await renderStatic(<Header subtitle={HEADER_SUBTITLES.evaluate} />);
 }
 
 // ─── LD SDK Key Validation ────────────────────────────────────────────────────
@@ -522,260 +520,6 @@ async function fetchDDFlags(
 	}
 }
 
-// ─── Table Rendering ──────────────────────────────────────────────────────────
-
-type MigrationStatus =
-	| 'created'
-	| 'partial'
-	| 'failed'
-	| 'skipped'
-	| 'unknown'
-	| 'not-in-migration-file';
-
-interface FlagTestResult {
-	testCase: TestCase;
-	providerResult: string;
-	ddResult: string;
-	ddStatus: DDStatus;
-	match: boolean;
-	error?: string;
-	providerStatus: 'found' | 'not-found' | 'error' | 'not-evaluated';
-}
-
-interface TableRow {
-	key: string;
-	testResults: FlagTestResult[];
-	migrationStatus: MigrationStatus;
-	ddEnabled: boolean | null;
-	partialDetails: string[];
-	inMigrationFile: boolean;
-	ddMigrationMetadata?: MigrationMetadata;
-}
-
-function renderTable(rows: TableRow[], providerLabel: string): void {
-	const COL_FLAG = 32;
-	const COL_TEST = 26;
-	const COL_EVAL = 14;
-	const COL_MIG = 12;
-	const COL_ENA = 10;
-
-	const pad = (s: string, len: number) =>
-		s.length >= len ? `${s.slice(0, len - 1)}…` : s.padEnd(len);
-
-	const sep = chalk.gray(' │ ');
-
-	const divider = chalk.gray(
-		'─'.repeat(COL_FLAG) +
-			'─┼─' +
-			'─'.repeat(COL_TEST) +
-			'─┼─' +
-			'─'.repeat(COL_EVAL) +
-			'─┼─' +
-			'─'.repeat(COL_EVAL) +
-			'─┼─' +
-			'─'.repeat(COL_MIG) +
-			'─┼─' +
-			'─'.repeat(COL_ENA),
-	);
-
-	const header =
-		chalk.bold(pad('Flag Key', COL_FLAG)) +
-		sep +
-		chalk.bold(pad('Test Case', COL_TEST)) +
-		sep +
-		chalk.bold(pad(providerLabel, COL_EVAL)) +
-		sep +
-		chalk.bold(pad('Datadog', COL_EVAL)) +
-		sep +
-		chalk.bold(pad('Migration', COL_MIG)) +
-		sep +
-		chalk.bold('Enabled');
-
-	console.log();
-	console.log(header);
-	console.log(divider);
-
-	const migrationCol = (status: MigrationStatus): string => {
-		switch (status) {
-			case 'created':
-				return chalk.green('✓ Created'.padEnd(COL_MIG));
-			case 'partial':
-				return chalk.yellow('⚠ Partial'.padEnd(COL_MIG));
-			case 'failed':
-				return chalk.red('✗ Failed'.padEnd(COL_MIG));
-			case 'skipped':
-				return chalk.gray('— Skipped'.padEnd(COL_MIG));
-			default:
-				return chalk.gray('—'.padEnd(COL_MIG));
-		}
-	};
-
-	const enabledCol = (enabled: boolean | null): string => {
-		if (enabled === null) return chalk.gray('—'.padEnd(COL_ENA));
-		return enabled
-			? chalk.green('✓ Enabled'.padEnd(COL_ENA))
-			: chalk.gray('✗ Disabled'.padEnd(COL_ENA));
-	};
-
-	const isLD = providerLabel.toLowerCase() !== 'eppo';
-
-	for (const row of rows) {
-		const classifiedResults: ClassifiedRow[] = [];
-		for (let i = 0; i < row.testResults.length; i++) {
-			const tr = row.testResults[i];
-			const isFirst = i === 0;
-
-			const flagKeyStr = isFirst
-				? pad(row.key, COL_FLAG)
-				: ' '.repeat(COL_FLAG);
-
-			const testLabelStr = pad(tr.testCase.label, COL_TEST);
-
-			const classified = classifyRow({
-				flagKey: row.key,
-				inMigrationFile: row.inMigrationFile,
-				ddStatus: tr.ddStatus,
-				providerStatus: tr.providerStatus,
-				providerError: tr.error,
-				match: tr.match,
-				ddMigrationMetadata: row.ddMigrationMetadata,
-				provider: isLD ? 'launchdarkly' : 'eppo',
-			});
-			classifiedResults.push(classified);
-
-			const chalkForColor = (s: string): string => {
-				switch (classified.color as RowColor) {
-					case 'match':
-					case 'notMigrated':
-						return chalk.green(s);
-					case 'diff':
-					case 'drift':
-						return chalk.yellow(s);
-					case 'error':
-						return chalk.red(s);
-					default:
-						return chalk.dim(s);
-				}
-			};
-
-			const providerDisplay = chalkForColor(
-				pad(tr.providerResult || '—', COL_EVAL),
-			);
-			const ddDisplay = chalkForColor(pad(tr.ddResult || '—', COL_EVAL));
-
-			const migDisplay = isFirst
-				? row.inMigrationFile
-					? migrationCol(row.migrationStatus)
-					: chalk.dim('—'.padEnd(COL_MIG))
-				: ' '.repeat(COL_MIG);
-			const enaDisplay = isFirst
-				? enabledCol(row.ddEnabled)
-				: ' '.repeat(COL_ENA);
-
-			console.log(
-				flagKeyStr +
-					sep +
-					testLabelStr +
-					sep +
-					providerDisplay +
-					sep +
-					ddDisplay +
-					sep +
-					migDisplay +
-					sep +
-					enaDisplay,
-			);
-		}
-
-		if (row.partialDetails.length > 0) {
-			console.log(
-				' '.repeat(COL_FLAG + 3) +
-					chalk.yellow(`⚠ ${row.partialDetails.join(' | ')}`),
-			);
-		}
-
-		// Show classifier notes — collect from all test results and dedupe
-		const notes = [
-			...new Set(classifiedResults.map((c) => c.notes).filter(Boolean)),
-		];
-		if (notes.length > 0) {
-			console.log(
-				' '.repeat(COL_FLAG + 3) + chalk.dim(`ℹ ${notes.join(' | ')}`),
-			);
-		}
-
-		console.log(divider);
-	}
-
-	console.log();
-	console.log(chalk.gray('  Migration:'));
-	console.log(
-		'  • ' +
-			chalk.green('✓ Created') +
-			chalk.gray(' — flag was successfully created during migration'),
-	);
-	console.log(
-		'  • ' +
-			chalk.yellow('⚠ Partial') +
-			chalk.gray(
-				' — flag was created but could not be enabled in some environments',
-			),
-	);
-	console.log(
-		'  • ' +
-			chalk.red('✗ Failed') +
-			chalk.gray(' — flag creation itself failed'),
-	);
-	console.log(
-		'  • ' +
-			chalk.gray('— Skipped') +
-			chalk.gray(' — flag type is not supported (BANDIT, LAYER)'),
-	);
-	console.log();
-}
-
-function printSummary(rows: TableRow[]): void {
-	const allResults = rows.flatMap((r) => r.testResults);
-	const matched = allResults.filter((r) => r.match).length;
-	const differed = allResults.filter(
-		(r) => !r.match && !r.error && r.ddStatus === 'assigned',
-	).length;
-	const notAssigned = allResults.filter(
-		(r) => r.ddStatus === 'not-assigned',
-	).length;
-	const notInDD = allResults.filter((r) => r.ddStatus === 'not-in-dd').length;
-	const errored = allResults.filter((r) => Boolean(r.error)).length;
-
-	const flagsWithDiff = rows.filter((r) =>
-		r.testResults.some(
-			(t) => !t.match && !t.error && t.ddStatus === 'assigned',
-		),
-	).length;
-
-	console.log(chalk.bold('Summary:'));
-	let summary = `  ${chalk.green(String(matched))} match  ${chalk.yellow(String(differed))} differ  ${chalk.red(String(errored))} error`;
-	if (notAssigned > 0)
-		summary += `  ${chalk.dim(String(notAssigned))} not assigned`;
-	if (notInDD > 0) summary += `  ${chalk.red(String(notInDD))} not in Datadog`;
-	console.log(summary);
-	console.log(
-		chalk.gray(
-			`  Across ${rows.length} flag(s), ${allResults.length} evaluation(s) total`,
-		),
-	);
-	console.log();
-
-	if (flagsWithDiff > 0) {
-		console.log(
-			chalk.yellow(
-				`  ${flagsWithDiff} flag(s) returned different values in at least one test case.\n` +
-					'  This may be expected if flag configurations differ between providers.',
-			),
-		);
-		console.log();
-	}
-}
-
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -800,7 +544,7 @@ async function main(): Promise<void> {
 	const ddAppKey = ddEnvVars.DD_APP_KEY;
 	const ddClientToken = ddEnvVars.DD_CLIENT_TOKEN;
 
-	printHeader();
+	await printHeader();
 
 	// 1. Select migration file
 	const migration = await selectMigrationFile(useLatestMigration);
@@ -1280,8 +1024,13 @@ async function main(): Promise<void> {
 	const showTable = forceShowTable || !isAdvanced || totalRows < 100;
 
 	if (showTable) {
-		renderTable(rows, providerLabel);
-		printSummary(rows);
+		await renderStatic(
+			<ResultsTable rows={rows} providerLabel={providerLabel} />,
+			{ stream: process.stdout },
+		);
+		await renderStatic(<EvaluationSummary rows={rows} />, {
+			stream: process.stdout,
+		});
 	}
 
 	// SDK keys are scoped to a specific provider environment, so a mismatch can
@@ -1340,7 +1089,11 @@ async function main(): Promise<void> {
 			: undefined;
 
 	if (isAdvanced && totalRows >= 100) {
-		if (!showTable) printSummary(rows);
+		if (!showTable) {
+			await renderStatic(<EvaluationSummary rows={rows} />, {
+				stream: process.stdout,
+			});
+		}
 		await exportEvaluationToXlsx(
 			exportRows,
 			providerLabel,
@@ -1364,7 +1117,7 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
-	if (err instanceof Error && err.name === 'ExitPromptError') {
+	if (err instanceof PromptCancelledError) {
 		console.log(chalk.gray('\nBye!'));
 		process.exit(0);
 	}
