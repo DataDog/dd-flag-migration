@@ -620,6 +620,18 @@ async function confirmMigration(
 									},
 								},
 							});
+							if (hasSemverConditions(allocations)) {
+								dryRunRequests.push({
+									method: 'PUT',
+									path: `/api/v2/feature-flags/${existingFlagId}`,
+									body: {
+										data: {
+											type: 'feature-flags',
+											attributes: { distribution_channel: 'CLIENT' },
+										},
+									},
+								});
+							}
 						} else {
 							const result = await syncVariantsCreatesAndUpdates(
 								ddApiKey,
@@ -637,6 +649,16 @@ async function confirmMigration(
 								syncTags,
 								site,
 							);
+							if (hasSemverConditions(allocations)) {
+								await updateFlagDistributionChannel(
+									ddApiKey,
+									ddAppKey,
+									existingFlagId,
+									'CLIENT',
+									site,
+								);
+								semverForcedClientKeys.push(flag.key);
+							}
 						}
 						const variantLabel = formatVariantLabel(variantCounts);
 						doSync(

@@ -1251,6 +1251,18 @@ async function executeMigration(
 									},
 								},
 							});
+							if (hasSemverConditions(allocations)) {
+								dryRunRequests.push({
+									method: 'PUT',
+									path: `/api/v2/feature-flags/${existingFlagId}`,
+									body: {
+										data: {
+											type: 'feature-flags',
+											attributes: { distribution_channel: 'CLIENT' },
+										},
+									},
+								});
+							}
 							if (editorTeamIds.length > 0) {
 								const existingBindings = await fetchRestrictionPolicy(
 									ddApiKey,
@@ -1283,6 +1295,16 @@ async function executeMigration(
 								syncTags,
 								ddSite,
 							);
+							if (hasSemverConditions(allocations)) {
+								await updateFlagDistributionChannel(
+									ddApiKey,
+									ddAppKey,
+									existingFlagId,
+									'CLIENT',
+									ddSite,
+								);
+								semverForcedClientKeys.push(flag.key);
+							}
 							if (editorTeamIds.length > 0) {
 								await applyRestrictionPolicyForFlag(
 									ddApiKey,
