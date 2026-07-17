@@ -184,7 +184,10 @@ export async function exportLDMigrationToXlsx(
 			errorOrWarn,
 			actionRequired,
 		]);
-		colorRow(dataRow, LD_MIGRATION_STATUS_ARGB[status]);
+		const rowColor = errorOrWarn.startsWith('Warning:')
+			? ARGB.skipped
+			: LD_MIGRATION_STATUS_ARGB[status];
+		colorRow(dataRow, rowColor);
 	}
 
 	const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
