@@ -564,6 +564,11 @@ const SEMVER_OPS = new Set([
 	'SEMVER_GTE',
 ]);
 
+/** Returns true if any variation value is a top-level JSON array (wrapped as { value: [...] } on migration). */
+export function hasJsonArrayVariants(flag: LDFlag): boolean {
+	return flag.variations.some((v) => Array.isArray(v.value));
+}
+
 /** Returns true if any allocation contains a SEMVER targeting rule condition. */
 export function hasSemverConditions(
 	allocations: DatadogAllocationForFlagCreation[],

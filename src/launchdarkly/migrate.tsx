@@ -69,6 +69,7 @@ import {
 	findProjectEditorRoleKeys,
 	findTeamsWithEditAccess,
 	getEnvsToEnable,
+	hasJsonArrayVariants,
 	hasSemverConditions,
 	mapFlagType,
 	shouldSkipFlag,
@@ -971,6 +972,7 @@ async function executeMigration(
 	const skippedFlags: Array<{ key: string; reason: string }> = [];
 	const syncedFlagKeys: string[] = [];
 	const semverForcedClientKeys: string[] = [];
+	const jsonArrayWrappedKeys: string[] = [];
 	const dryRunRequests: Array<{ method: string; path: string; body: unknown }> =
 		[];
 	const flagKeyMapping =
@@ -1138,6 +1140,9 @@ async function executeMigration(
 						'No variants',
 					);
 					continue;
+				}
+				if (hasJsonArrayVariants(flag)) {
+					jsonArrayWrappedKeys.push(flag.key);
 				}
 
 				const allocationsResult = buildAllocations(
@@ -1736,6 +1741,8 @@ async function executeMigration(
 			syncedFlagKeys: syncedFlagKeys.length > 0 ? syncedFlagKeys : undefined,
 			semverForcedClientKeys:
 				semverForcedClientKeys.length > 0 ? semverForcedClientKeys : undefined,
+			jsonArrayWrappedKeys:
+				jsonArrayWrappedKeys.length > 0 ? jsonArrayWrappedKeys : undefined,
 			flagKeyMapping,
 			segmentMigration: segmentMigrationStats,
 			flags: detailedFlags,

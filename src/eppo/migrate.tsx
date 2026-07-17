@@ -49,6 +49,7 @@ import {
 	buildAllocations,
 	buildDefaultVariantKeyPerEnv,
 	getEnvsToEnable,
+	hasJsonArrayVariants,
 	hasSemverConditions,
 	mapVariationType,
 	normalizeJsonVariantValue,
@@ -416,6 +417,7 @@ async function confirmMigration(
 	const enableFailures: Array<{ key: string; env: string; error: string }> = [];
 	const skippedFlags: Array<{ key: string; reason: string }> = [];
 	const semverForcedClientKeys: string[] = [];
+	const jsonArrayWrappedKeys: string[] = [];
 	let runner: MigrationRunnerHandle | undefined;
 
 	const environmentMapping: MigrationEnvironmentMapping[] = [];
@@ -553,6 +555,9 @@ async function confirmMigration(
 						'No variants',
 					);
 					continue;
+				}
+				if (isJsonFlag && hasJsonArrayVariants(flag)) {
+					jsonArrayWrappedKeys.push(flag.key);
 				}
 
 				const defaultVariantKeyPerEnv = buildDefaultVariantKeyPerEnv(
@@ -1034,6 +1039,8 @@ async function confirmMigration(
 			skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
 			semverForcedClientKeys:
 				semverForcedClientKeys.length > 0 ? semverForcedClientKeys : undefined,
+			jsonArrayWrappedKeys:
+				jsonArrayWrappedKeys.length > 0 ? jsonArrayWrappedKeys : undefined,
 			flags,
 			environmentMapping,
 		};

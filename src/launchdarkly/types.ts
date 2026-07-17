@@ -186,6 +186,7 @@ export interface LDMigrationFile {
 	skippedFlags?: Array<{ key: string; reason: string }>;
 	syncedFlagKeys?: string[];
 	semverForcedClientKeys?: string[];
+	jsonArrayWrappedKeys?: string[];
 	flagKeyMapping?: Array<{ sourceKey: string; datadogKey: string }>;
 	segmentMigration?: {
 		discovered: number;

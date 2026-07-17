@@ -110,6 +110,17 @@ export function fingerprintConditions(
 	return JSON.stringify(normalized);
 }
 
+/** Returns true if any variation value is a top-level JSON array (wrapped as { value: [...] } on migration). */
+export function hasJsonArrayVariants(flag: EppoFlag): boolean {
+	return (flag.variations ?? []).some((v) => {
+		try {
+			return Array.isArray(JSON.parse(v.variant_key));
+		} catch {
+			return false;
+		}
+	});
+}
+
 // Returns true if any allocation contains at least one SEMVER_* condition.
 // Datadog requires distribution_channel = 'CLIENT' when SEMVER operators are present.
 export function hasSemverConditions(

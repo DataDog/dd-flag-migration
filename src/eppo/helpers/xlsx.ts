@@ -24,11 +24,25 @@ interface MigrationSheetRow {
 
 const SEMVER_WARN =
 	'Warning: Distribution channel set to CLIENT (flag uses SEMVER targeting)';
+const JSON_ARRAY_WARN =
+	'Warning: One or more JSON variants had a top-level array and were wrapped as { "value": [...] }';
+
+function buildWarnings(
+	key: string,
+	semverKeys: Set<string>,
+	jsonArrayKeys: Set<string>,
+): string {
+	const warns: string[] = [];
+	if (semverKeys.has(key)) warns.push(SEMVER_WARN);
+	if (jsonArrayKeys.has(key)) warns.push(JSON_ARRAY_WARN);
+	return warns.join('\n');
+}
 
 function buildMigrationRows(migration: MigrationFile): MigrationSheetRow[] {
 	const failedKeys = new Set(migration.failures.map((f) => f.key));
 	const skippedKeys = new Set((migration.skippedFlags ?? []).map((f) => f.key));
 	const semverKeys = new Set(migration.semverForcedClientKeys ?? []);
+	const jsonArrayKeys = new Set(migration.jsonArrayWrappedKeys ?? []);
 	const errorByKey = new Map(migration.failures.map((f) => [f.key, f.error]));
 	const skipReasonByKey = new Map(
 		(migration.skippedFlags ?? []).map((f) => [f.key, f.reason]),
@@ -53,7 +67,7 @@ function buildMigrationRows(migration: MigrationFile): MigrationSheetRow[] {
 			rows.push({
 				flag,
 				status: 'Created',
-				errorOrWarn: semverKeys.has(flag.key) ? SEMVER_WARN : '',
+				errorOrWarn: buildWarnings(flag.key, semverKeys, jsonArrayKeys),
 			});
 		}
 	}
