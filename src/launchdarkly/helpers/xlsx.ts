@@ -16,9 +16,12 @@ type LDMigrationRowStatus = 'Created' | 'Synced' | 'Failed' | 'Skipped';
 interface LDMigrationSheetRow {
 	flag: LDFlag;
 	status: LDMigrationRowStatus;
-	error: string;
+	errorOrWarn: string;
 	datadogKey: string;
 }
+
+const SEMVER_WARN =
+	'Warning: Distribution channel set to CLIENT (flag uses SEMVER targeting)';
 
 function buildLDMigrationRows(
 	migration: LDMigrationFile,
@@ -26,6 +29,7 @@ function buildLDMigrationRows(
 	const failedKeys = new Set(migration.failures.map((f) => f.key));
 	const skippedKeys = new Set((migration.skippedFlags ?? []).map((f) => f.key));
 	const syncedKeys = new Set(migration.syncedFlagKeys ?? []);
+	const semverKeys = new Set(migration.semverForcedClientKeys ?? []);
 	const errorByKey = new Map(migration.failures.map((f) => [f.key, f.error]));
 	const skipReasonByKey = new Map(
 		(migration.skippedFlags ?? []).map((f) => [f.key, f.reason]),
@@ -42,20 +46,30 @@ function buildLDMigrationRows(
 			rows.push({
 				flag,
 				status: 'Failed',
-				error: errorByKey.get(flag.key) ?? '',
+				errorOrWarn: errorByKey.get(flag.key) ?? '',
 				datadogKey,
 			});
 		} else if (skippedKeys.has(flag.key)) {
 			rows.push({
 				flag,
 				status: 'Skipped',
-				error: skipReasonByKey.get(flag.key) ?? '',
+				errorOrWarn: skipReasonByKey.get(flag.key) ?? '',
 				datadogKey,
 			});
 		} else if (syncedKeys.has(flag.key)) {
-			rows.push({ flag, status: 'Synced', error: '', datadogKey });
+			rows.push({
+				flag,
+				status: 'Synced',
+				errorOrWarn: semverKeys.has(flag.key) ? SEMVER_WARN : '',
+				datadogKey,
+			});
 		} else {
-			rows.push({ flag, status: 'Created', error: '', datadogKey });
+			rows.push({
+				flag,
+				status: 'Created',
+				errorOrWarn: semverKeys.has(flag.key) ? SEMVER_WARN : '',
+				datadogKey,
+			});
 		}
 	}
 
@@ -117,7 +131,7 @@ export async function exportLDMigrationToXlsx(
 		'Tags',
 		'Temporary',
 		'Migration Status',
-		'Error',
+		'Error / Warning',
 		'Action Required',
 	];
 
@@ -130,7 +144,7 @@ export async function exportLDMigrationToXlsx(
 		{ width: 20 }, // Tags
 		{ width: 10 }, // Temporary
 		{ width: 18 }, // Migration Status
-		{ width: 40 }, // Error
+		{ width: 60 }, // Error / Warning
 		{ width: 50 }, // Action Required
 	];
 
@@ -152,7 +166,7 @@ export async function exportLDMigrationToXlsx(
 
 	const rows = buildLDMigrationRows(migration);
 
-	for (const { flag, status, error, datadogKey } of rows) {
+	for (const { flag, status, errorOrWarn, datadogKey } of rows) {
 		const actionRequired =
 			status === 'Created'
 				? `Update your code to reference Datadog flag key: ${datadogKey}`
@@ -167,7 +181,7 @@ export async function exportLDMigrationToXlsx(
 			flag.tags.join(', '),
 			flag.temporary ? 'Yes' : 'No',
 			status,
-			error,
+			errorOrWarn,
 			actionRequired,
 		]);
 		colorRow(dataRow, LD_MIGRATION_STATUS_ARGB[status]);
