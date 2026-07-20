@@ -10,7 +10,7 @@ const MAX_SETTLED = 500;
 export type SettleStatus = 'created' | 'synced' | 'skipped' | 'failed';
 
 export type ProgressBarStats = {
-	created: number;
+	saved: number;
 	skipped: number;
 	failed: number;
 	retrying?: number;
@@ -48,9 +48,9 @@ type ViewState = {
 
 function renderBarLine(state: ViewState): string {
 	const { value, total, stats, eta, columns } = state;
-	const { created, skipped, failed, retrying } = stats;
+	const { saved, skipped, failed, retrying } = stats;
 	const pct = total === 0 ? 0 : Math.round((value / total) * 100);
-	const suffixPlain = ` ${value}/${total} · ${pct}% · ✓ ${created}  ⚠ ${skipped}  ✗ ${failed}  ⏳ ${retrying}  ·  ETA ${eta}`;
+	const suffixPlain = ` ${value}/${total} · ${pct}% · ✓ ${saved}  ⚠ ${skipped}  ✗ ${failed}  ⏳ ${retrying}  ·  ETA ${eta}`;
 	const barWidth = Math.max(5, Math.min(30, columns - suffixPlain.length - 4));
 	const filled =
 		total === 0
@@ -65,7 +65,7 @@ function renderBarLine(state: ViewState): string {
 		chalk.yellow(`${pct}%`) +
 		chalk.gray(' · ') +
 		chalk.green('✓') +
-		` ${created}  ` +
+		` ${saved}  ` +
 		chalk.yellow('⚠') +
 		` ${skipped}  ` +
 		chalk.red('✗') +
@@ -130,7 +130,7 @@ export function migrationRunner(opts: {
 		total: opts.total,
 		subheader: opts.subheader,
 		value: 0,
-		stats: { created: 0, skipped: 0, failed: 0, retrying: 0 },
+		stats: { saved: 0, skipped: 0, failed: 0, retrying: 0 },
 		currentFlag: null,
 		currentText: '',
 		settled: [],

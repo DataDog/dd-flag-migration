@@ -472,10 +472,10 @@ async function confirmMigration(
 	// Local non-null alias so downstream code doesn't need `!` on every call.
 	const activeRunner: MigrationRunnerHandle = runner;
 	const settleStats = (): {
-		created: number;
+		saved: number;
 		skipped: number;
 		failed: number;
-	} => ({ created, skipped, failed: errored });
+	} => ({ saved: created + synced, skipped, failed: errored });
 	const doSkip = (key: string, message: string, reason: string): void => {
 		skippedFlags.push({ key, reason });
 		skipped++;
@@ -669,7 +669,7 @@ async function confirmMigration(
 						doSync(
 							dryRun
 								? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (${syncTags.length} tag(s)${variantLabel})`
-								: `Synced ${chalk.cyan(flag.key)} (${syncTags.length} tag(s)${variantLabel})`,
+								: `${chalk.green('✓')} Synced ${chalk.cyan(flag.key)} (${syncTags.length} tag(s)${variantLabel})`,
 						);
 						continue;
 					}
@@ -863,7 +863,7 @@ async function confirmMigration(
 							const enableLabel =
 								enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
 							doSync(
-								`Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${variantLabel}${tagLabel}${enableLabel})`,
+								`${chalk.green('✓')} Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${variantLabel}${tagLabel}${enableLabel})`,
 							);
 						} catch (err) {
 							const error = formatAxiosError(err);
@@ -976,7 +976,7 @@ async function confirmMigration(
 							const enableLabel =
 								enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
 							doCreate(
-								`Created ${chalk.cyan(flag.key)} (${allFilterLabel}${allRuleLabel}${enableLabel})`,
+								`${chalk.green('✓')} Created ${chalk.cyan(flag.key)} (${allFilterLabel}${allRuleLabel}${enableLabel})`,
 							);
 						} catch (err) {
 							const error = formatAxiosError(err);
