@@ -317,6 +317,28 @@ export async function updateFlagTags(
 	});
 }
 
+export async function updateFlagDistributionChannel(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	distributionChannel: 'CLIENT' | 'SERVER' | 'BOTH',
+	site = 'datadoghq.com',
+): Promise<void> {
+	const baseUrl = `https://api.${site}`;
+	const body = {
+		data: {
+			type: 'feature-flags',
+			attributes: { distribution_channel: distributionChannel },
+		},
+	};
+	await ddClient.put(`${baseUrl}/api/v2/feature-flags/${flagId}`, body, {
+		headers: {
+			...ddHeaders(apiKey, appKey),
+			'Content-Type': 'application/json',
+		},
+	});
+}
+
 export async function fetchDatadogTeams(
 	apiKey: string,
 	appKey: string,

@@ -26,6 +26,7 @@ import {
 	fetchFlagDetail,
 	syncAllocationsForEnvironment,
 	syncVariantsCreatesAndUpdates,
+	updateFlagDistributionChannel,
 	updateFlagTags,
 } from '../datadog/api.js';
 import {
@@ -48,6 +49,7 @@ import {
 	buildAllocations,
 	buildDefaultVariantKeyPerEnv,
 	getEnvsToEnable,
+	hasJsonArrayVariants,
 	hasSemverConditions,
 	mapVariationType,
 	normalizeJsonVariantValue,
@@ -414,6 +416,8 @@ async function confirmMigration(
 	const failures: Array<{ key: string; error: string }> = [];
 	const enableFailures: Array<{ key: string; env: string; error: string }> = [];
 	const skippedFlags: Array<{ key: string; reason: string }> = [];
+	const semverForcedClientKeys: string[] = [];
+	const jsonArrayWrappedKeys: string[] = [];
 	let runner: MigrationRunnerHandle | undefined;
 
 	const environmentMapping: MigrationEnvironmentMapping[] = [];
@@ -552,6 +556,9 @@ async function confirmMigration(
 					);
 					continue;
 				}
+				if (isJsonFlag && hasJsonArrayVariants(flag)) {
+					jsonArrayWrappedKeys.push(flag.key);
+				}
 
 				const defaultVariantKeyPerEnv = buildDefaultVariantKeyPerEnv(
 					flag,
@@ -618,6 +625,18 @@ async function confirmMigration(
 									},
 								},
 							});
+							if (hasSemverConditions(allocations)) {
+								dryRunRequests.push({
+									method: 'PUT',
+									path: `/api/v2/feature-flags/${existingFlagId}`,
+									body: {
+										data: {
+											type: 'feature-flags',
+											attributes: { distribution_channel: 'CLIENT' },
+										},
+									},
+								});
+							}
 						} else {
 							const result = await syncVariantsCreatesAndUpdates(
 								ddApiKey,
@@ -635,6 +654,16 @@ async function confirmMigration(
 								syncTags,
 								site,
 							);
+							if (hasSemverConditions(allocations)) {
+								await updateFlagDistributionChannel(
+									ddApiKey,
+									ddAppKey,
+									existingFlagId,
+									'CLIENT',
+									site,
+								);
+								semverForcedClientKeys.push(flag.key);
+							}
 						}
 						const variantLabel = formatVariantLabel(variantCounts);
 						doSync(
@@ -674,6 +703,18 @@ async function confirmMigration(
 								.length,
 							deleted: deleteRequests.length,
 						};
+						if (hasSemverConditions(allocations)) {
+							dryRunRequests.push({
+								method: 'PUT',
+								path: `/api/v2/feature-flags/${existingFlagId}`,
+								body: {
+									data: {
+										type: 'feature-flags',
+										attributes: { distribution_channel: 'CLIENT' },
+									},
+								},
+							});
+						}
 						let syncFilterCount = 0;
 						let syncRuleCount = 0;
 						for (const ddEnv of envsToEnable) {
@@ -741,6 +782,16 @@ async function confirmMigration(
 								site,
 							);
 							const variantCounts = variantSyncResult.counts;
+							if (hasSemverConditions(allocations)) {
+								await updateFlagDistributionChannel(
+									ddApiKey,
+									ddAppKey,
+									existingFlagId,
+									'CLIENT',
+									site,
+								);
+								semverForcedClientKeys.push(flag.key);
+							}
 							// Sync targeting for each target environment
 							let syncedAllocCount = 0;
 							let syncedRuleCount = 0;
@@ -884,6 +935,9 @@ async function confirmMigration(
 								request,
 								site,
 							);
+							if (hasSemverConditions(allocations)) {
+								semverForcedClientKeys.push(flag.key);
+							}
 
 							// Set per-environment default_variant_key and enable each active environment
 							let enabledCount = 0;
@@ -983,6 +1037,10 @@ async function confirmMigration(
 			failures,
 			enableFailures,
 			skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
+			semverForcedClientKeys:
+				semverForcedClientKeys.length > 0 ? semverForcedClientKeys : undefined,
+			jsonArrayWrappedKeys:
+				jsonArrayWrappedKeys.length > 0 ? jsonArrayWrappedKeys : undefined,
 			flags,
 			environmentMapping,
 		};

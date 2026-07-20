@@ -19,12 +19,30 @@ type MigrationRowStatus = 'Created' | 'Failed' | 'Skipped';
 interface MigrationSheetRow {
 	flag: EppoFlag;
 	status: MigrationRowStatus;
-	error: string;
+	errorOrWarn: string;
+}
+
+const SEMVER_WARN =
+	'Warning: Distribution channel set to CLIENT (flag uses SEMVER targeting)';
+const JSON_ARRAY_WARN =
+	'Warning: One or more JSON variants had a top-level array and were wrapped as { "value": [...] }';
+
+function buildWarnings(
+	key: string,
+	semverKeys: Set<string>,
+	jsonArrayKeys: Set<string>,
+): string {
+	const warns: string[] = [];
+	if (semverKeys.has(key)) warns.push(SEMVER_WARN);
+	if (jsonArrayKeys.has(key)) warns.push(JSON_ARRAY_WARN);
+	return warns.join('\n');
 }
 
 function buildMigrationRows(migration: MigrationFile): MigrationSheetRow[] {
 	const failedKeys = new Set(migration.failures.map((f) => f.key));
 	const skippedKeys = new Set((migration.skippedFlags ?? []).map((f) => f.key));
+	const semverKeys = new Set(migration.semverForcedClientKeys ?? []);
+	const jsonArrayKeys = new Set(migration.jsonArrayWrappedKeys ?? []);
 	const errorByKey = new Map(migration.failures.map((f) => [f.key, f.error]));
 	const skipReasonByKey = new Map(
 		(migration.skippedFlags ?? []).map((f) => [f.key, f.reason]),
@@ -37,16 +55,20 @@ function buildMigrationRows(migration: MigrationFile): MigrationSheetRow[] {
 			rows.push({
 				flag,
 				status: 'Failed',
-				error: errorByKey.get(flag.key) ?? '',
+				errorOrWarn: errorByKey.get(flag.key) ?? '',
 			});
 		} else if (skippedKeys.has(flag.key)) {
 			rows.push({
 				flag,
 				status: 'Skipped',
-				error: skipReasonByKey.get(flag.key) ?? '',
+				errorOrWarn: skipReasonByKey.get(flag.key) ?? '',
 			});
 		} else {
-			rows.push({ flag, status: 'Created', error: '' });
+			rows.push({
+				flag,
+				status: 'Created',
+				errorOrWarn: buildWarnings(flag.key, semverKeys, jsonArrayKeys),
+			});
 		}
 	}
 
@@ -77,7 +99,7 @@ export async function exportMigrationToXlsx(
 		'Team',
 		'Tags',
 		'Migration Status',
-		'Error',
+		'Error / Warning',
 		'Action Required',
 	];
 
@@ -89,7 +111,7 @@ export async function exportMigrationToXlsx(
 		{ width: 20 }, // Team
 		{ width: 20 }, // Tags
 		{ width: 18 }, // Migration Status
-		{ width: 40 }, // Error
+		{ width: 60 }, // Error / Warning
 		{ width: 50 }, // Action Required
 	];
 
@@ -110,7 +132,7 @@ export async function exportMigrationToXlsx(
 
 	const rows = buildMigrationRows(migration);
 
-	for (const { flag, status, error } of rows) {
+	for (const { flag, status, errorOrWarn } of rows) {
 		const variations =
 			flag.variations?.map((v) => v.variant_key).join(', ') ?? '';
 		const actionRequired =
@@ -126,10 +148,13 @@ export async function exportMigrationToXlsx(
 			flag.owner?.name ?? '',
 			flag.tag_names.join(', '),
 			status,
-			error,
+			errorOrWarn,
 			actionRequired,
 		]);
-		colorRow(dataRow, MIGRATION_STATUS_ARGB[status]);
+		const rowColor = errorOrWarn.startsWith('Warning:')
+			? ARGB.skipped
+			: MIGRATION_STATUS_ARGB[status];
+		colorRow(dataRow, rowColor);
 	}
 
 	const timestamp = new Date().toISOString().replace(/[:.]/g, '-');

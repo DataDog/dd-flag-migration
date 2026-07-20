@@ -114,6 +114,8 @@ export interface MigrationFile {
 		allocationKey: string;
 	}>;
 	skippedFlags?: Array<{ key: string; reason: string }>;
+	semverForcedClientKeys?: string[];
+	jsonArrayWrappedKeys?: string[];
 	flags: EppoFlag[];
 	environmentMapping: import('../datadog/types.js').MigrationEnvironmentMapping[];
 }

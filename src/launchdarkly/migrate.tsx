@@ -32,6 +32,7 @@ import {
 	fetchRestrictionPolicy,
 	syncAllocationsForEnvironment,
 	syncVariantsCreatesAndUpdates,
+	updateFlagDistributionChannel,
 	updateFlagTags,
 } from '../datadog/api.js';
 import { buildVariantSyncDryRunRequests } from '../datadog/helpers.js';
@@ -68,6 +69,7 @@ import {
 	findProjectEditorRoleKeys,
 	findTeamsWithEditAccess,
 	getEnvsToEnable,
+	hasJsonArrayVariants,
 	hasSemverConditions,
 	mapFlagType,
 	shouldSkipFlag,
@@ -969,6 +971,8 @@ async function executeMigration(
 	const restrictionPolicyFailures: Array<{ key: string; error: string }> = [];
 	const skippedFlags: Array<{ key: string; reason: string }> = [];
 	const syncedFlagKeys: string[] = [];
+	const semverForcedClientKeys: string[] = [];
+	const jsonArrayWrappedKeys: string[] = [];
 	const dryRunRequests: Array<{ method: string; path: string; body: unknown }> =
 		[];
 	const flagKeyMapping =
@@ -1137,6 +1141,9 @@ async function executeMigration(
 					);
 					continue;
 				}
+				if (hasJsonArrayVariants(flag)) {
+					jsonArrayWrappedKeys.push(flag.key);
+				}
 
 				const allocationsResult = buildAllocations(
 					flag,
@@ -1249,6 +1256,18 @@ async function executeMigration(
 									},
 								},
 							});
+							if (hasSemverConditions(allocations)) {
+								dryRunRequests.push({
+									method: 'PUT',
+									path: `/api/v2/feature-flags/${existingFlagId}`,
+									body: {
+										data: {
+											type: 'feature-flags',
+											attributes: { distribution_channel: 'CLIENT' },
+										},
+									},
+								});
+							}
 							if (editorTeamIds.length > 0) {
 								const existingBindings = await fetchRestrictionPolicy(
 									ddApiKey,
@@ -1281,6 +1300,16 @@ async function executeMigration(
 								syncTags,
 								ddSite,
 							);
+							if (hasSemverConditions(allocations)) {
+								await updateFlagDistributionChannel(
+									ddApiKey,
+									ddAppKey,
+									existingFlagId,
+									'CLIENT',
+									ddSite,
+								);
+								semverForcedClientKeys.push(flag.key);
+							}
 							if (editorTeamIds.length > 0) {
 								await applyRestrictionPolicyForFlag(
 									ddApiKey,
@@ -1334,6 +1363,18 @@ async function executeMigration(
 								.length,
 							deleted: deleteRequests.length,
 						};
+						if (hasSemverConditions(allocations)) {
+							dryRunRequests.push({
+								method: 'PUT',
+								path: `/api/v2/feature-flags/${existingFlagId}`,
+								body: {
+									data: {
+										type: 'feature-flags',
+										attributes: { distribution_channel: 'CLIENT' },
+									},
+								},
+							});
+						}
 						let syncFilterCount = 0;
 						let syncRuleCount = 0;
 						for (const ddEnv of envsToEnable) {
@@ -1413,6 +1454,16 @@ async function executeMigration(
 								ddSite,
 							);
 							const variantCounts = variantSyncResult.counts;
+							if (hasSemverConditions(allocations)) {
+								await updateFlagDistributionChannel(
+									ddApiKey,
+									ddAppKey,
+									existingFlagId,
+									'CLIENT',
+									ddSite,
+								);
+								semverForcedClientKeys.push(flag.key);
+							}
 							let syncedAllocCount = 0;
 							let syncedRuleCount = 0;
 							for (const ddEnv of envsToEnable) {
@@ -1575,6 +1626,9 @@ async function executeMigration(
 								request,
 								ddSite,
 							);
+							if (hasSemverConditions(allocations)) {
+								semverForcedClientKeys.push(flag.key);
+							}
 
 							// Apply restriction policy for LD editor teams
 							if (editorTeamIds.length > 0) {
@@ -1685,6 +1739,10 @@ async function executeMigration(
 			enableFailures,
 			skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
 			syncedFlagKeys: syncedFlagKeys.length > 0 ? syncedFlagKeys : undefined,
+			semverForcedClientKeys:
+				semverForcedClientKeys.length > 0 ? semverForcedClientKeys : undefined,
+			jsonArrayWrappedKeys:
+				jsonArrayWrappedKeys.length > 0 ? jsonArrayWrappedKeys : undefined,
 			flagKeyMapping,
 			segmentMigration: segmentMigrationStats,
 			flags: detailedFlags,
