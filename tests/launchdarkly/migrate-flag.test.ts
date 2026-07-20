@@ -21,9 +21,12 @@ import {
 	shouldSkipFlag,
 } from '../../src/launchdarkly/helpers/migration.js';
 import {
+	buildFlagKeyMappingsForReport,
 	type ConflictResolution,
 	classifyConflict,
+	classifyDatadogKeyConflict,
 	flagCategories,
+	planInteractiveDatadogTarget,
 } from '../../src/launchdarkly/migrate.js';
 import type {
 	LDEnvironmentConfig,
@@ -1282,47 +1285,40 @@ function migrateFlagWithConflicts(
 	}
 	const allocations = allocationsResult;
 	const envsToEnable = getEnvsToEnable(flag, envMapping);
-	const conflict = classifyConflict(datadogFlags, projectKey, flag.key);
+	const targetPlan = planInteractiveDatadogTarget(
+		datadogFlags,
+		projectKey,
+		flag.key,
+		flag.key,
+		conflictResolution,
+	);
 
-	// Cross-project conflict: skip or prefix
-	if (conflict.type === 'cross_project') {
-		if (!conflictResolution || conflictResolution.action === 'skip') {
-			return {
-				action: 'skip',
-				skipReason:
-					'Key conflict: flag key already exists in Datadog from a different LaunchDarkly project',
-				envsToEnable: [],
-			};
-		}
-		// prefix: fall through to creation below
+	if (targetPlan.action === 'blocked') {
+		return {
+			action: 'skip',
+			skipReason: `Key conflict: Datadog flag key "${targetPlan.datadogKey}" already exists`,
+			envsToEnable: [],
+		};
 	}
 
 	// Same-project or manual: sync onto existing flag
-	const existingFlagId =
-		conflict.type === 'same_project' || conflict.type === 'manual'
-			? conflict.existingFlag?.id
-			: undefined;
-
-	if (existingFlagId) {
+	if (targetPlan.action === 'sync') {
 		return {
 			action: 'sync',
-			existingFlagId,
+			existingFlagId: targetPlan.existingFlag.id,
 			envsToEnable,
 		};
 	}
 
 	// Create new flag (possibly with prefix)
-	const usePrefix =
-		conflict.type === 'cross_project' &&
-		conflictResolution?.action === 'prefix';
-	const ddKey = usePrefix
-		? `${conflictResolution.prefix}-${flag.key}`
-		: flag.key;
+	const ddKey = targetPlan.datadogKey;
 
 	const metadata: MigrationMetadata = {
 		project_key: projectKey,
 		flag_key: flag.key,
-		...(usePrefix ? { key_prefix: conflictResolution.prefix } : {}),
+		...(targetPlan.appliedPrefix
+			? { key_prefix: targetPlan.appliedPrefix }
+			: {}),
 	};
 
 	const tags = buildFlagTags(flag.tags, projectKey);
@@ -1462,14 +1458,14 @@ describe('migrate a flag whose key conflicts with a flag from a different LD pro
 		});
 	});
 
-	describe('when user chooses to prefix with "mobile"', () => {
+	describe('when user chooses to prefix with "mobile-"', () => {
 		const result = migrateFlagWithConflicts(
 			conflictFlag,
 			conflictEnvMapping,
 			['production'],
 			datadogFlags,
 			'mobile',
-			{ action: 'prefix', prefix: 'mobile' },
+			{ action: 'prefix', prefix: 'mobile-' },
 		);
 
 		it('creates a new flag', () => {
@@ -1491,7 +1487,7 @@ describe('migrate a flag whose key conflicts with a flag from a different LD pro
 		});
 
 		it('stores the prefix in migration_metadata.key_prefix', () => {
-			expect(result.request?.migration_metadata?.key_prefix).toBe('mobile');
+			expect(result.request?.migration_metadata?.key_prefix).toBe('mobile-');
 		});
 
 		it('stores the project key in migration_metadata.project_key', () => {
@@ -1523,6 +1519,178 @@ describe('migrate a flag whose key conflicts with a flag from a different LD pro
 		it('defaults to skipping the flag', () => {
 			expect(result.action).toBe('skip');
 		});
+	});
+});
+
+describe('migrate a flag with no conflict when a prefix is provided', () => {
+	// No existing DD flag — the prefix should be applied to all new flags,
+	// not only to cross-project conflicts.
+	const noConflictFlag: LDFlag = {
+		name: 'New Feature',
+		kind: 'boolean',
+		key: 'new-feature',
+		variations: [
+			{ _id: 'v0', value: true, name: 'on' },
+			{ _id: 'v1', value: false, name: 'off' },
+		],
+		defaults: { onVariation: 0, offVariation: 1 },
+		environments: {
+			production: makeEnv({
+				_environmentName: 'Production',
+				on: false,
+				fallthrough: { variation: 1 },
+			}),
+		},
+		tags: [],
+		archived: false,
+		deprecated: false,
+		temporary: false,
+	};
+	const envMapping = new Map([['production', ddProd]]);
+
+	describe('with prefix "acme-"', () => {
+		const result = migrateFlagWithConflicts(
+			noConflictFlag,
+			envMapping,
+			['production'],
+			[],
+			'my-project',
+			{ action: 'prefix', prefix: 'acme-' },
+		);
+
+		it('creates a new flag', () => {
+			expect(result.action).toBe('create');
+		});
+
+		it('applies prefix to Datadog flag key', () => {
+			expect(result.request?.key).toBe('acme-new-feature');
+		});
+
+		it('stores original LD key in migration_metadata.flag_key', () => {
+			expect(result.request?.migration_metadata?.flag_key).toBe('new-feature');
+		});
+
+		it('stores prefix in migration_metadata.key_prefix', () => {
+			expect(result.request?.migration_metadata?.key_prefix).toBe('acme-');
+		});
+	});
+
+	describe('with action "skip" (no prefix)', () => {
+		const result = migrateFlagWithConflicts(
+			noConflictFlag,
+			envMapping,
+			['production'],
+			[],
+			'my-project',
+			{ action: 'skip' },
+		);
+
+		it('creates flag without prefix', () => {
+			expect(result.action).toBe('create');
+			expect(result.request?.key).toBe('new-feature');
+		});
+
+		it('does not store key_prefix in migration_metadata', () => {
+			expect(result.request?.migration_metadata?.key_prefix).toBeUndefined();
+		});
+	});
+});
+
+describe('planInteractiveDatadogTarget', () => {
+	it('creates with the prefixed key when the original key conflicts but the prefixed key is free', () => {
+		const datadogFlags: DatadogFlagEntry[] = [
+			{
+				id: 'dd-uuid-web',
+				key: 'enable-dark-mode',
+				migration_metadata: {
+					project_key: 'web',
+					flag_key: 'enable-dark-mode',
+				},
+			},
+		];
+
+		const plan = planInteractiveDatadogTarget(
+			datadogFlags,
+			'mobile',
+			'enable-dark-mode',
+			'enable-dark-mode',
+			{ action: 'prefix', prefix: 'mobile-' },
+		);
+
+		expect(plan).toEqual({
+			action: 'create',
+			datadogKey: 'mobile-enable-dark-mode',
+			appliedPrefix: 'mobile-',
+		});
+	});
+
+	it('syncs a previously migrated prefixed flag instead of treating the prefixed key as a collision', () => {
+		const datadogFlags: DatadogFlagEntry[] = [
+			{
+				id: 'dd-uuid-prefixed',
+				key: 'mobile-enable-dark-mode',
+				migration_metadata: {
+					project_key: 'mobile',
+					flag_key: 'enable-dark-mode',
+					key_prefix: 'mobile-',
+				},
+			},
+		];
+
+		const plan = planInteractiveDatadogTarget(
+			datadogFlags,
+			'mobile',
+			'enable-dark-mode',
+			'enable-dark-mode',
+			{ action: 'prefix', prefix: 'mobile-' },
+		);
+
+		expect(plan.action).toBe('sync');
+		expect(plan.datadogKey).toBe('mobile-enable-dark-mode');
+		if (plan.action === 'sync') {
+			expect(plan.existingFlag.id).toBe('dd-uuid-prefixed');
+		}
+	});
+
+	it('blocks a proposed prefixed key that collides with a manual Datadog flag', () => {
+		const datadogFlags: DatadogFlagEntry[] = [
+			{
+				id: 'dd-uuid-manual-prefixed',
+				key: 'mobile-enable-dark-mode',
+			},
+		];
+
+		const plan = planInteractiveDatadogTarget(
+			datadogFlags,
+			'mobile',
+			'enable-dark-mode',
+			'enable-dark-mode',
+			{ action: 'prefix', prefix: 'mobile-' },
+		);
+
+		expect(plan.action).toBe('blocked');
+		expect(plan.datadogKey).toBe('mobile-enable-dark-mode');
+		if (plan.action === 'blocked') {
+			expect(plan.conflict.type).toBe('manual');
+			expect(plan.conflict.existingFlag?.id).toBe('dd-uuid-manual-prefixed');
+		}
+	});
+
+	it('blocks a proposed key already reserved by an earlier create in the same migration', () => {
+		const plan = planInteractiveDatadogTarget(
+			[],
+			'mobile',
+			'new-feature',
+			'new-feature',
+			{ action: 'skip' },
+			new Set(['new-feature']),
+		);
+
+		expect(plan.action).toBe('blocked');
+		expect(plan.datadogKey).toBe('new-feature');
+		if (plan.action === 'blocked') {
+			expect(plan.conflict.type).toBe('same_run');
+		}
 	});
 });
 
@@ -1566,6 +1734,70 @@ describe('classifyConflict edge cases', () => {
 		const c = classifyConflict(datadogFlags, 'mobile', 'enable-dark-mode');
 		expect(c.type).toBe('same_project');
 		expect(c.existingFlag?.id).toBe('dd-uuid-prefixed');
+	});
+});
+
+describe('classifyDatadogKeyConflict', () => {
+	it('returns manual when a proposed custom key is occupied by an unmanaged Datadog flag', () => {
+		const datadogFlags: DatadogFlagEntry[] = [
+			{
+				id: 'dd-uuid-manual',
+				key: 'custom-dark-mode',
+			},
+		];
+
+		const c = classifyDatadogKeyConflict(
+			datadogFlags,
+			'mobile',
+			'enable-dark-mode',
+			'custom-dark-mode',
+		);
+
+		expect(c.type).toBe('manual');
+		expect(c.existingFlag?.id).toBe('dd-uuid-manual');
+	});
+
+	it('returns same_run when a proposed custom key was already reserved by this migration', () => {
+		const c = classifyDatadogKeyConflict(
+			[],
+			'mobile',
+			'enable-dark-mode',
+			'custom-dark-mode',
+			new Set(['custom-dark-mode']),
+		);
+
+		expect(c.type).toBe('same_run');
+		expect(c.existingFlag).toBeUndefined();
+	});
+});
+
+describe('buildFlagKeyMappingsForReport', () => {
+	it('persists interactive remaps even when no non-interactive target map exists', () => {
+		expect(
+			buildFlagKeyMappingsForReport(
+				['enable-dark-mode', 'new-feature'],
+				undefined,
+				new Map([['enable-dark-mode', 'mobile-enable-dark-mode']]),
+			),
+		).toEqual([
+			{
+				sourceKey: 'enable-dark-mode',
+				datadogKey: 'mobile-enable-dark-mode',
+			},
+		]);
+	});
+
+	it('keeps non-interactive target maps and lets runtime mappings override them', () => {
+		expect(
+			buildFlagKeyMappingsForReport(
+				['flag-a', 'flag-b'],
+				new Map([
+					['flag-a', 'renamed-flag-a'],
+					['flag-b', 'flag-b'],
+				]),
+				new Map([['flag-a', 'interactive-flag-a']]),
+			),
+		).toEqual([{ sourceKey: 'flag-a', datadogKey: 'interactive-flag-a' }]);
 	});
 });
 
@@ -1675,7 +1907,7 @@ describe('migrate a cross-project prefixed flag that also has team tags', () => 
 		['production'],
 		datadogFlags,
 		'mobile',
-		{ action: 'prefix', prefix: 'mobile' },
+		{ action: 'prefix', prefix: 'mobile-' },
 	);
 
 	it('creates a new flag with prefixed key', () => {
@@ -1690,7 +1922,7 @@ describe('migrate a cross-project prefixed flag that also has team tags', () => 
 	it('has prefixed key and migration metadata in the same request', () => {
 		expect(result.request?.key).toBe('mobile-feature-toggle');
 		expect(result.request?.tags).toEqual(['mobile-app', 'project:mobile']);
-		expect(result.request?.migration_metadata?.key_prefix).toBe('mobile');
+		expect(result.request?.migration_metadata?.key_prefix).toBe('mobile-');
 	});
 });
 

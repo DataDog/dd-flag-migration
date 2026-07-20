@@ -56,6 +56,7 @@ function parseLastJsonOutput(writes: string[]): {
 		errored: number;
 	};
 	failures: Array<{ key: string; error: string }>;
+	flagKeyMapping?: Array<{ sourceKey: string; datadogKey: string }>;
 } {
 	for (let i = writes.length - 1; i >= 0; i--) {
 		const trimmed = writes[i].trimStart();
@@ -302,6 +303,66 @@ describe('flag-level migration failures', () => {
 		expect(report.summary).toMatchObject({ created: 0, synced: 0, errored: 1 });
 		expect(report.failures).toEqual([
 			{ key: flag.key, error: 'Invalid LD variant value' },
+		]);
+		expect(process.exitCode).toBe(1);
+	});
+
+	it('captures LaunchDarkly remapped create failures under the source flag key', async () => {
+		const flag = ldFlag();
+		const datadogKey = `mobile-${flag.key}`;
+		ldMock.onGet(`${LD_BASE}/api/v2/projects`).reply(200, {
+			items: [{ key: 'proj', name: 'Project' }],
+			totalCount: 1,
+		});
+		ldMock.onGet(`${LD_BASE}/api/v2/flags/proj/${flag.key}`).reply(200, flag);
+		ldMock.onGet(`${LD_BASE}/api/v2/projects/proj`).reply(200, {
+			environments: {
+				items: [
+					{
+						key: 'production',
+						name: 'Production',
+						color: '417505',
+						archived: false,
+					},
+				],
+			},
+		});
+		ldMock.onGet(`${LD_BASE}/api/v2/roles`).reply(200, {
+			items: [],
+			totalCount: 0,
+		});
+		ldMock.onGet(`${LD_BASE}/api/v2/teams`).reply(200, {
+			items: [],
+			totalCount: 0,
+		});
+		ddMock.onGet(`${DD_BASE}/api/v2/feature-flags`).reply(200, {
+			data: [],
+			meta: { page: { total: 0 } },
+		});
+		ddMock.onGet(`${DD_BASE}/api/v2/feature-flags/environments`).reply(200, {
+			data: [ddEnvironment('dd-prod', 'Production', true)],
+		});
+		ddMock
+			.onPost(`${DD_BASE}/api/v2/feature-flags`)
+			.reply(400, { errors: [{ detail: 'Create failed' }] });
+
+		await runLaunchDarklyMigration('dd-api-key', 'dd-app-key', DD_SITE, false, {
+			nonInteractive: {
+				projectKey: 'proj',
+				envMap: [['production', 'Production']],
+				flagKeys: [`${flag.key},${datadogKey}`],
+			},
+			doExport: false,
+		});
+
+		const report = parseLastJsonOutput(stdoutWrites);
+		expect(report.success).toBe(false);
+		expect(report.summary).toMatchObject({ created: 0, synced: 0, errored: 1 });
+		expect(report.failures).toEqual([
+			{ key: flag.key, error: 'Create failed' },
+		]);
+		expect(report.flagKeyMapping).toEqual([
+			{ sourceKey: flag.key, datadogKey },
 		]);
 		expect(process.exitCode).toBe(1);
 	});

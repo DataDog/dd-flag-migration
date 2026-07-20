@@ -209,6 +209,13 @@ export interface ConflictClassification {
 	existingFlag?: DatadogFlagEntry;
 }
 
+export type DatadogKeyConflictType = ConflictType | 'same_run';
+
+export interface DatadogKeyConflictClassification {
+	type: DatadogKeyConflictType;
+	existingFlag?: DatadogFlagEntry;
+}
+
 export interface LDFlagMigrationSpec {
 	sourceKey: string;
 	datadogKey: string;
@@ -288,9 +295,154 @@ export function classifyConflict(
 	return { type: 'manual', existingFlag: keyMatch };
 }
 
+/** Classify whether a proposed DD flag key is already occupied. */
+export function classifyDatadogKeyConflict(
+	datadogFlags: DatadogFlagEntry[],
+	projectKey: string,
+	sourceFlagKey: string,
+	datadogFlagKey: string,
+	reservedDatadogKeys: ReadonlySet<string> = new Set(),
+): DatadogKeyConflictClassification {
+	const keyMatch = datadogFlags.find((f) => f.key === datadogFlagKey);
+	if (!keyMatch) {
+		if (reservedDatadogKeys.has(datadogFlagKey)) return { type: 'same_run' };
+		return { type: 'none' };
+	}
+
+	const metadata = keyMatch.migration_metadata;
+	if (
+		metadata?.project_key === projectKey &&
+		metadata.flag_key === sourceFlagKey
+	) {
+		return { type: 'same_project', existingFlag: keyMatch };
+	}
+
+	if (metadata) return { type: 'cross_project', existingFlag: keyMatch };
+
+	return { type: 'manual', existingFlag: keyMatch };
+}
+
 export type ConflictResolution =
 	| { action: 'skip' }
 	| { action: 'prefix'; prefix: string };
+
+export type InteractiveDatadogTargetPlan =
+	| {
+			action: 'sync';
+			datadogKey: string;
+			existingFlag: DatadogFlagEntry;
+	  }
+	| {
+			action: 'create';
+			datadogKey: string;
+			appliedPrefix?: string;
+	  }
+	| {
+			action: 'blocked';
+			datadogKey: string;
+			conflict: DatadogKeyConflictClassification;
+	  };
+
+export function planInteractiveDatadogTarget(
+	datadogFlags: DatadogFlagEntry[],
+	projectKey: string,
+	sourceFlagKey: string,
+	targetKey: string,
+	conflictResolution?: ConflictResolution,
+	reservedDatadogKeys: ReadonlySet<string> = new Set(),
+): InteractiveDatadogTargetPlan {
+	const sourceConflict = classifyConflict(
+		datadogFlags,
+		projectKey,
+		sourceFlagKey,
+	);
+	const sourceExistingFlag =
+		sourceConflict.type === 'same_project' || sourceConflict.type === 'manual'
+			? sourceConflict.existingFlag
+			: undefined;
+	if (sourceExistingFlag) {
+		return {
+			action: 'sync',
+			datadogKey: sourceExistingFlag.key,
+			existingFlag: sourceExistingFlag,
+		};
+	}
+
+	const datadogKey =
+		conflictResolution?.action === 'prefix'
+			? `${conflictResolution.prefix}${sourceFlagKey}`
+			: targetKey;
+	const keyConflict = classifyDatadogKeyConflict(
+		datadogFlags,
+		projectKey,
+		sourceFlagKey,
+		datadogKey,
+		reservedDatadogKeys,
+	);
+	if (keyConflict.type !== 'none') {
+		return {
+			action: 'blocked',
+			datadogKey,
+			conflict: keyConflict,
+		};
+	}
+
+	return {
+		action: 'create',
+		datadogKey,
+		...(conflictResolution?.action === 'prefix'
+			? { appliedPrefix: conflictResolution.prefix }
+			: {}),
+	};
+}
+
+export function buildFlagKeyMappingsForReport(
+	sourceKeys: readonly string[],
+	targetKeyBySource: ReadonlyMap<string, string> | undefined,
+	runtimeFlagKeyMapping: ReadonlyMap<string, string>,
+): Array<{ sourceKey: string; datadogKey: string }> | undefined {
+	const sourceKeyOrder = [...sourceKeys];
+	const seenSourceKeys = new Set(sourceKeyOrder);
+	for (const sourceKey of runtimeFlagKeyMapping.keys()) {
+		if (!seenSourceKeys.has(sourceKey)) sourceKeyOrder.push(sourceKey);
+	}
+
+	const mappings = new Map<string, string>();
+	if (targetKeyBySource) {
+		for (const sourceKey of sourceKeyOrder) {
+			mappings.set(sourceKey, targetKeyBySource.get(sourceKey) ?? sourceKey);
+		}
+	}
+	for (const [sourceKey, datadogKey] of runtimeFlagKeyMapping) {
+		mappings.set(sourceKey, datadogKey);
+	}
+
+	const result = sourceKeyOrder
+		.map((sourceKey) => ({
+			sourceKey,
+			datadogKey: mappings.get(sourceKey) ?? sourceKey,
+		}))
+		.filter((mapping) => mapping.datadogKey !== mapping.sourceKey);
+
+	if (result.length > 0 || targetKeyBySource !== undefined) return result;
+	return undefined;
+}
+
+function describeDatadogKeyConflict(
+	conflict: DatadogKeyConflictClassification,
+): string {
+	if (conflict.type === 'same_run') {
+		return 'is already selected for another flag in this migration';
+	}
+	const metadata = conflict.existingFlag?.migration_metadata;
+	if (metadata?.project_key) {
+		return `already exists in Datadog from LaunchDarkly project "${metadata.project_key}"`;
+	}
+	if (conflict.type === 'manual') {
+		return 'already exists in Datadog without LaunchDarkly migration metadata';
+	}
+	return 'already exists in Datadog';
+}
 
 function flagLabel(
 	flag: LDFlag,
@@ -315,10 +467,19 @@ function flagLabel(
 		case 'cross_project':
 			if (conflictResolution?.action === 'prefix') {
 				indicator = chalk.hex('#632CA6')('⊕');
-				badge = `  ${chalk.bgHex('#632CA6').white(` Will prefix with ${conflictResolution.prefix}- `)}`;
+				badge = `  ${chalk.bgHex('#632CA6').white(` Will prefix with ${conflictResolution.prefix} `)}`;
 			} else {
 				indicator = chalk.red('✗');
 				badge = `  ${chalk.bgRed.white(' Key conflict — will skip ')}`;
+			}
+			break;
+		case 'none':
+			if (conflictResolution?.action === 'prefix') {
+				indicator = chalk.hex('#632CA6')('⊕');
+				badge = `  ${chalk.bgHex('#632CA6').white(` Will prefix with ${conflictResolution.prefix} `)}`;
+			} else {
+				indicator = ' ';
+				badge = '';
 			}
 			break;
 		default:
@@ -546,10 +707,13 @@ async function selectFlags(
 	let skipCount = 0;
 	for (const f of flags) {
 		const c = classifyConflict(datadogFlags, projectKey, f.key);
-		if (c.type === 'same_project' || c.type === 'manual') inDatadogCount++;
-		if (c.type === 'cross_project') {
+		if (c.type === 'same_project' || c.type === 'manual') {
+			inDatadogCount++;
+		} else if (c.type === 'cross_project') {
 			if (conflictResolution?.action === 'prefix') prefixedCount++;
 			else skipCount++;
+		} else if (conflictResolution?.action === 'prefix') {
+			prefixedCount++;
 		}
 	}
 	const previousKeys = new Set(previouslySelected.map((f) => f.key));
@@ -570,7 +734,7 @@ async function selectFlags(
 	if (prefixedCount > 0) {
 		console.log(
 			chalk.hex('#632CA6')(
-				`  ${prefixedCount} flag(s) will be prefixed with ${(conflictResolution as { action: 'prefix'; prefix: string }).prefix}-`,
+				`  ${prefixedCount} flag(s) will be prefixed with ${(conflictResolution as { action: 'prefix'; prefix: string }).prefix}`,
 			),
 		);
 	}
@@ -975,15 +1139,24 @@ async function executeMigration(
 	const jsonArrayWrappedKeys: string[] = [];
 	const dryRunRequests: Array<{ method: string; path: string; body: unknown }> =
 		[];
-	const flagKeyMapping =
-		targetKeyBySource === undefined
-			? undefined
-			: detailedFlags
-					.map((flag) => ({
-						sourceKey: flag.key,
-						datadogKey: targetKeyBySource.get(flag.key) ?? flag.key,
-					}))
-					.filter((mapping) => mapping.datadogKey !== mapping.sourceKey);
+	const sourceFlagKeysForReport = detailedFlags.map((flag) => flag.key);
+	const runtimeFlagKeyMapping = new Map<string, string>();
+	const flagKeyMappingsForReport = ():
+		| Array<{ sourceKey: string; datadogKey: string }>
+		| undefined =>
+		buildFlagKeyMappingsForReport(
+			sourceFlagKeysForReport,
+			targetKeyBySource,
+			runtimeFlagKeyMapping,
+		);
+	const reservedDatadogKeys = new Set(datadogFlags.map((flag) => flag.key));
+	const recordDatadogKeyMapping = (
+		sourceKey: string,
+		datadogKey: string,
+	): void => {
+		if (datadogKey !== sourceKey)
+			runtimeFlagKeyMapping.set(sourceKey, datadogKey);
+	};
 	let runner: MigrationRunnerHandle | undefined;
 
 	const environmentMappingArr: LDMigrationFile['environmentMapping'] = [];
@@ -1016,7 +1189,7 @@ async function executeMigration(
 				enableFailures,
 				skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
 				syncedFlagKeys: syncedFlagKeys.length > 0 ? syncedFlagKeys : undefined,
-				flagKeyMapping,
+				flagKeyMapping: flagKeyMappingsForReport(),
 				segmentMigration: segmentMigrationStats,
 				flags: detailedFlags,
 				environmentMapping: environmentMappingArr,
@@ -1182,26 +1355,100 @@ async function executeMigration(
 					doFail(flag.key, reason);
 					continue;
 				}
-
-				// Cross-project conflict: skip or prefix
-				if (!nonInteractive && conflict.type === 'cross_project') {
-					if (!conflictResolution || conflictResolution.action === 'skip') {
-						doSkip(
-							flag.key,
-							`Skipped ${chalk.cyan(flag.key)} — key already used by a flag from a different LaunchDarkly project`,
-							'Key conflict: flag key already exists in Datadog from a different LaunchDarkly project',
-						);
-						continue;
-					}
-					// prefix case: fall through to creation below
+				if (
+					nonInteractive &&
+					conflict.type === 'none' &&
+					reservedDatadogKeys.has(targetKey)
+				) {
+					doFail(
+						flag.key,
+						`Duplicate Datadog flag key "${targetKey}" was already selected by another flag in this migration`,
+					);
+					continue;
 				}
 
-				// For same_project and manual conflicts, sync onto the existing flag
-				const existingFlagId =
-					conflict.type === 'same_project' ||
-					(!nonInteractive && conflict.type === 'manual')
+				let resolvedDdKey = targetKey;
+				let appliedPrefix: string | undefined;
+				let existingFlagId =
+					nonInteractive && conflict.type === 'same_project'
 						? conflict.existingFlag?.id
 						: undefined;
+				if (!nonInteractive) {
+					const targetPlan = planInteractiveDatadogTarget(
+						datadogFlags,
+						projectKey,
+						flag.key,
+						targetKey,
+						conflictResolution,
+						reservedDatadogKeys,
+					);
+					resolvedDdKey = targetPlan.datadogKey;
+					if (targetPlan.action === 'sync') {
+						existingFlagId = targetPlan.existingFlag.id;
+						recordDatadogKeyMapping(flag.key, targetPlan.existingFlag.key);
+					} else if (targetPlan.action === 'create') {
+						appliedPrefix = targetPlan.appliedPrefix;
+					} else {
+						const conflictingKey = targetPlan.datadogKey;
+						const conflictDesc = describeDatadogKeyConflict(
+							targetPlan.conflict,
+						);
+
+						activeRunner.finalize();
+						const action = await select<'rename' | 'skip'>({
+							message: `Datadog flag key ${chalk.cyan(conflictingKey)} ${conflictDesc}. What would you like to do?`,
+							choices: [
+								{
+									name: 'Enter a custom Datadog key for this flag',
+									value: 'rename',
+								},
+								{ name: 'Skip this flag', value: 'skip' },
+							],
+						});
+
+						if (action === 'skip') {
+							activeRunner.beginFlag(flag.key);
+							doSkip(
+								flag.key,
+								`Skipped ${chalk.cyan(flag.key)} — Datadog key ${chalk.cyan(conflictingKey)} already exists`,
+								`Key conflict: Datadog flag key "${conflictingKey}" already exists`,
+							);
+							continue;
+						}
+
+						// Prompt for a custom key, re-checking until conflict-free.
+						let customKey = '';
+						for (;;) {
+							customKey = await input({
+								message: `Enter a custom Datadog key for ${chalk.cyan(flag.key)}:`,
+								validate: (val) => {
+									const trimmed = val.trim();
+									if (!trimmed) return 'Key cannot be empty';
+									if (!/^[a-z0-9_-]+$/.test(trimmed))
+										return 'Key must be lowercase alphanumeric with hyphens or underscores';
+									return true;
+								},
+							});
+							customKey = customKey.trim();
+							const recheckConflict = classifyDatadogKeyConflict(
+								datadogFlags,
+								projectKey,
+								flag.key,
+								customKey,
+								reservedDatadogKeys,
+							);
+							if (recheckConflict.type === 'none') break;
+							console.log(
+								chalk.yellow(
+									`  ⚠ Key "${customKey}" ${describeDatadogKeyConflict(recheckConflict)}. Try a different key.`,
+								),
+							);
+						}
+						resolvedDdKey = customKey;
+						appliedPrefix = undefined;
+						activeRunner.beginFlag(flag.key);
+					}
+				}
 
 				const allRuleCount = allocations.reduce(
 					(sum, a) => sum + (a.targeting_rules?.length ?? 0),
@@ -1558,13 +1805,9 @@ async function executeMigration(
 						}
 					}
 				} else {
-					const usePrefix =
-						!nonInteractive &&
-						conflict.type === 'cross_project' &&
-						conflictResolution?.action === 'prefix';
-					const ddKey = usePrefix
-						? `${conflictResolution.prefix}-${flag.key}`
-						: targetKey;
+					const ddKey = resolvedDdKey;
+					reservedDatadogKeys.add(ddKey);
+					recordDatadogKeyMapping(flag.key, ddKey);
 
 					const tags = buildFlagTags(flag.tags, projectKey, editorTeamHandles);
 
@@ -1577,7 +1820,7 @@ async function executeMigration(
 						migration_metadata: {
 							project_key: projectKey,
 							flag_key: flag.key,
-							...(usePrefix ? { key_prefix: conflictResolution.prefix } : {}),
+							...(appliedPrefix ? { key_prefix: appliedPrefix } : {}),
 						},
 						...(tags.length > 0 ? { tags } : {}),
 						...(hasSemverConditions(allocations)
@@ -1638,7 +1881,7 @@ async function executeMigration(
 									createdFlag.id,
 									editorTeamIds,
 									ddSite,
-									ddKey,
+									flag.key,
 									restrictionPolicyFailures,
 								);
 							}
@@ -1656,7 +1899,7 @@ async function executeMigration(
 									enabledCount++;
 								} catch (err) {
 									enableFailures.push({
-										key: ddKey,
+										key: flag.key,
 										env: ddEnv.name,
 										error: formatAxiosError(err),
 									});
@@ -1671,7 +1914,11 @@ async function executeMigration(
 							);
 						} catch (err) {
 							const error = formatAxiosError(err);
-							doFail(ddKey, error);
+							doFail(
+								flag.key,
+								error,
+								`Failed ${chalk.cyan(ddKey)}: ${chalk.red(error)}`,
+							);
 						}
 					}
 				}
@@ -1714,7 +1961,7 @@ async function executeMigration(
 				name: f.name,
 				kind: f.kind,
 			})),
-			flagKeyMapping,
+			flagKeyMapping: flagKeyMappingsForReport(),
 			environmentMapping: environmentMappingArr,
 			requests: dryRunRequests,
 		};
@@ -1743,7 +1990,7 @@ async function executeMigration(
 				semverForcedClientKeys.length > 0 ? semverForcedClientKeys : undefined,
 			jsonArrayWrappedKeys:
 				jsonArrayWrappedKeys.length > 0 ? jsonArrayWrappedKeys : undefined,
-			flagKeyMapping,
+			flagKeyMapping: flagKeyMappingsForReport(),
 			segmentMigration: segmentMigrationStats,
 			flags: detailedFlags,
 			environmentMapping: environmentMappingArr,
@@ -1906,49 +2153,86 @@ export async function runLaunchDarklyMigration(
 		return;
 	}
 
-	// Detect cross-project conflicts and prompt for resolution
-	const crossProjectConflicts = allFlags.filter(
-		(f) =>
-			classifyConflict(datadogFlags, selectedProject.key, f.key).type ===
-			'cross_project',
+	// Detect prefix used by previously-migrated flags for this project
+	const alreadyMigratedForProject = datadogFlags.filter(
+		(f) => f.migration_metadata?.project_key === selectedProject.key,
 	);
-
-	let conflictResolution: ConflictResolution | undefined;
-	if (crossProjectConflicts.length > 0) {
-		console.log();
-		console.log(
-			chalk.yellow(
-				`  ${crossProjectConflicts.length} flag(s) have key conflicts with flags from other LaunchDarkly projects`,
-			),
-		);
-		console.log();
-
-		const action = await select<'skip' | 'prefix'>({
-			message: 'How would you like to handle these conflicts?',
-			choices: [
-				{ name: 'Skip conflicting flags', value: 'skip' },
-				{
-					name: 'Add a prefix to conflicting flag keys',
-					value: 'prefix',
-				},
-			],
-		});
-
-		if (action === 'skip') {
-			conflictResolution = { action: 'skip' };
-		} else {
-			const prefix = await input({
-				message: 'Enter a prefix for conflicting flag keys:',
-				validate: (val) => {
-					const trimmed = val.trim();
-					if (trimmed.length === 0) return 'Prefix cannot be empty';
-					if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(trimmed))
-						return 'Prefix must contain only lowercase letters, numbers, and hyphens';
-					return true;
-				},
-			});
-			conflictResolution = { action: 'prefix', prefix: prefix.trim() };
+	let detectedPrefix: string | undefined;
+	for (const f of alreadyMigratedForProject) {
+		const storedPrefix = f.migration_metadata?.key_prefix;
+		if (storedPrefix) {
+			// New format already includes separator; old format does not — infer from key
+			if (/[-_]$/.test(storedPrefix)) {
+				detectedPrefix = storedPrefix;
+			} else {
+				const origKey = f.migration_metadata?.flag_key;
+				if (origKey && f.key.endsWith(`-${origKey}`))
+					detectedPrefix = `${storedPrefix}-`;
+				else if (origKey && f.key.endsWith(`_${origKey}`))
+					detectedPrefix = `${storedPrefix}_`;
+				else detectedPrefix = `${storedPrefix}-`;
+			}
+			break;
 		}
+		// Fallback: no key_prefix stored — infer separator from key vs original key
+		const origKey = f.migration_metadata?.flag_key;
+		if (origKey && f.key !== origKey) {
+			if (f.key.endsWith(`-${origKey}`))
+				detectedPrefix = f.key.slice(0, f.key.length - origKey.length);
+			else if (f.key.endsWith(`_${origKey}`))
+				detectedPrefix = f.key.slice(0, f.key.length - origKey.length);
+			if (detectedPrefix) break;
+		}
+	}
+
+	// Always prompt for prefix before flag selection
+	console.log();
+	type PrefixAction = 'skip' | 'use-detected' | 'custom';
+	const prefixChoices: { name: string; value: PrefixAction }[] = [
+		...(detectedPrefix
+			? [
+					{
+						name: `Use existing prefix "${detectedPrefix}"`,
+						value: 'use-detected' as PrefixAction,
+					},
+				]
+			: [
+					{
+						name: 'Add a prefix to flag keys',
+						value: 'custom' as PrefixAction,
+					},
+				]),
+		...(detectedPrefix
+			? [{ name: 'Add a prefix to flag keys', value: 'custom' as PrefixAction }]
+			: []),
+		{ name: 'Skip — no prefix', value: 'skip' },
+	];
+
+	const prefixAction = await select<PrefixAction>({
+		message: 'Would you like to add a prefix to all migrated flag keys?',
+		choices: prefixChoices,
+	});
+
+	let conflictResolution: ConflictResolution;
+	if (prefixAction === 'skip') {
+		conflictResolution = { action: 'skip' };
+	} else if (prefixAction === 'use-detected') {
+		// detectedPrefix is guaranteed non-undefined when this option appears
+		// biome-ignore lint/style/noNonNullAssertion: only offered when detectedPrefix is set
+		conflictResolution = { action: 'prefix', prefix: detectedPrefix! };
+	} else {
+		const prefix = await input({
+			message: 'Enter a prefix for flag keys:',
+			validate: (val) => {
+				const trimmed = val.trim();
+				if (trimmed.length === 0) return 'Prefix cannot be empty';
+				if (!/^[a-z0-9][a-z0-9_-]*$/.test(trimmed))
+					return 'Prefix must contain only lowercase letters, numbers, hyphens, or underscores';
+				if (!/[-_]$/.test(trimmed)) return 'Prefix must end with - or _';
+				return true;
+			},
+		});
+		conflictResolution = { action: 'prefix', prefix: prefix.trim() };
 	}
 
 	let prevSelectedEnvKeys: string[] = [];
