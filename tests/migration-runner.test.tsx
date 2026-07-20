@@ -53,12 +53,12 @@ describe('migrationRunner (non-TTY)', () => {
 		runner.settleFlag({
 			status: 'created',
 			message: 'Created foo',
-			stats: { created: 1, skipped: 0, failed: 0 },
+			stats: { saved: 1, skipped: 0, failed: 0 },
 		});
 		runner.settleFlag({
 			status: 'failed',
 			message: 'Failed bar',
-			stats: { created: 1, skipped: 0, failed: 1 },
+			stats: { saved: 1, skipped: 0, failed: 1 },
 		});
 		expect(writeSpy).toHaveBeenCalledWith('Created foo\n');
 		expect(writeSpy).toHaveBeenCalledWith('Failed bar\n');

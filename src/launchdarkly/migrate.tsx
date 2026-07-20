@@ -1039,10 +1039,10 @@ async function executeMigration(
 	});
 	const activeRunner: MigrationRunnerHandle = runner;
 	const settleStats = (): {
-		created: number;
+		saved: number;
 		skipped: number;
 		failed: number;
-	} => ({ created, skipped, failed: errored });
+	} => ({ saved: created + synced, skipped, failed: errored });
 	const doSkip = (key: string, message: string, reason: string): void => {
 		skippedFlags.push({ key, reason });
 		skipped++;
@@ -1330,7 +1330,7 @@ async function executeMigration(
 						doSync(
 							dryRun
 								? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (${tagLabel}${variantLabel}${policyLabel})`
-								: `Synced ${chalk.cyan(flag.key)} (${tagLabel}${variantLabel}${policyLabel})`,
+								: `${chalk.green('✓')} Synced ${chalk.cyan(flag.key)} (${tagLabel}${variantLabel}${policyLabel})`,
 						);
 						continue;
 					}
@@ -1546,7 +1546,7 @@ async function executeMigration(
 								enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
 							syncedFlagKeys.push(flag.key);
 							doSync(
-								`Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${variantLabel}${tagLabel}${enableLabel})`,
+								`${chalk.green('✓')} Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${variantLabel}${tagLabel}${enableLabel})`,
 							);
 						} catch (err) {
 							const error = formatAxiosError(err);
@@ -1667,7 +1667,7 @@ async function executeMigration(
 							const enableLabel =
 								enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
 							doCreate(
-								`Created ${chalk.cyan(ddKey)} (${allFilterLabel}${allRuleLabel}${enableLabel})`,
+								`${chalk.green('✓')} Created ${chalk.cyan(ddKey)} (${allFilterLabel}${allRuleLabel}${enableLabel})`,
 							);
 						} catch (err) {
 							const error = formatAxiosError(err);
