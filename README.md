@@ -323,6 +323,35 @@ To save a default site for interactive runs, add the site to your config:
 
 ---
 
+## Unsupported features
+
+Some LaunchDarkly and Eppo features have no direct equivalent in Datadog. The tool handles each case automatically — either by skipping the affected flag entirely or by applying the closest supported equivalent and recording the adjustment in the migration results.
+
+### Flags that are skipped
+
+| Feature | Provider | Reason |
+|---|---|---|
+| Dependent flags (prerequisites) | LaunchDarkly | Datadog does not enforce flag prerequisites. Flags that depend on another flag being in a specific state are skipped. |
+| Date targeting (`before` / `after` operators) | LaunchDarkly | Date-based targeting conditions have no equivalent in Datadog targeting filters. Flags that use these operators are skipped. |
+| Segment targeting (`segmentMatch` operator) | LaunchDarkly | Segment membership conditions are not supported. Flags that use `segmentMatch` in any targeting rule are skipped. |
+| Archived flags | LaunchDarkly | Archived flags are excluded from the migration entirely. |
+| `BANDIT` and `LAYER` flag types | Eppo | These flag types are not yet supported and are skipped. |
+
+### Flags that are migrated with adjustments
+
+| Feature | Provider | How it's handled |
+|---|---|---|
+| SEMVER targeting on server-side flags | LaunchDarkly | SEMVER comparisons are a client-SDK feature in Datadog. Flags that use SEMVER targeting are automatically migrated with the **CLIENT** distribution channel, regardless of how they were originally configured. A warning is recorded in the migration results. |
+| JSON variants that are top-level arrays | LaunchDarkly, Eppo | Datadog requires JSON variant values to be objects. Array-valued variants are automatically wrapped: `[...]` becomes `{ "value": [...] }`. A warning is recorded in the migration results. |
+
+### Features with limited evaluation support
+
+| Feature | Provider | Behavior |
+|---|---|---|
+| Mobile context kinds (`ld_application`, `ld_device`) | LaunchDarkly | These context kinds are auto-populated by LaunchDarkly's mobile client SDKs and cannot be evaluated by the server-side Node.js SDK used by this tool. Targeting rules that use them are shown as **not evaluated** during the evaluation step. The migration itself is correct — targeting rules are translated using the same prefixed attribute format (e.g. `ld_application.versionName`). |
+
+---
+
 ## How it works
 
 ### Migration
