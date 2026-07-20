@@ -178,7 +178,7 @@ When migrating from LaunchDarkly, the tool adds these steps:
 3. **Link environments** — map each selected LaunchDarkly environment to a Datadog environment
 4. **Select flags** — flags already in Datadog are shown with a checkmark and will have their targeting synced for new environments rather than being re-created
 
-The tool translates LaunchDarkly targeting rules, individual user targets, percentage rollouts, and fallthrough variations into equivalent Datadog targeting filters. Flags that use unsupported operators (`segmentMatch`, `before`, `after`) are automatically skipped with an explanation. Flags with prerequisites are migrated with a warning, since Datadog does not enforce prerequisites.
+The tool translates LaunchDarkly targeting rules, individual user targets, percentage rollouts, and fallthrough variations into equivalent Datadog targeting filters. Before migrating flags, the tool runs a segment migration phase that converts referenced LaunchDarkly segments into Datadog saved filters and substitutes them into targeting rules. Flags that use unsupported operators (`before`, `after`) are automatically skipped with an explanation. Flags with prerequisites are migrated with a warning, since Datadog does not enforce prerequisites.
 
 ### Non-interactive mode
 
@@ -333,7 +333,6 @@ Some LaunchDarkly and Eppo features have no direct equivalent in Datadog. The to
 |---|---|---|
 | Dependent flags (prerequisites) | LaunchDarkly | Datadog does not enforce flag prerequisites. Flags that depend on another flag being in a specific state are skipped. |
 | Date targeting (`before` / `after` operators) | LaunchDarkly | Date-based targeting conditions have no equivalent in Datadog targeting filters. Flags that use these operators are skipped. |
-| Segment targeting (`segmentMatch` operator) | LaunchDarkly | Segment membership conditions are not supported. Flags that use `segmentMatch` in any targeting rule are skipped. |
 | Archived flags | LaunchDarkly | Archived flags are excluded from the migration entirely. |
 | `BANDIT` and `LAYER` flag types | Eppo | These flag types are not yet supported and are skipped. |
 
@@ -370,16 +369,28 @@ Flags of type `BANDIT` or `LAYER` are skipped (not yet supported).
 
 For each selected flag, the tool:
 
+Before processing individual flags, the tool runs a **segment migration phase**:
+
+- Scans all selected flags for `segmentMatch` clauses and collects the referenced segment keys per environment
+- Fetches those segments from the LaunchDarkly API
+- Checks existing Datadog saved filters for already-migrated segments (idempotency via `migration_metadata`)
+- Creates a Datadog saved filter for each segment — using `LIST` type for pure key-inclusion segments and `RULES` type for all others
+- Builds a negated variant for any segment referenced with `negate: true`, using De Morgan's law to derive the inverse rules
+- Handles cross-project name conflicts interactively (skip or add a prefix)
+- Returns a lookup map used by the flag targeting step to substitute saved filter references in place of `segmentMatch` clauses
+
+For each selected flag, the tool:
+
 - Reads the flag's variations, targeting rules, individual targets, and rollout configuration from LaunchDarkly
 - Maps the flag type (`boolean` or `multivariate`) to the corresponding Datadog value type (`BOOLEAN`, `STRING`, `NUMERIC`, or `JSON`)
 - Converts individual user targets into targeting filters with `ONE_OF` conditions on the `key` attribute
-- Translates each targeting rule's clauses into Datadog targeting rule conditions, mapping operators like `in`, `contains`, `startsWith`, `endsWith`, `matches`, and semver comparisons to their Datadog equivalents
+- Translates each targeting rule's clauses into Datadog targeting rule conditions, mapping operators like `in`, `contains`, `startsWith`, `endsWith`, `matches`, and semver comparisons to their Datadog equivalents; replaces `segmentMatch` clauses with the saved filter IDs created in the segment phase
 - Converts percentage rollouts from LaunchDarkly's 100,000-weight scale to Datadog's 0-100 scale
 - Creates a fallthrough (default) targeting filter for the environment
 - For flags that already exist in Datadog, syncs targeting for newly mapped environments instead of re-creating the flag
 - Enables the flag in Datadog environments where it was enabled (`on: true`) in LaunchDarkly
 
-Archived flags and flags using unsupported operators (`segmentMatch`, `before`, `after`) are skipped automatically.
+Archived flags and flags using unsupported operators (`before`, `after`) are skipped automatically. Individual segment rules that use unsupported features (multi-context membership, nested `segmentMatch`, or negation explosions) are skipped with a warning; the flags that reference them are still migrated with their other targeting rules intact.
 
 ### Evaluation
 
