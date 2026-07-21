@@ -1189,6 +1189,12 @@ async function executeMigration(
 				enableFailures,
 				skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
 				syncedFlagKeys: syncedFlagKeys.length > 0 ? syncedFlagKeys : undefined,
+				semverForcedClientKeys:
+					semverForcedClientKeys.length > 0
+						? semverForcedClientKeys
+						: undefined,
+				jsonArrayWrappedKeys:
+					jsonArrayWrappedKeys.length > 0 ? jsonArrayWrappedKeys : undefined,
 				flagKeyMapping: flagKeyMappingsForReport(),
 				segmentMigration: segmentMigrationStats,
 				flags: detailedFlags,
@@ -1445,6 +1451,7 @@ async function executeMigration(
 							);
 						}
 						resolvedDdKey = customKey;
+						reservedDatadogKeys.add(customKey);
 						appliedPrefix = undefined;
 						activeRunner.beginFlag(flag.key);
 					}
