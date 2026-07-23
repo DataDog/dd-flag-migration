@@ -580,6 +580,93 @@ describe('createFeatureFlag', () => {
 			createFeatureFlag(API_KEY, APP_KEY, request, SITE),
 		).rejects.toThrow();
 	});
+
+	it('retries with suffixed name on 409 name conflict', async () => {
+		let callCount = 0;
+		mock.onPost(`${BASE}/api/v2/feature-flags`).reply((config) => {
+			callCount++;
+			const body = JSON.parse(config.data as string) as {
+				data: { attributes: { name: string } };
+			};
+			if (callCount === 1) {
+				expect(body.data.attributes.name).toBe('My Flag');
+				return [
+					409,
+					{
+						errors: [
+							{ detail: 'a feature flag with this name already exists' },
+						],
+					},
+				];
+			}
+			expect(body.data.attributes.name).toBe('My Flag (1)');
+			return [
+				201,
+				{ data: { id: 'flag-uuid-retry', attributes: { key: 'my-flag' } } },
+			];
+		});
+
+		const result = await createFeatureFlag(API_KEY, APP_KEY, request, SITE);
+		expect(result).toEqual({ id: 'flag-uuid-retry', key: 'my-flag' });
+		expect(callCount).toBe(2);
+	});
+
+	it('increments the suffix on each successive name conflict', async () => {
+		const names: string[] = [];
+		mock.onPost(`${BASE}/api/v2/feature-flags`).reply((config) => {
+			const body = JSON.parse(config.data as string) as {
+				data: { attributes: { name: string } };
+			};
+			names.push(body.data.attributes.name);
+			if (names.length < 4) {
+				return [
+					409,
+					{
+						errors: [
+							{ detail: 'a feature flag with this name already exists' },
+						],
+					},
+				];
+			}
+			return [
+				201,
+				{ data: { id: 'flag-uuid-3', attributes: { key: 'my-flag' } } },
+			];
+		});
+
+		await createFeatureFlag(API_KEY, APP_KEY, request, SITE);
+		expect(names).toEqual([
+			'My Flag',
+			'My Flag (1)',
+			'My Flag (2)',
+			'My Flag (3)',
+		]);
+	});
+
+	it('throws after 9 retries if name conflict persists', async () => {
+		mock.onPost(`${BASE}/api/v2/feature-flags`).reply(409, {
+			errors: [{ detail: 'a feature flag with this name already exists' }],
+		});
+
+		await expect(
+			createFeatureFlag(API_KEY, APP_KEY, request, SITE),
+		).rejects.toThrow();
+
+		// 1 original + 9 retries = 10 total attempts
+		expect(mock.history['post']?.length).toBe(10);
+	});
+
+	it('does not retry on a 409 with a different error message', async () => {
+		mock.onPost(`${BASE}/api/v2/feature-flags`).reply(409, {
+			errors: [{ detail: 'some other conflict' }],
+		});
+
+		await expect(
+			createFeatureFlag(API_KEY, APP_KEY, request, SITE),
+		).rejects.toThrow();
+
+		expect(mock.history['post']?.length).toBe(1);
+	});
 });
 
 // ─── enableFeatureFlagEnvironment ─────────────────────────────────────────────
