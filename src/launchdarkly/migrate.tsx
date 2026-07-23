@@ -1173,6 +1173,80 @@ async function executeMigration(
 		});
 	}
 
+	// Pre-flight: collect all key conflict resolutions before the migration runner
+	// starts, so users answer conflict prompts upfront rather than mid-migration.
+	const preResolvedConflicts = new Map<string, string | 'skip'>();
+	if (!nonInteractive) {
+		const shadowReservedKeys = new Set(reservedDatadogKeys);
+		for (const flag of detailedFlags) {
+			const skipResult = shouldSkipFlag(flag, selectedEnvs);
+			if (skipResult.skip) continue;
+
+			const targetKey = targetKeyBySource?.get(flag.key) ?? flag.key;
+			const targetPlan = planInteractiveDatadogTarget(
+				datadogFlags,
+				projectKey,
+				flag.key,
+				targetKey,
+				conflictResolution,
+				shadowReservedKeys,
+			);
+
+			if (targetPlan.action === 'create') {
+				shadowReservedKeys.add(targetPlan.datadogKey);
+			} else if (targetPlan.action === 'blocked') {
+				const conflictingKey = targetPlan.datadogKey;
+				const conflictDesc = describeDatadogKeyConflict(targetPlan.conflict);
+
+				const action = await select<'rename' | 'skip'>({
+					message: `Datadog flag key ${chalk.cyan(conflictingKey)} ${conflictDesc}. What would you like to do?`,
+					choices: [
+						{
+							name: 'Enter a custom Datadog key for this flag',
+							value: 'rename',
+						},
+						{ name: 'Skip this flag', value: 'skip' },
+					],
+				});
+
+				if (action === 'skip') {
+					preResolvedConflicts.set(flag.key, 'skip');
+				} else {
+					let customKey = '';
+					for (;;) {
+						customKey = await input({
+							message: `Enter a custom Datadog key for ${chalk.cyan(flag.key)}:`,
+							validate: (val) => {
+								const trimmed = val.trim();
+								if (!trimmed) return 'Key cannot be empty';
+								if (!/^[a-z0-9_-]+$/.test(trimmed))
+									return 'Key must be lowercase alphanumeric with hyphens or underscores';
+								return true;
+							},
+						});
+						customKey = customKey.trim();
+						const recheckConflict = classifyDatadogKeyConflict(
+							datadogFlags,
+							projectKey,
+							flag.key,
+							customKey,
+							shadowReservedKeys,
+						);
+						if (recheckConflict.type === 'none') break;
+						console.log(
+							chalk.yellow(
+								`  ⚠ Key "${customKey}" ${describeDatadogKeyConflict(recheckConflict)}. Try a different key.`,
+							),
+						);
+					}
+					preResolvedConflicts.set(flag.key, customKey);
+					shadowReservedKeys.add(customKey);
+				}
+			}
+			// 'sync': key already in DD and thus already in shadowReservedKeys
+		}
+	}
+
 	const sigintHandler = () => {
 		if (runner) runner.finalize();
 		else process.stderr.write('\n');
@@ -1398,65 +1472,19 @@ async function executeMigration(
 					} else if (targetPlan.action === 'create') {
 						appliedPrefix = targetPlan.appliedPrefix;
 					} else {
-						const conflictingKey = targetPlan.datadogKey;
-						const conflictDesc = describeDatadogKeyConflict(
-							targetPlan.conflict,
-						);
-
-						activeRunner.finalize();
-						const action = await select<'rename' | 'skip'>({
-							message: `Datadog flag key ${chalk.cyan(conflictingKey)} ${conflictDesc}. What would you like to do?`,
-							choices: [
-								{
-									name: 'Enter a custom Datadog key for this flag',
-									value: 'rename',
-								},
-								{ name: 'Skip this flag', value: 'skip' },
-							],
-						});
-
-						if (action === 'skip') {
-							activeRunner.beginFlag(flag.key);
+						// Conflict was pre-resolved before the migration started.
+						const preResolved = preResolvedConflicts.get(flag.key);
+						if (preResolved === 'skip' || preResolved === undefined) {
 							doSkip(
 								flag.key,
-								`Skipped ${chalk.cyan(flag.key)} — Datadog key ${chalk.cyan(conflictingKey)} already exists`,
-								`Key conflict: Datadog flag key "${conflictingKey}" already exists`,
+								`Skipped ${chalk.cyan(flag.key)} — Datadog key ${chalk.cyan(targetPlan.datadogKey)} already exists`,
+								`Key conflict: Datadog flag key "${targetPlan.datadogKey}" already exists`,
 							);
 							continue;
 						}
-
-						// Prompt for a custom key, re-checking until conflict-free.
-						let customKey = '';
-						for (;;) {
-							customKey = await input({
-								message: `Enter a custom Datadog key for ${chalk.cyan(flag.key)}:`,
-								validate: (val) => {
-									const trimmed = val.trim();
-									if (!trimmed) return 'Key cannot be empty';
-									if (!/^[a-z0-9_-]+$/.test(trimmed))
-										return 'Key must be lowercase alphanumeric with hyphens or underscores';
-									return true;
-								},
-							});
-							customKey = customKey.trim();
-							const recheckConflict = classifyDatadogKeyConflict(
-								datadogFlags,
-								projectKey,
-								flag.key,
-								customKey,
-								reservedDatadogKeys,
-							);
-							if (recheckConflict.type === 'none') break;
-							console.log(
-								chalk.yellow(
-									`  ⚠ Key "${customKey}" ${describeDatadogKeyConflict(recheckConflict)}. Try a different key.`,
-								),
-							);
-						}
-						resolvedDdKey = customKey;
-						reservedDatadogKeys.add(customKey);
+						resolvedDdKey = preResolved;
+						reservedDatadogKeys.add(preResolved);
 						appliedPrefix = undefined;
-						activeRunner.beginFlag(flag.key);
 					}
 				}
 
