@@ -1046,6 +1046,7 @@ async function executeMigration(
 	// ── Phase 1: Migrate segments as saved filters ─────────────────────────────
 	let savedFilterLookup = new Map<string, string>();
 	let segmentConstantLookup = new Map<string, boolean>();
+	let semverSavedFilterIds = new Set<string>();
 	let phase1Subheader: string | undefined;
 	let segmentMigrationStats: LDMigrationFile['segmentMigration'];
 	if (dryRun) {
@@ -1058,6 +1059,7 @@ async function executeMigration(
 			});
 			savedFilterLookup = segmentResult.savedFilterLookup;
 			segmentConstantLookup = segmentResult.segmentConstantLookup;
+			semverSavedFilterIds = segmentResult.semverSavedFilterIds;
 		} catch (err) {
 			console.log(
 				chalk.yellow(
@@ -1091,6 +1093,7 @@ async function executeMigration(
 			});
 			savedFilterLookup = segmentResult.savedFilterLookup;
 			segmentConstantLookup = segmentResult.segmentConstantLookup;
+			semverSavedFilterIds = segmentResult.semverSavedFilterIds;
 			segmentMigrationStats = segmentResult.stats;
 			if (segmentResult.stats.discovered > 0) {
 				const {
@@ -1510,7 +1513,7 @@ async function executeMigration(
 									},
 								},
 							});
-							if (hasSemverConditions(allocations)) {
+							if (hasSemverConditions(allocations, semverSavedFilterIds)) {
 								dryRunRequests.push({
 									method: 'PUT',
 									path: `/api/v2/feature-flags/${existingFlagId}`,
@@ -1554,7 +1557,7 @@ async function executeMigration(
 								syncTags,
 								ddSite,
 							);
-							if (hasSemverConditions(allocations)) {
+							if (hasSemverConditions(allocations, semverSavedFilterIds)) {
 								await updateFlagDistributionChannel(
 									ddApiKey,
 									ddAppKey,
@@ -1617,7 +1620,7 @@ async function executeMigration(
 								.length,
 							deleted: deleteRequests.length,
 						};
-						if (hasSemverConditions(allocations)) {
+						if (hasSemverConditions(allocations, semverSavedFilterIds)) {
 							dryRunRequests.push({
 								method: 'PUT',
 								path: `/api/v2/feature-flags/${existingFlagId}`,
@@ -1708,7 +1711,7 @@ async function executeMigration(
 								ddSite,
 							);
 							const variantCounts = variantSyncResult.counts;
-							if (hasSemverConditions(allocations)) {
+							if (hasSemverConditions(allocations, semverSavedFilterIds)) {
 								await updateFlagDistributionChannel(
 									ddApiKey,
 									ddAppKey,
@@ -1830,7 +1833,7 @@ async function executeMigration(
 							...(appliedPrefix ? { key_prefix: appliedPrefix } : {}),
 						},
 						...(tags.length > 0 ? { tags } : {}),
-						...(hasSemverConditions(allocations)
+						...(hasSemverConditions(allocations, semverSavedFilterIds)
 							? { distribution_channel: 'CLIENT' }
 							: {}),
 					};
@@ -1876,7 +1879,7 @@ async function executeMigration(
 								request,
 								ddSite,
 							);
-							if (hasSemverConditions(allocations)) {
+							if (hasSemverConditions(allocations, semverSavedFilterIds)) {
 								semverForcedClientKeys.push(flag.key);
 							}
 
