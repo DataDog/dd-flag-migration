@@ -5,7 +5,6 @@ import { mountLive } from './mount.js';
 
 const UPDATE_INTERVAL = 20;
 const WINDOW_SIZE = 20;
-const MAX_SETTLED = 500;
 
 export type SettleStatus = 'created' | 'synced' | 'skipped' | 'failed';
 
@@ -181,14 +180,10 @@ export function migrationRunner(opts: {
 		},
 		printMessage(message: string): void {
 			state.settled.push({ id: `s${idCounter++}`, message });
-			if (state.settled.length > MAX_SETTLED)
-				state.settled = state.settled.slice(-MAX_SETTLED);
 			rerender();
 		},
 		settleFlag({ status: _status, message, stats: nextStats }): void {
 			state.settled.push({ id: `s${idCounter++}`, message });
-			if (state.settled.length > MAX_SETTLED)
-				state.settled = state.settled.slice(-MAX_SETTLED);
 			state.value++;
 			state.stats = { retrying: 0, ...nextStats };
 			completionTimes.push(Date.now());
