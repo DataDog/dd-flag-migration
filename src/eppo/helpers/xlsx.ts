@@ -5,6 +5,7 @@ import type { RowColor } from '../../evaluate/result-classifier.js';
 import { classifyRow } from '../../evaluate/result-classifier.js';
 import {
 	ARGB,
+	addEnvironmentMappingSection,
 	addHeaderRow,
 	addSheetHeader,
 	colorRow,
@@ -127,6 +128,15 @@ export async function exportMigrationToXlsx(
 		headers.length,
 		'Flag Migration Report — Eppo → Datadog',
 		`Migration completed on ${dateLabel}. Flags with status 'Created' require a code change: update your flag evaluation calls to reference the Datadog flag key shown in the 'Action Required' column. Flags with status 'Skipped' were not migrated (unsupported type or targeting).`,
+	);
+	addEnvironmentMappingSection(
+		ws,
+		headers.length,
+		'Eppo',
+		(migration.environmentMapping ?? []).map((m) => ({
+			sourceLabel: m.sourceEnvName,
+			datadogLabel: m.datadogEnvName,
+		})),
 	);
 	addHeaderRow(ws, headers);
 

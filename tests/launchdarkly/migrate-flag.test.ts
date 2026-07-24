@@ -1258,6 +1258,7 @@ function migrateFlagWithConflicts(
 	datadogFlags: DatadogFlagEntry[],
 	projectKey: string,
 	conflictResolution?: ConflictResolution,
+	resolvedDdKey?: string,
 ): {
 	action: 'create' | 'sync' | 'skip';
 	skipReason?: string;
@@ -1310,8 +1311,8 @@ function migrateFlagWithConflicts(
 		};
 	}
 
-	// Create new flag (possibly with prefix)
-	const ddKey = targetPlan.datadogKey;
+	// Create new flag (possibly with prefix or user-supplied custom key)
+	const ddKey = resolvedDdKey ?? targetPlan.datadogKey;
 
 	const metadata: MigrationMetadata = {
 		project_key: projectKey,
@@ -1325,7 +1326,7 @@ function migrateFlagWithConflicts(
 
 	const request: DatadogCreateFlagRequest = {
 		key: ddKey,
-		name: flag.name,
+		name: flag.name === flag.key ? ddKey : flag.name,
 		value_type: mapFlagType(flag),
 		variants,
 		allocations: allocations.length > 0 ? allocations : undefined,
@@ -1923,6 +1924,89 @@ describe('migrate a cross-project prefixed flag that also has team tags', () => 
 		expect(result.request?.key).toBe('mobile-feature-toggle');
 		expect(result.request?.tags).toEqual(['mobile-app', 'project:mobile']);
 		expect(result.request?.migration_metadata?.key_prefix).toBe('mobile-');
+	});
+});
+
+describe('name follows key when key matches name', () => {
+	const envMapping = new Map([['production', ddProd]]);
+
+	// Flag where name === key (common when LD users never set a display name)
+	const keyEqualsNameFlag: LDFlag = {
+		name: 'my-feature-flag',
+		kind: 'boolean',
+		key: 'my-feature-flag',
+		variations: [
+			{ _id: 'v0', value: true, name: 'on' },
+			{ _id: 'v1', value: false, name: 'off' },
+		],
+		defaults: { onVariation: 0, offVariation: 1 },
+		environments: {
+			production: makeEnv({
+				_environmentName: 'Production',
+				on: true,
+				fallthrough: { variation: 0 },
+			}),
+		},
+		tags: [],
+		archived: false,
+		deprecated: false,
+		temporary: false,
+	};
+
+	// Existing DD flag from a different project forces a prefix
+	const datadogFlags: DatadogFlagEntry[] = [
+		{
+			id: 'dd-uuid-other',
+			key: 'my-feature-flag',
+			migration_metadata: { project_key: 'other', flag_key: 'my-feature-flag' },
+		},
+	];
+
+	it('updates name to match the prefixed key when name equals original key', () => {
+		const result = migrateFlagWithConflicts(
+			keyEqualsNameFlag,
+			envMapping,
+			['production'],
+			datadogFlags,
+			'mobile',
+			{ action: 'prefix', prefix: 'mobile-' },
+		);
+		expect(result.action).toBe('create');
+		expect(result.request?.key).toBe('mobile-my-feature-flag');
+		expect(result.request?.name).toBe('mobile-my-feature-flag');
+	});
+
+	it('updates name to match a user-supplied custom key when name equals original key', () => {
+		const result = migrateFlagWithConflicts(
+			keyEqualsNameFlag,
+			envMapping,
+			['production'],
+			[],
+			'mobile',
+			undefined,
+			'my-feature-flag-v2',
+		);
+		expect(result.action).toBe('create');
+		expect(result.request?.key).toBe('my-feature-flag-v2');
+		expect(result.request?.name).toBe('my-feature-flag-v2');
+	});
+
+	it('keeps original name when name differs from key even after renaming', () => {
+		const flagWithDistinctName: LDFlag = {
+			...keyEqualsNameFlag,
+			name: 'My Feature Flag',
+		};
+		const result = migrateFlagWithConflicts(
+			flagWithDistinctName,
+			envMapping,
+			['production'],
+			datadogFlags,
+			'mobile',
+			{ action: 'prefix', prefix: 'mobile-' },
+		);
+		expect(result.action).toBe('create');
+		expect(result.request?.key).toBe('mobile-my-feature-flag');
+		expect(result.request?.name).toBe('My Feature Flag');
 	});
 });
 

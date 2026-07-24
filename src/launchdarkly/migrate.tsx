@@ -1893,7 +1893,7 @@ async function executeMigration(
 
 					const request: DatadogCreateFlagRequest = {
 						key: ddKey,
-						name: flag.name,
+						name: flag.name === flag.key ? ddKey : flag.name,
 						value_type: mapFlagType(flag),
 						variants,
 						allocations: allocations.length > 0 ? allocations : undefined,
@@ -2091,7 +2091,7 @@ async function executeMigration(
 				exportToSheets = await confirm({
 					message:
 						'Would you like to export migration results to an .xlsx file?',
-					default: false,
+					default: true,
 				});
 			}
 			if (exportToSheets) {
