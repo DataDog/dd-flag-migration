@@ -1105,7 +1105,7 @@ async function main(): Promise<void> {
 	} else {
 		const exportToXlsx = await confirm({
 			message: 'Would you like to export evaluation results to an .xlsx file?',
-			default: isAdvanced,
+			default: true,
 		});
 		if (exportToXlsx) {
 			await exportEvaluationToXlsx(

@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import ExcelJS from 'exceljs';
 import {
 	ARGB,
+	addEnvironmentMappingSection,
 	addHeaderRow,
 	addSheetHeader,
 	colorRow,
@@ -175,6 +176,15 @@ export async function exportLDMigrationToXlsx(
 		headers.length,
 		'Flag Migration Report — LaunchDarkly → Datadog',
 		`Migration completed on ${dateLabel} for project ${projectLabel}. Flags with status 'Created' require a code change: update your flag evaluation calls to reference the Datadog flag key shown in the 'Action Required' column. Flags with status 'Skipped' were not migrated (unsupported operator or archived).`,
+	);
+	addEnvironmentMappingSection(
+		ws,
+		headers.length,
+		'LD',
+		(migration.environmentMapping ?? []).map((m) => ({
+			sourceLabel: m.sourceEnvName,
+			datadogLabel: m.datadogEnvName,
+		})),
 	);
 	addHeaderRow(ws, headers);
 
