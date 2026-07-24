@@ -35,7 +35,10 @@ import {
 	updateFlagDistributionChannel,
 	updateFlagTags,
 } from '../datadog/api.js';
-import { buildVariantSyncDryRunRequests } from '../datadog/helpers.js';
+import {
+	buildVariantKeyToIdAliases,
+	buildVariantSyncDryRunRequests,
+} from '../datadog/helpers.js';
 import type {
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,
@@ -1749,12 +1752,24 @@ async function executeMigration(
 							// a variant while an allocation may still reference it.
 							// Boolean flags have immutable variants in DD — skip sync.
 							const variantSyncResult = isBooleanFlag
-								? {
-										variantKeyToId: new Map<string, string>(),
-										sourceKeyToDatadogKey: new Map<string, string>(),
-										counts: { added: 0, updated: 0, deleted: 0 },
-										pendingDeletes: [] as Array<{ id: string; key: string }>,
-									}
+								? await (async () => {
+										const { variants: existingVariants } =
+											await fetchFlagDetail(
+												ddApiKey,
+												ddAppKey,
+												existingFlagId,
+												ddSite,
+											);
+										return {
+											variantKeyToId: buildVariantKeyToIdAliases(
+												variants,
+												existingVariants,
+											),
+											sourceKeyToDatadogKey: new Map<string, string>(),
+											counts: { added: 0, updated: 0, deleted: 0 },
+											pendingDeletes: [] as Array<{ id: string; key: string }>,
+										};
+									})()
 								: await syncVariantsCreatesAndUpdates(
 										ddApiKey,
 										ddAppKey,

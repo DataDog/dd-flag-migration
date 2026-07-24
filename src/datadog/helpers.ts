@@ -155,6 +155,18 @@ export function planVariantSync(
 	return { toCreate, toUpdate, toDelete };
 }
 
+export function buildVariantKeyToIdAliases(
+	sourceVariants: SourceVariant[],
+	existingVariants: DatadogVariantDetail[],
+): Map<string, string> {
+	const plan = planVariantSync(sourceVariants, existingVariants);
+	const aliases = new Map<string, string>();
+	for (const v of plan.toUpdate) {
+		aliases.set(v.sourceKey, v.id);
+	}
+	return aliases;
+}
+
 function reserveCreateVariantKey(
 	sourceKey: string,
 	reservedVariantKeys: Set<string>,

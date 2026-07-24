@@ -30,6 +30,7 @@ import {
 	updateVariant,
 } from '../src/datadog/api.js';
 import {
+	buildVariantKeyToIdAliases,
 	buildVariantSyncDryRunRequests,
 	eppoSourceIdLookupKey,
 	planVariantSync,
@@ -760,6 +761,40 @@ describe('syncAllocationsForEnvironment', () => {
 			SITE,
 			undefined,
 			new Map([['new-on', 'variant-uuid-on']]),
+		);
+	});
+
+	it('throws before PUT when a variant key cannot be resolved to a UUID', async () => {
+		const flagId = 'flag-uuid-123';
+		const envId = 'env-uuid-456';
+
+		mockGetPrereqs(flagId, [], []);
+		mock
+			.onPut(
+				`${BASE}/api/v2/feature-flags/${flagId}/environments/${envId}/allocations`,
+			)
+			.reply(() => {
+				throw new Error('PUT should not be called');
+			});
+
+		await expect(
+			syncAllocationsForEnvironment(
+				API_KEY,
+				APP_KEY,
+				flagId,
+				envId,
+				[
+					{
+						name: 'Production',
+						key: 'my-flag-production',
+						type: 'FEATURE_GATE',
+						variant_weights: [{ variant_key: 'true', value: 100 }],
+					},
+				],
+				SITE,
+			),
+		).rejects.toThrow(
+			`Unable to resolve variant key(s) to Datadog variant UUIDs for flag ${flagId} in environment ${envId}: true`,
 		);
 	});
 
@@ -2332,6 +2367,46 @@ describe('planVariantSync — source_id matching', () => {
 		);
 
 		expect(sourceKeyToDatadogKey.get('new-name')).toBe('old-name');
+	});
+
+	it('builds source-key to UUID aliases for legacy boolean variants', () => {
+		const aliases = buildVariantKeyToIdAliases(
+			[
+				{
+					key: 'true',
+					name: 'Enabled',
+					value: 'true',
+					sourceId: 'ld-true',
+				},
+				{
+					key: 'false',
+					name: 'Disabled',
+					value: 'false',
+					sourceId: 'ld-false',
+				},
+			],
+			[
+				{
+					id: 'uuid-enabled',
+					key: 'enabled',
+					name: 'Enabled',
+					value: 'true',
+				},
+				{
+					id: 'uuid-disabled',
+					key: 'disabled',
+					name: 'Disabled',
+					value: 'false',
+				},
+			],
+		);
+
+		expect(aliases).toEqual(
+			new Map([
+				['true', 'uuid-enabled'],
+				['false', 'uuid-disabled'],
+			]),
+		);
 	});
 });
 

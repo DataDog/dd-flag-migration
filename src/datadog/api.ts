@@ -726,6 +726,13 @@ export async function syncAllocationsForEnvironment(
 	const existingKeyToId =
 		allocationKeyToIdByEnv.get(environmentId) ?? new Map<string, string>();
 
+	const unresolvedVariantKeys = new Set<string>();
+	const resolveVariantId = (variantKey: string): string => {
+		const variantId = variantKeyToId.get(variantKey);
+		if (variantId !== undefined) return variantId;
+		unresolvedVariantKeys.add(variantKey);
+		return variantKey;
+	};
 	const body = {
 		data: allocations.map((alloc) => ({
 			type: 'allocations',
@@ -733,12 +740,19 @@ export async function syncAllocationsForEnvironment(
 			attributes: {
 				...alloc,
 				variant_weights: alloc.variant_weights.map((vw) => ({
-					variant_id: variantKeyToId.get(vw.variant_key) ?? vw.variant_key,
+					variant_id: resolveVariantId(vw.variant_key),
 					value: vw.value,
 				})),
 			},
 		})),
 	};
+	if (unresolvedVariantKeys.size > 0) {
+		throw new Error(
+			`Unable to resolve variant key(s) to Datadog variant UUIDs for flag ${flagId} in environment ${environmentId}: ${[
+				...unresolvedVariantKeys,
+			].join(', ')}`,
+		);
+	}
 	await ddClient.put(
 		`${baseUrl}/api/v2/feature-flags/${flagId}/environments/${environmentId}/allocations`,
 		body,
