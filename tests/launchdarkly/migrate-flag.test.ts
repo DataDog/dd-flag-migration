@@ -251,8 +251,8 @@ describe('migrate a flag with individual targets, rules, and fallthrough', () =>
 		});
 		// 100% on variation 0 (true)
 		expect(target?.variant_weights).toEqual([
-			{ variant_key: 'variation-0', value: 100 },
-			{ variant_key: 'variation-1', value: 0 },
+			{ variant_key: 'true', value: 100 },
+			{ variant_key: 'false', value: 0 },
 		]);
 	});
 
@@ -266,8 +266,8 @@ describe('migrate a flag with individual targets, rules, and fallthrough', () =>
 		});
 		// Rollout: 0% true, 100% false
 		expect(rule?.variant_weights).toEqual([
-			{ variant_key: 'variation-0', value: 0 },
-			{ variant_key: 'variation-1', value: 100 },
+			{ variant_key: 'true', value: 0 },
+			{ variant_key: 'false', value: 100 },
 		]);
 	});
 
@@ -276,8 +276,8 @@ describe('migrate a flag with individual targets, rules, and fallthrough', () =>
 		expect(ft?.targeting_rules).toBeUndefined();
 		// 100% on variation 1 (false)
 		expect(ft?.variant_weights).toEqual([
-			{ variant_key: 'variation-0', value: 0 },
-			{ variant_key: 'variation-1', value: 100 },
+			{ variant_key: 'true', value: 0 },
+			{ variant_key: 'false', value: 100 },
 		]);
 	});
 

@@ -236,7 +236,34 @@ describe('flag-level migration failures', () => {
 	});
 
 	it('captures LaunchDarkly live variant sync failures in the migration report', async () => {
-		const flag = ldFlag();
+		// Must be multivariate: boolean flags skip variant sync and would not hit this path.
+		const flag: LDFlag = {
+			name: 'Flag With Bad Variant',
+			kind: 'multivariate',
+			key: 'flag-with-bad-variant',
+			variations: [
+				{ _id: 'var-on', value: 'on', name: 'On' },
+				{ _id: 'var-off', value: 'off', name: 'Off' },
+			],
+			defaults: { onVariation: 0, offVariation: 1 },
+			environments: {
+				production: {
+					on: false,
+					archived: false,
+					targets: [],
+					contextTargets: [],
+					rules: [],
+					fallthrough: { variation: 1 },
+					offVariation: 1,
+					prerequisites: [],
+					_environmentName: 'Production',
+				},
+			},
+			tags: [],
+			archived: false,
+			deprecated: false,
+			temporary: false,
+		};
 		ldMock.onGet(`${LD_BASE}/api/v2/projects`).reply(200, {
 			items: [{ key: 'proj', name: 'Project' }],
 			totalCount: 1,

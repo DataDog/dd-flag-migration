@@ -548,7 +548,7 @@ describe('buildVariants', () => {
 		expect(variants[1].key).toBe('config-b');
 	});
 
-	it('uses index-based keys when name is missing', () => {
+	it('uses stringified value as key when name is missing (non-JSON)', () => {
 		const flag = makeFlag({
 			key: 'test',
 			kind: 'multivariate',
@@ -558,8 +558,26 @@ describe('buildVariants', () => {
 			],
 		});
 		const variants = buildVariants(flag);
+		expect(variants[0].key).toBe('red');
+		expect(variants[0].name).toBe('red');
+		expect(variants[1].key).toBe('blue');
+		expect(variants[1].name).toBe('blue');
+	});
+
+	it('uses index-based keys for unnamed JSON variations', () => {
+		const flag = makeFlag({
+			key: 'test',
+			kind: 'multivariate',
+			variations: [
+				{ _id: 'v0', value: { x: 1 } },
+				{ _id: 'v1', value: { x: 2 } },
+			],
+		});
+		const variants = buildVariants(flag);
 		expect(variants[0].key).toBe('variation-0');
+		expect(variants[0].name).toBe('Variation 0');
 		expect(variants[1].key).toBe('variation-1');
+		expect(variants[1].name).toBe('Variation 1');
 	});
 });
 

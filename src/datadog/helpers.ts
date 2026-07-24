@@ -54,14 +54,34 @@ export function planVariantSync(
 	existingVariants: DatadogVariantDetail[],
 ): VariantSyncPlan {
 	// Index existing variants by their migration_metadata.source_id (preferred,
-	// survives source-side renames) and by key (fallback for legacy variants
-	// migrated before source_id metadata existed).
+	// survives source-side renames), by key and name (fallbacks for legacy
+	// variants without source_id), and by value (last-resort for variants whose
+	// key/name drifted — only used when the value is unique across all existing
+	// variants so the match is unambiguous).
 	const existingBySourceId = new Map<string, DatadogVariantDetail>();
 	const existingByKey = new Map<string, DatadogVariantDetail>();
+	const existingByName = new Map<string, DatadogVariantDetail>();
+	const valueCounts = new Map<string, number>();
 	for (const ev of existingVariants) {
 		existingByKey.set(ev.key, ev);
+		existingByName.set(ev.name, ev);
+		valueCounts.set(ev.value, (valueCounts.get(ev.value) ?? 0) + 1);
 		const sid = readSourceIdFromMetadata(ev.migration_metadata);
 		if (sid !== undefined) existingBySourceId.set(sid, ev);
+	}
+	// Only index non-JSON values: JSON serialisation is key-order-sensitive so
+	// the same object can stringify differently across LD API calls, making it
+	// an unreliable match key.  Non-JSON variants (booleans, numbers, strings)
+	// never start with '{' or '['.
+	const existingByValue = new Map<string, DatadogVariantDetail>();
+	for (const ev of existingVariants) {
+		if (
+			valueCounts.get(ev.value) === 1 &&
+			!ev.value.startsWith('{') &&
+			!ev.value.startsWith('[')
+		) {
+			existingByValue.set(ev.value, ev);
+		}
 	}
 
 	const toCreate: SourceVariant[] = [];
@@ -71,8 +91,14 @@ export function planVariantSync(
 	for (const sv of sourceVariants) {
 		// 1. Prefer match on stable source_id (survives rename).
 		// 2. Fall back to key match (for legacy variants with no source_id meta).
+		// 3. Name match: catches key drift when the display name is stable.
+		// 4. Value match: catches key+name drift (e.g. "Variation 0" → "true")
+		//    when the value uniquely identifies the variant.
 		const existing =
-			existingBySourceId.get(sv.sourceId) ?? existingByKey.get(sv.key);
+			existingBySourceId.get(sv.sourceId) ??
+			existingByKey.get(sv.key) ??
+			existingByName.get(sv.name) ??
+			existingByValue.get(sv.value);
 		if (!existing) {
 			toCreate.push(sv);
 			continue;

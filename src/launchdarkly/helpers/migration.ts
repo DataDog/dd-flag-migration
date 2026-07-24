@@ -252,8 +252,15 @@ export function buildVariants(
 	flag: LDFlag,
 ): Array<{ key: string; name: string; value: string; sourceId: string }> {
 	return flag.variations.map((v, i) => {
-		const key = slugify(v.name ?? `variation-${i}`);
-		const name = v.name ?? `Variation ${i}`;
+		// For unnamed non-JSON variations use the stringified value (e.g. "true",
+		// "1") so the variant key/name is meaningful and stable. JSON variations
+		// fall back to "variation-{i}" because their serialized value is too long.
+		const isJsonValue = typeof v.value === 'object' && v.value !== null;
+		const fallbackName = isJsonValue
+			? `Variation ${i}`
+			: String(v.value).toLowerCase();
+		const name = v.name ?? fallbackName;
+		const key = slugify(name);
 		const rawValue =
 			typeof v.value === 'object' && v.value !== null
 				? v.value
