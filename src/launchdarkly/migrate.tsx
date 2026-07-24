@@ -2049,7 +2049,7 @@ async function executeMigration(
 				exportToSheets = await confirm({
 					message:
 						'Would you like to export migration results to an .xlsx file?',
-					default: false,
+					default: true,
 				});
 			}
 			if (exportToSheets) {
