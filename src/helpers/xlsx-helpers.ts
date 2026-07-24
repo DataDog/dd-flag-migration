@@ -71,5 +71,38 @@ export function addHeaderRow(ws: ExcelJS.Worksheet, headers: string[]): void {
 	const headerRow = ws.addRow(headers);
 	headerRow.eachCell((cell) => applyHeaderStyle(cell));
 	headerRow.height = 18;
-	ws.views = [{ state: 'frozen', ySplit: 4 }];
+	ws.views = [{ state: 'frozen', ySplit: headerRow.number }];
+}
+
+export interface EnvMappingEntry {
+	sourceLabel: string;
+	datadogLabel: string;
+}
+
+export function addEnvironmentMappingSection(
+	ws: ExcelJS.Worksheet,
+	numCols: number,
+	sourceProviderLabel: string,
+	mappings: EnvMappingEntry[],
+): void {
+	if (mappings.length === 0) return;
+
+	const labelRow = ws.addRow(['Environment Mappings']);
+	ws.mergeCells(labelRow.number, 1, labelRow.number, numCols);
+	const labelCell = labelRow.getCell(1);
+	labelCell.font = { bold: true, size: 11 };
+	labelCell.alignment = { vertical: 'middle' };
+	labelCell.fill = fillSolid(ARGB.white);
+
+	for (const { sourceLabel, datadogLabel } of mappings) {
+		const row = ws.addRow([
+			`${sourceLabel} (${sourceProviderLabel}) → ${datadogLabel} (DD)`,
+		]);
+		ws.mergeCells(row.number, 1, row.number, numCols);
+		const cell = row.getCell(1);
+		cell.alignment = { vertical: 'middle' };
+		cell.fill = fillSolid(ARGB.white);
+	}
+
+	ws.addRow([]);
 }
