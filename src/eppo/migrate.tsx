@@ -48,12 +48,11 @@ import { EppoMigrationSummary } from './components/EppoMigrationSummary.js';
 import {
 	buildAllocations,
 	buildDefaultVariantKeyPerEnv,
+	buildVariants,
 	getEnvsToEnable,
 	hasJsonArrayVariants,
 	hasSemverConditions,
 	mapVariationType,
-	normalizeJsonVariantValue,
-	slugify,
 } from './helpers/migration.js';
 import type {
 	DryRunFile,
@@ -539,15 +538,7 @@ async function confirmMigration(
 					continue;
 				}
 				const isJsonFlag = flag.variation_type === 'JSON';
-				const variants = (flag.variations ?? []).map((v) => ({
-					key: slugify(v.name),
-					name: v.name,
-					value: isJsonFlag
-						? normalizeJsonVariantValue(v.variant_key)
-						: v.variant_key,
-					// EppoFlagVariation.id is the stable identifier — survives renames.
-					sourceId: String(v.id),
-				}));
+				const variants = buildVariants(flag);
 				if (variants.length === 0) {
 					doSkip(
 						flag.key,
@@ -686,13 +677,16 @@ async function confirmMigration(
 							existingFlagId,
 							site,
 						);
-						const { createUpdateRequests, deleteRequests } =
-							buildVariantSyncDryRunRequests(
-								existingFlagId,
-								variants,
-								existingVariantsDry,
-								'eppo',
-							);
+						const {
+							createUpdateRequests,
+							deleteRequests,
+							sourceKeyToDatadogKey,
+						} = buildVariantSyncDryRunRequests(
+							existingFlagId,
+							variants,
+							existingVariantsDry,
+							'eppo',
+						);
 						// Variant creates+updates must precede allocation PUTs so that
 						// new variants exist when allocations reference them.
 						for (const r of createUpdateRequests) dryRunRequests.push(r);
@@ -724,7 +718,11 @@ async function confirmMigration(
 								(sum, r) => sum + (r.targeting_rules?.length ?? 0),
 								0,
 							);
-							const dvk = defaultVariantKeyPerEnv.get(ddEnv.id);
+							const sourceDvk = defaultVariantKeyPerEnv.get(ddEnv.id);
+							const dvk =
+								sourceDvk === undefined
+									? undefined
+									: (sourceKeyToDatadogKey.get(sourceDvk) ?? sourceDvk);
 							dryRunRequests.push({
 								method: 'PUT',
 								path:
@@ -797,6 +795,15 @@ async function confirmMigration(
 							let syncedRuleCount = 0;
 							for (const ddEnv of envsToEnable) {
 								const syncReqs = toSyncRequests(allocations, ddEnv.id);
+								const sourceDefaultVariantKey = defaultVariantKeyPerEnv.get(
+									ddEnv.id,
+								);
+								const defaultVariantKey =
+									sourceDefaultVariantKey === undefined
+										? undefined
+										: (variantSyncResult.sourceKeyToDatadogKey.get(
+												sourceDefaultVariantKey,
+											) ?? sourceDefaultVariantKey);
 								await syncAllocationsForEnvironment(
 									ddApiKey,
 									ddAppKey,
@@ -804,7 +811,8 @@ async function confirmMigration(
 									ddEnv.id,
 									syncReqs,
 									site,
-									defaultVariantKeyPerEnv.get(ddEnv.id),
+									defaultVariantKey,
+									variantSyncResult.variantKeyToId,
 								);
 								syncedAllocCount += syncReqs.length;
 								syncedRuleCount += syncReqs.reduce(

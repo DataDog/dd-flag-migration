@@ -35,7 +35,10 @@ import {
 	updateFlagDistributionChannel,
 	updateFlagTags,
 } from '../datadog/api.js';
-import { buildVariantSyncDryRunRequests } from '../datadog/helpers.js';
+import {
+	buildVariantKeyToIdAliases,
+	buildVariantSyncDryRunRequests,
+} from '../datadog/helpers.js';
 import type {
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,
@@ -1389,6 +1392,9 @@ async function executeMigration(
 				}
 
 				const variants = buildVariants(flag);
+				// Boolean flags have exactly two immutable variants in DD (true/false).
+				// Attempting to sync variants for them hits a backend 400.
+				const isBooleanFlag = flag.kind === 'boolean';
 				if (variants.length === 0) {
 					doSkip(
 						flag.key,
@@ -1511,26 +1517,29 @@ async function executeMigration(
 						// reference variants by UUID). Creates+updates are safe.
 						let variantCounts = { added: 0, updated: 0, deleted: 0 };
 						if (dryRun) {
-							const { variants: existingVariants } = await fetchFlagDetail(
-								ddApiKey,
-								ddAppKey,
-								existingFlagId,
-								ddSite,
-							);
-							const { createUpdateRequests } = buildVariantSyncDryRunRequests(
-								existingFlagId,
-								variants,
-								existingVariants,
-								'launchdarkly',
-							);
-							for (const r of createUpdateRequests) dryRunRequests.push(r);
-							variantCounts = {
-								added: createUpdateRequests.filter((r) => r.method === 'POST')
-									.length,
-								updated: createUpdateRequests.filter((r) => r.method === 'PUT')
-									.length,
-								deleted: 0,
-							};
+							if (!isBooleanFlag) {
+								const { variants: existingVariants } = await fetchFlagDetail(
+									ddApiKey,
+									ddAppKey,
+									existingFlagId,
+									ddSite,
+								);
+								const { createUpdateRequests } = buildVariantSyncDryRunRequests(
+									existingFlagId,
+									variants,
+									existingVariants,
+									'launchdarkly',
+								);
+								for (const r of createUpdateRequests) dryRunRequests.push(r);
+								variantCounts = {
+									added: createUpdateRequests.filter((r) => r.method === 'POST')
+										.length,
+									updated: createUpdateRequests.filter(
+										(r) => r.method === 'PUT',
+									).length,
+									deleted: 0,
+								};
+							}
 							dryRunRequests.push({
 								method: 'PUT',
 								path: `/api/v2/feature-flags/${existingFlagId}`,
@@ -1569,15 +1578,17 @@ async function executeMigration(
 								);
 							}
 						} else {
-							const result = await syncVariantsCreatesAndUpdates(
-								ddApiKey,
-								ddAppKey,
-								existingFlagId,
-								variants,
-								'launchdarkly',
-								ddSite,
-							);
-							variantCounts = { ...result.counts, deleted: 0 };
+							if (!isBooleanFlag) {
+								const result = await syncVariantsCreatesAndUpdates(
+									ddApiKey,
+									ddAppKey,
+									existingFlagId,
+									variants,
+									'launchdarkly',
+									ddSite,
+								);
+								variantCounts = { ...result.counts, deleted: 0 };
+							}
 							await updateFlagTags(
 								ddApiKey,
 								ddAppKey,
@@ -1626,28 +1637,37 @@ async function executeMigration(
 					activeRunner.beginFlag(flag.key);
 
 					if (dryRun) {
-						const { variants: existingVariantsDry } = await fetchFlagDetail(
-							ddApiKey,
-							ddAppKey,
-							existingFlagId,
-							ddSite,
-						);
-						const { createUpdateRequests, deleteRequests } =
-							buildVariantSyncDryRunRequests(
+						let deleteRequestsDry: Array<{
+							method: 'DELETE';
+							path: string;
+							body: unknown;
+						}> = [];
+						let variantCountsDry = { added: 0, updated: 0, deleted: 0 };
+						if (!isBooleanFlag) {
+							const { variants: existingVariantsDry } = await fetchFlagDetail(
+								ddApiKey,
+								ddAppKey,
 								existingFlagId,
-								variants,
-								existingVariantsDry,
-								'launchdarkly',
+								ddSite,
 							);
-						// Variant creates+updates precede allocation PUTs.
-						for (const r of createUpdateRequests) dryRunRequests.push(r);
-						const variantCountsDry = {
-							added: createUpdateRequests.filter((r) => r.method === 'POST')
-								.length,
-							updated: createUpdateRequests.filter((r) => r.method === 'PUT')
-								.length,
-							deleted: deleteRequests.length,
-						};
+							const { createUpdateRequests, deleteRequests } =
+								buildVariantSyncDryRunRequests(
+									existingFlagId,
+									variants,
+									existingVariantsDry,
+									'launchdarkly',
+								);
+							// Variant creates+updates precede allocation PUTs.
+							for (const r of createUpdateRequests) dryRunRequests.push(r);
+							variantCountsDry = {
+								added: createUpdateRequests.filter((r) => r.method === 'POST')
+									.length,
+								updated: createUpdateRequests.filter((r) => r.method === 'PUT')
+									.length,
+								deleted: deleteRequests.length,
+							};
+							deleteRequestsDry = deleteRequests;
+						}
 						if (hasSemverConditions(allocations, semverSavedFilterIds)) {
 							dryRunRequests.push({
 								method: 'PUT',
@@ -1681,7 +1701,7 @@ async function executeMigration(
 							});
 						}
 						// Variant deletes go AFTER allocation PUTs.
-						for (const r of deleteRequests) dryRunRequests.push(r);
+						for (const r of deleteRequestsDry) dryRunRequests.push(r);
 						dryRunRequests.push({
 							method: 'PUT',
 							path: `/api/v2/feature-flags/${existingFlagId}`,
@@ -1730,14 +1750,34 @@ async function executeMigration(
 							// variant_id resolution sees new variants. Deletes are
 							// deferred until AFTER allocation sync so we never remove
 							// a variant while an allocation may still reference it.
-							const variantSyncResult = await syncVariantsCreatesAndUpdates(
-								ddApiKey,
-								ddAppKey,
-								existingFlagId,
-								variants,
-								'launchdarkly',
-								ddSite,
-							);
+							// Boolean flags have immutable variants in DD — skip sync.
+							const variantSyncResult = isBooleanFlag
+								? await (async () => {
+										const { variants: existingVariants } =
+											await fetchFlagDetail(
+												ddApiKey,
+												ddAppKey,
+												existingFlagId,
+												ddSite,
+											);
+										return {
+											variantKeyToId: buildVariantKeyToIdAliases(
+												variants,
+												existingVariants,
+											),
+											sourceKeyToDatadogKey: new Map<string, string>(),
+											counts: { added: 0, updated: 0, deleted: 0 },
+											pendingDeletes: [] as Array<{ id: string; key: string }>,
+										};
+									})()
+								: await syncVariantsCreatesAndUpdates(
+										ddApiKey,
+										ddAppKey,
+										existingFlagId,
+										variants,
+										'launchdarkly',
+										ddSite,
+									);
 							const variantCounts = variantSyncResult.counts;
 							if (hasSemverConditions(allocations, semverSavedFilterIds)) {
 								await updateFlagDistributionChannel(
@@ -1760,6 +1800,8 @@ async function executeMigration(
 									ddEnv.id,
 									syncReqs,
 									ddSite,
+									undefined,
+									variantSyncResult.variantKeyToId,
 								);
 								syncedAllocCount += syncReqs.length;
 								syncedRuleCount += syncReqs.reduce(

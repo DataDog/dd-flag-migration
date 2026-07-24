@@ -4,6 +4,7 @@ import type {
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,
 	DatadogTargetingRule,
+	SourceVariant,
 } from '../../datadog/types.js';
 import type { EppoAllocation, EppoFlag } from '../types.js';
 
@@ -16,6 +17,17 @@ export function slugify(s: string): string {
 	);
 }
 
+function uniqueVariantKey(preferredKey: string, usedKeys: Set<string>): string {
+	let key = preferredKey;
+	let suffix = 1;
+	while (usedKeys.has(key)) {
+		key = `${preferredKey}-${suffix}`;
+		suffix++;
+	}
+	usedKeys.add(key);
+	return key;
+}
+
 // Datadog requires JSON variant values to be objects. Eppo sometimes stores JSON
 // arrays as variant_key values, so wrap them.
 export function normalizeJsonVariantValue(raw: string): string {
@@ -26,6 +38,29 @@ export function normalizeJsonVariantValue(raw: string): string {
 		// not valid JSON — pass through as-is
 	}
 	return raw;
+}
+
+export function buildVariationIdToKey(flag: EppoFlag): Map<number, string> {
+	const usedKeys = new Set<string>();
+	const variationIdToKey = new Map<number, string>();
+	for (const v of flag.variations ?? []) {
+		variationIdToKey.set(v.id, uniqueVariantKey(slugify(v.name), usedKeys));
+	}
+	return variationIdToKey;
+}
+
+export function buildVariants(flag: EppoFlag): SourceVariant[] {
+	const isJsonFlag = flag.variation_type === 'JSON';
+	const variationIdToKey = buildVariationIdToKey(flag);
+	return (flag.variations ?? []).map((v) => ({
+		key: variationIdToKey.get(v.id) ?? slugify(v.name),
+		name: v.name,
+		value: isJsonFlag
+			? normalizeJsonVariantValue(v.variant_key)
+			: v.variant_key,
+		// EppoFlagVariation.id is the stable identifier — survives renames.
+		sourceId: String(v.id),
+	}));
 }
 
 // MAJOR.MINOR.PATCH with optional pre-release and build metadata; no leading zeros
@@ -221,9 +256,7 @@ export function buildDefaultVariantKeyPerEnv(
 	flag: EppoFlag,
 	mapping: Map<number, DatadogEnvironment>,
 ): Map<string, string> {
-	const variationIdToKey = new Map<number, string>();
-	for (const v of flag.variations ?? [])
-		variationIdToKey.set(v.id, slugify(v.name));
+	const variationIdToKey = buildVariationIdToKey(flag);
 
 	const result = new Map<string, string>();
 	for (const [eppoEnvId, ddEnv] of mapping) {
@@ -257,9 +290,7 @@ export function buildAllocations(
 	const variations = flag.variations ?? [];
 	if (variations.length === 0) return [];
 
-	// Build variation_id → variant_key lookup
-	const variationIdToKey = new Map<number, string>();
-	for (const v of variations) variationIdToKey.set(v.id, slugify(v.name));
+	const variationIdToKey = buildVariationIdToKey(flag);
 
 	const eppoAllocations = flag.allocations ?? [];
 	const _activeEnvIds = new Set(

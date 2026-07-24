@@ -1,7 +1,8 @@
 /**
  * Unit tests for Eppo → Datadog migration functions:
- * mapVariationType, mapOperator, buildTargetingRules, buildAllocations, getEnvsToEnable,
- * hasSemverConditions, buildDefaultVariantKeyPerEnv.
+ * mapVariationType, mapOperator, buildVariants, buildTargetingRules,
+ * buildAllocations, getEnvsToEnable, hasSemverConditions,
+ * buildDefaultVariantKeyPerEnv.
  */
 import { describe, expect, it } from '@jest/globals';
 import type {
@@ -12,6 +13,7 @@ import {
 	buildAllocations,
 	buildDefaultVariantKeyPerEnv,
 	buildTargetingRules,
+	buildVariants,
 	getEnvsToEnable,
 	hasSemverConditions,
 	mapOperator,
@@ -135,6 +137,87 @@ describe('mapOperator', () => {
 
 	it('keeps GT as GT when value is a plain version string without patch', () => {
 		expect(mapOperator('GT', ['2.3'])).toBe('GT');
+	});
+});
+
+// ─── buildVariants ───────────────────────────────────────────────────────────
+
+describe('buildVariants', () => {
+	it('uses slugified names as keys when names are unique', () => {
+		const flag = makeFlag({
+			id: 1,
+			key: 'test',
+			variations: [
+				{ id: 100, name: 'Control', variant_key: 'control' },
+				{ id: 200, name: 'Treatment A', variant_key: 'treatment-a' },
+			],
+		});
+
+		expect(buildVariants(flag)).toEqual([
+			{
+				key: 'control',
+				name: 'Control',
+				value: 'control',
+				sourceId: '100',
+			},
+			{
+				key: 'treatment-a',
+				name: 'Treatment A',
+				value: 'treatment-a',
+				sourceId: '200',
+			},
+		]);
+	});
+
+	it('adds numeric suffixes to duplicate slugified names', () => {
+		const flag = makeFlag({
+			id: 1,
+			key: 'test',
+			variations: [
+				{ id: 100, name: 'Same Name', variant_key: 'control' },
+				{ id: 200, name: 'Same Name', variant_key: 'treatment' },
+			],
+		});
+
+		expect(buildVariants(flag).map((v) => v.key)).toEqual([
+			'same-name',
+			'same-name-1',
+		]);
+	});
+
+	it('keeps generated keys unique when numeric suffixes collide with another name', () => {
+		const flag = makeFlag({
+			id: 1,
+			key: 'test',
+			variations: [
+				{ id: 100, name: 'Same Name 1', variant_key: 'first' },
+				{ id: 1000, name: 'Same Name', variant_key: 'second' },
+				{ id: 200, name: 'Same Name', variant_key: 'third' },
+			],
+		});
+
+		expect(buildVariants(flag).map((v) => v.key)).toEqual([
+			'same-name-1',
+			'same-name',
+			'same-name-2',
+		]);
+	});
+
+	it('normalizes JSON array variant values', () => {
+		const flag = makeFlag({
+			id: 1,
+			key: 'test',
+			variation_type: 'JSON',
+			variations: [
+				{ id: 100, name: 'Array', variant_key: '["a","b"]' },
+				{ id: 200, name: 'Object', variant_key: '{"enabled":true}' },
+			],
+		});
+
+		expect(buildVariants(flag).map((v) => v.value)).toEqual([
+			'{"value":["a","b"]}',
+			'{"enabled":true}',
+		]);
 	});
 });
 
@@ -350,6 +433,38 @@ describe('buildAllocations', () => {
 		expect(allocations[0].variant_weights).toEqual([
 			{ variant_key: 'on', value: 70 },
 			{ variant_key: 'off', value: 30 },
+		]);
+	});
+
+	it('uses stable unique variant keys for duplicate Eppo variation names', () => {
+		const flag = makeFlag({
+			id: 1,
+			key: 'duplicate-names',
+			variations: [
+				{ id: 100, name: 'Same', variant_key: 'control' },
+				{ id: 200, name: 'Same', variant_key: 'treatment' },
+			],
+			environments: [
+				{ id: 10, name: 'Production', active: true, is_production: true },
+			],
+			allocations: [
+				makeAllocation({
+					id: 1,
+					environment_id: 10,
+					variation_weight: [
+						{ variation_id: 100, weight: 40 },
+						{ variation_id: 200, weight: 60 },
+					],
+				}),
+			],
+		});
+
+		const mapping = new Map<number, DatadogEnvironment>([[10, ddProd]]);
+		const allocations = buildAllocations(flag, mapping);
+
+		expect(allocations[0].variant_weights).toEqual([
+			{ variant_key: 'same', value: 40 },
+			{ variant_key: 'same-1', value: 60 },
 		]);
 	});
 
@@ -901,6 +1016,30 @@ describe('buildDefaultVariantKeyPerEnv', () => {
 		const mapping = new Map([[10, ddProd]]);
 		expect(buildDefaultVariantKeyPerEnv(flag, mapping)).toEqual(
 			new Map([['dd-prod', 'false']]),
+		);
+	});
+
+	it('uses stable unique variant keys for duplicate-name defaults', () => {
+		const flag = makeFlag({
+			id: 1,
+			key: 'test',
+			variations: [
+				{ id: 100, name: 'Same', variant_key: 'control' },
+				{ id: 200, name: 'Same', variant_key: 'treatment' },
+			],
+			allocations: [
+				makeAllocation({
+					id: 1,
+					environment_id: 10,
+					is_default: true,
+					variation_weight: [{ variation_id: 200, weight: 1 }],
+				}),
+			],
+		});
+		const mapping = new Map([[10, ddProd]]);
+
+		expect(buildDefaultVariantKeyPerEnv(flag, mapping)).toEqual(
+			new Map([['dd-prod', 'same-1']]),
 		);
 	});
 

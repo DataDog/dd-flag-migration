@@ -149,7 +149,7 @@ export interface VariantSyncCounts {
 }
 
 export interface VariantSyncPlan {
-	toCreate: SourceVariant[];
+	toCreate: Array<SourceVariant & { sourceKey?: string }>;
 	/**
 	 * Updates carry the **existing DD key** (immutable on the backend — only
 	 * name/value/migration_metadata are updatable per the variant DTO). When a

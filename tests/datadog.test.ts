@@ -30,6 +30,8 @@ import {
 	updateVariant,
 } from '../src/datadog/api.js';
 import {
+	buildVariantKeyToIdAliases,
+	buildVariantSyncDryRunRequests,
 	eppoSourceIdLookupKey,
 	planVariantSync,
 } from '../src/datadog/helpers.js';
@@ -810,6 +812,77 @@ describe('syncAllocationsForEnvironment', () => {
 				SITE,
 			),
 		).resolves.toBeUndefined();
+	});
+
+	it('uses caller-provided variant key aliases when resolving variant IDs', async () => {
+		const flagId = 'flag-uuid-123';
+		const envId = 'env-uuid-456';
+		const renamedAllocations: DatadogAllocationSyncRequest[] = [
+			{
+				name: 'Production',
+				key: 'my-flag-production',
+				type: 'FEATURE_GATE',
+				variant_weights: [{ variant_key: 'new-on', value: 100 }],
+			},
+		];
+
+		mockGetPrereqs(flagId, [], [{ id: 'variant-uuid-on', key: 'old-on' }]);
+		mock
+			.onPut(
+				`${BASE}/api/v2/feature-flags/${flagId}/environments/${envId}/allocations`,
+			)
+			.reply((config) => {
+				const body = JSON.parse(config.data as string);
+				expect(body.data[0].attributes.variant_weights).toEqual([
+					{ variant_id: 'variant-uuid-on', value: 100 },
+				]);
+				return [200, { data: [] }];
+			});
+
+		await syncAllocationsForEnvironment(
+			API_KEY,
+			APP_KEY,
+			flagId,
+			envId,
+			renamedAllocations,
+			SITE,
+			undefined,
+			new Map([['new-on', 'variant-uuid-on']]),
+		);
+	});
+
+	it('throws before PUT when a variant key cannot be resolved to a UUID', async () => {
+		const flagId = 'flag-uuid-123';
+		const envId = 'env-uuid-456';
+
+		mockGetPrereqs(flagId, [], []);
+		mock
+			.onPut(
+				`${BASE}/api/v2/feature-flags/${flagId}/environments/${envId}/allocations`,
+			)
+			.reply(() => {
+				throw new Error('PUT should not be called');
+			});
+
+		await expect(
+			syncAllocationsForEnvironment(
+				API_KEY,
+				APP_KEY,
+				flagId,
+				envId,
+				[
+					{
+						name: 'Production',
+						key: 'my-flag-production',
+						type: 'FEATURE_GATE',
+						variant_weights: [{ variant_key: 'true', value: 100 }],
+					},
+				],
+				SITE,
+			),
+		).rejects.toThrow(
+			`Unable to resolve variant key(s) to Datadog variant UUIDs for flag ${flagId} in environment ${envId}: true`,
+		);
 	});
 
 	it('includes existing allocation IDs when keys match', async () => {
@@ -1807,6 +1880,7 @@ describe('syncVariants', () => {
 			key: string;
 			name: string;
 			value: string;
+			migration_metadata?: Record<string, unknown>;
 		}>,
 	): void {
 		mock.onGet(`${BASE}/api/v2/feature-flags/${flagId}`).reply(200, {
@@ -1823,9 +1897,29 @@ describe('syncVariants', () => {
 
 	it('adds, updates, and deletes variants based on key diff', async () => {
 		mockFlagDetail('flag-1', [
-			{ id: 'v-keep', key: 'keep', name: 'Keep', value: 'k' },
+			{
+				id: 'v-keep',
+				key: 'keep',
+				name: 'Keep',
+				value: 'k',
+				migration_metadata: {
+					provider: 'launchdarkly',
+					source_id: 'sid-keep',
+					source_key: 'keep',
+				},
+			},
 			{ id: 'v-old', key: 'old', name: 'Old', value: 'o' },
-			{ id: 'v-upd', key: 'upd', name: 'Upd', value: 'u' },
+			{
+				id: 'v-upd',
+				key: 'upd',
+				name: 'Upd',
+				value: 'u',
+				migration_metadata: {
+					provider: 'launchdarkly',
+					source_id: 'sid-upd',
+					source_key: 'upd',
+				},
+			},
 		]);
 
 		let postBody: unknown;
@@ -1901,8 +1995,28 @@ describe('syncVariants', () => {
 
 	it('no-ops when source and existing variants match exactly', async () => {
 		mockFlagDetail('flag-1', [
-			{ id: 'v1', key: 'a', name: 'A', value: '1' },
-			{ id: 'v2', key: 'b', name: 'B', value: '2' },
+			{
+				id: 'v1',
+				key: 'a',
+				name: 'A',
+				value: '1',
+				migration_metadata: {
+					provider: 'eppo',
+					source_id: 'sid-a',
+					source_key: 'a',
+				},
+			},
+			{
+				id: 'v2',
+				key: 'b',
+				name: 'B',
+				value: '2',
+				migration_metadata: {
+					provider: 'eppo',
+					source_id: 'sid-b',
+					source_key: 'b',
+				},
+			},
 		]);
 
 		const result = await syncVariants(
@@ -1958,6 +2072,122 @@ describe('syncVariants', () => {
 			(postBody as { data: { attributes: { migration_metadata: unknown } } })
 				.data.attributes.migration_metadata,
 		).toEqual({ provider: 'eppo', source_id: 'sid-x', source_key: 'x' });
+	});
+
+	it('returns source-key aliases for variants matched by source_id', async () => {
+		mockFlagDetail('flag-1', [
+			{
+				id: 'v-renamed',
+				key: 'old-name',
+				name: 'Old Name',
+				value: 'value',
+				migration_metadata: {
+					provider: 'launchdarkly',
+					source_id: 'sid-1',
+					source_key: 'old-name',
+				},
+			},
+		]);
+
+		mock
+			.onPut(`${BASE}/api/v2/feature-flags/flag-1/variants/v-renamed`)
+			.reply(200, {});
+
+		const result = await syncVariantsCreatesAndUpdates(
+			API_KEY,
+			APP_KEY,
+			'flag-1',
+			[
+				{
+					key: 'new-name',
+					name: 'New Name',
+					value: 'value',
+					sourceId: 'sid-1',
+				},
+			],
+			'launchdarkly',
+			SITE,
+		);
+
+		expect(result.variantKeyToId.get('old-name')).toBe('v-renamed');
+		expect(result.variantKeyToId.get('new-name')).toBe('v-renamed');
+	});
+
+	it('creates with a collision-free key and preserves the source-key alias', async () => {
+		mockFlagDetail('flag-1', [
+			{
+				id: 'v-old',
+				key: 'same-key',
+				name: 'Same Key',
+				value: 'old-value',
+				migration_metadata: {
+					provider: 'launchdarkly',
+					source_id: 'sid-old',
+					source_key: 'same-key',
+				},
+			},
+		]);
+
+		let postBody: unknown;
+		mock
+			.onPost(`${BASE}/api/v2/feature-flags/flag-1/variants`)
+			.reply((config) => {
+				postBody = JSON.parse(config.data as string);
+				return [
+					201,
+					{
+						data: {
+							id: 'v-new',
+							type: 'variants',
+							attributes: {
+								key: 'same-key-1',
+								name: 'Same Key',
+								value: 'new-value',
+							},
+						},
+					},
+				];
+			});
+
+		const result = await syncVariantsCreatesAndUpdates(
+			API_KEY,
+			APP_KEY,
+			'flag-1',
+			[
+				{
+					key: 'same-key',
+					name: 'Same Key',
+					value: 'new-value',
+					sourceId: 'sid-new',
+				},
+			],
+			'launchdarkly',
+			SITE,
+		);
+
+		expect(
+			(
+				postBody as {
+					data: {
+						attributes: {
+							key: string;
+							migration_metadata: Record<string, unknown>;
+						};
+					};
+				}
+			).data.attributes,
+		).toMatchObject({
+			key: 'same-key-1',
+			migration_metadata: {
+				provider: 'launchdarkly',
+				source_id: 'sid-new',
+				source_key: 'same-key',
+			},
+		});
+		expect(result.variantKeyToId.get('same-key-1')).toBe('v-new');
+		expect(result.variantKeyToId.get('same-key')).toBe('v-new');
+		expect(result.sourceKeyToDatadogKey.get('same-key')).toBe('same-key-1');
+		expect(result.pendingDeletes).toEqual([{ id: 'v-old', key: 'same-key' }]);
 	});
 });
 
@@ -2019,8 +2249,50 @@ describe('planVariantSync — source_id matching', () => {
 		);
 		expect(plan.toCreate).toEqual([]);
 		expect(plan.toDelete).toEqual([]);
-		// Names/values match and key matches — no update needed.
-		expect(plan.toUpdate).toEqual([]);
+		// Legacy fallback matches are updated so future re-migrations can match by source_id.
+		expect(plan.toUpdate).toEqual([
+			{
+				id: 'uuid-1',
+				key: 'red',
+				name: 'Red',
+				value: 'r',
+				sourceId: 'sid-red',
+				sourceKey: 'red',
+			},
+		]);
+	});
+
+	it('does not reuse one legacy fallback match for multiple source variants', () => {
+		const sourceA = {
+			key: 'same',
+			name: 'Same',
+			value: 'control',
+			sourceId: 'sid-a',
+		};
+		const sourceB = {
+			key: 'same-1',
+			name: 'Same',
+			value: 'treatment',
+			sourceId: 'sid-b',
+		};
+
+		const plan = planVariantSync(
+			[sourceA, sourceB],
+			[{ id: 'uuid-a', key: 'same', name: 'Same', value: 'control' }],
+		);
+
+		expect(plan.toUpdate).toEqual([
+			{
+				id: 'uuid-a',
+				key: 'same',
+				name: 'Same',
+				value: 'control',
+				sourceId: 'sid-a',
+				sourceKey: 'same',
+			},
+		]);
+		expect(plan.toCreate).toEqual([sourceB]);
+		expect(plan.toDelete).toEqual([]);
 	});
 
 	it('plans create + delete when neither source_id nor key matches', () => {
@@ -2043,6 +2315,186 @@ describe('planVariantSync — source_id matching', () => {
 		expect(plan.toCreate).toHaveLength(1);
 		expect(plan.toDelete).toEqual([{ id: 'uuid-old', key: 'old' }]);
 	});
+
+	it('does not fallback-match a variant that has a different source_id', () => {
+		const source = {
+			key: 'new-a',
+			name: 'A',
+			value: 'a',
+			sourceId: 'sid-new',
+		};
+		const plan = planVariantSync(
+			[source],
+			[
+				{
+					id: 'uuid-old',
+					key: 'old-a',
+					name: 'A',
+					value: 'a',
+					migration_metadata: {
+						provider: 'launchdarkly',
+						source_id: 'sid-old',
+						source_key: 'old-a',
+					},
+				},
+			],
+		);
+
+		expect(plan.toCreate).toEqual([source]);
+		expect(plan.toUpdate).toEqual([]);
+		expect(plan.toDelete).toEqual([{ id: 'uuid-old', key: 'old-a' }]);
+	});
+
+	it('does not fallback-match by key when the existing variant has a different source_id', () => {
+		const source = {
+			key: 'same-key',
+			name: 'Same Key',
+			value: 'new-value',
+			sourceId: 'sid-new',
+		};
+		const plan = planVariantSync(
+			[source],
+			[
+				{
+					id: 'uuid-old',
+					key: 'same-key',
+					name: 'Same Key',
+					value: 'old-value',
+					migration_metadata: {
+						provider: 'launchdarkly',
+						source_id: 'sid-old',
+						source_key: 'same-key',
+					},
+				},
+			],
+		);
+
+		expect(plan.toCreate).toEqual([
+			{ ...source, key: 'same-key-1', sourceKey: 'same-key' },
+		]);
+		expect(plan.toUpdate).toEqual([]);
+		expect(plan.toDelete).toEqual([{ id: 'uuid-old', key: 'same-key' }]);
+	});
+
+	it('does not fallback-match by name when legacy names are duplicated', () => {
+		const source = {
+			key: 'same',
+			name: 'Same',
+			value: 'new-value',
+			sourceId: 'sid-new',
+		};
+		const plan = planVariantSync(
+			[source],
+			[
+				{ id: 'uuid-a', key: 'old-a', name: 'Same', value: 'old-a' },
+				{ id: 'uuid-b', key: 'old-b', name: 'Same', value: 'old-b' },
+			],
+		);
+
+		expect(plan.toCreate).toEqual([source]);
+		expect(plan.toUpdate).toEqual([]);
+		expect(plan.toDelete).toEqual([
+			{ id: 'uuid-a', key: 'old-a' },
+			{ id: 'uuid-b', key: 'old-b' },
+		]);
+	});
+
+	it('still fallback-matches unique legacy scalar values', () => {
+		const plan = planVariantSync(
+			[{ key: 'true', name: 'true', value: 'true', sourceId: 'sid-true' }],
+			[
+				{
+					id: 'uuid-true',
+					key: 'variation-0',
+					name: 'Variation 0',
+					value: 'true',
+				},
+			],
+		);
+
+		expect(plan.toCreate).toEqual([]);
+		expect(plan.toUpdate).toEqual([
+			{
+				id: 'uuid-true',
+				key: 'variation-0',
+				name: 'true',
+				value: 'true',
+				sourceId: 'sid-true',
+				sourceKey: 'true',
+			},
+		]);
+		expect(plan.toDelete).toEqual([]);
+	});
+
+	it('builds source-key aliases for dry-run update requests', () => {
+		const { sourceKeyToDatadogKey } = buildVariantSyncDryRunRequests(
+			'flag-1',
+			[
+				{
+					key: 'new-name',
+					name: 'New Name',
+					value: 'value',
+					sourceId: 'sid-1',
+				},
+			],
+			[
+				{
+					id: 'v-renamed',
+					key: 'old-name',
+					name: 'Old Name',
+					value: 'value',
+					migration_metadata: {
+						provider: 'launchdarkly',
+						source_id: 'sid-1',
+						source_key: 'old-name',
+					},
+				},
+			],
+			'launchdarkly',
+		);
+
+		expect(sourceKeyToDatadogKey.get('new-name')).toBe('old-name');
+	});
+
+	it('builds source-key to UUID aliases for legacy boolean variants', () => {
+		const aliases = buildVariantKeyToIdAliases(
+			[
+				{
+					key: 'true',
+					name: 'Enabled',
+					value: 'true',
+					sourceId: 'ld-true',
+				},
+				{
+					key: 'false',
+					name: 'Disabled',
+					value: 'false',
+					sourceId: 'ld-false',
+				},
+			],
+			[
+				{
+					id: 'uuid-enabled',
+					key: 'enabled',
+					name: 'Enabled',
+					value: 'true',
+				},
+				{
+					id: 'uuid-disabled',
+					key: 'disabled',
+					name: 'Disabled',
+					value: 'false',
+				},
+			],
+		);
+
+		expect(aliases).toEqual(
+			new Map([
+				['true', 'uuid-enabled'],
+				['false', 'uuid-disabled'],
+			]),
+		);
+	});
 });
 
 // ─── syncVariants — ordering: creates/updates before deletes ─────────────────
@@ -2063,7 +2515,17 @@ describe('syncVariants ordering', () => {
 				type: 'feature-flags',
 				attributes: {
 					variants: [
-						{ id: 'v-keep', key: 'keep', name: 'Keep', value: 'k' },
+						{
+							id: 'v-keep',
+							key: 'keep',
+							name: 'Keep',
+							value: 'k',
+							migration_metadata: {
+								provider: 'launchdarkly',
+								source_id: 'sid-keep',
+								source_key: 'keep',
+							},
+						},
 						{ id: 'v-old', key: 'old', name: 'Old', value: 'o' },
 					],
 					feature_flag_environments: [],
@@ -2114,7 +2576,17 @@ describe('syncVariants ordering', () => {
 				type: 'feature-flags',
 				attributes: {
 					variants: [
-						{ id: 'v-keep', key: 'keep', name: 'Keep', value: 'k' },
+						{
+							id: 'v-keep',
+							key: 'keep',
+							name: 'Keep',
+							value: 'k',
+							migration_metadata: {
+								provider: 'eppo',
+								source_id: 'sid-keep',
+								source_key: 'keep',
+							},
+						},
 						{ id: 'v-old', key: 'old', name: 'Old', value: 'o' },
 					],
 					feature_flag_environments: [],

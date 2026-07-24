@@ -11,11 +11,10 @@ import type {
 } from '../../src/datadog/types.js';
 import {
 	buildAllocations,
+	buildVariants,
 	getEnvsToEnable,
 	hasSemverConditions,
 	mapVariationType,
-	normalizeJsonVariantValue,
-	slugify,
 } from '../../src/eppo/helpers/migration.js';
 import type { EppoFlag } from '../../src/eppo/types.js';
 import { ddProd, ddStaging, makeAllocation, makeFlag } from './helpers.js';
@@ -28,14 +27,10 @@ function migrateFlag(
 	request: DatadogCreateFlagRequest;
 	envsToEnable: DatadogEnvironment[];
 } {
-	const variations = flag.variations ?? [];
-	const isJsonFlag = flag.variation_type === 'JSON';
-	const variants = variations.map((v) => ({
-		key: slugify(v.name),
-		name: v.name,
-		value: isJsonFlag
-			? normalizeJsonVariantValue(v.variant_key)
-			: v.variant_key,
+	const variants = buildVariants(flag).map(({ key, name, value }) => ({
+		key,
+		name,
+		value,
 	}));
 
 	const allocations = buildAllocations(flag, envMapping);
