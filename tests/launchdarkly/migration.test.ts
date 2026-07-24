@@ -533,6 +533,22 @@ describe('buildVariants', () => {
 		]);
 	});
 
+	it('uses boolean values as keys even when boolean variations have display names', () => {
+		const flag = makeFlag({
+			key: 'test',
+			kind: 'boolean',
+			variations: [
+				{ _id: 'v0', value: true, name: 'Enabled' },
+				{ _id: 'v1', value: false, name: 'Disabled' },
+			],
+		});
+		const variants = buildVariants(flag);
+		expect(variants).toEqual([
+			{ key: 'true', name: 'Enabled', value: 'true', sourceId: 'v0' },
+			{ key: 'false', name: 'Disabled', value: 'false', sourceId: 'v1' },
+		]);
+	});
+
 	it('builds variants from multivariate flag with objects', () => {
 		const flag = makeFlag({
 			key: 'test',
@@ -562,6 +578,20 @@ describe('buildVariants', () => {
 		expect(variants[0].name).toBe('red');
 		expect(variants[1].key).toBe('blue');
 		expect(variants[1].name).toBe('blue');
+	});
+
+	it('adds numeric suffixes when stringified fallback keys collide', () => {
+		const flag = makeFlag({
+			key: 'test',
+			kind: 'multivariate',
+			variations: [
+				{ _id: 'v0', value: 'A B' },
+				{ _id: 'v1', value: 'a-b' },
+			],
+		});
+		const variants = buildVariants(flag);
+		expect(variants[0].key).toBe('a-b');
+		expect(variants[1].key).toBe('a-b-1');
 	});
 
 	it('uses index-based keys for unnamed JSON variations', () => {

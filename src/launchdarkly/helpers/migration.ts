@@ -251,7 +251,7 @@ export function shouldSkipFlag(flag: LDFlag, envNames: string[]): SkipResult {
 export function buildVariants(
 	flag: LDFlag,
 ): Array<{ key: string; name: string; value: string; sourceId: string }> {
-	return flag.variations.map((v, i) => {
+	const baseVariants = flag.variations.map((v, i) => {
 		// For unnamed non-JSON variations use the stringified value (e.g. "true",
 		// "1") so the variant key/name is meaningful and stable. JSON variations
 		// fall back to "variation-{i}" because their serialized value is too long.
@@ -260,7 +260,10 @@ export function buildVariants(
 			? `Variation ${i}`
 			: String(v.value).toLowerCase();
 		const name = v.name ?? fallbackName;
-		const key = slugify(name);
+		const baseKey =
+			flag.kind === 'boolean' && typeof v.value === 'boolean'
+				? String(v.value)
+				: slugify(name);
 		const rawValue =
 			typeof v.value === 'object' && v.value !== null
 				? v.value
@@ -271,7 +274,13 @@ export function buildVariants(
 				? JSON.stringify(rawValue)
 				: rawValue;
 		// LDVariation._id is the stable identifier — survives renames.
-		return { key, name, value, sourceId: v._id };
+		return { baseKey, name, value, sourceId: v._id };
+	});
+
+	const usedKeys = new Set<string>();
+	return baseVariants.map((v) => {
+		const key = uniqueVariantKey(v.baseKey, usedKeys);
+		return { key, name: v.name, value: v.value, sourceId: v.sourceId };
 	});
 }
 
@@ -282,6 +291,17 @@ function slugify(s: string): string {
 			.replace(/[^a-z0-9]+/g, '-')
 			.replace(/^-|-$/g, '') || 'default'
 	);
+}
+
+function uniqueVariantKey(preferredKey: string, usedKeys: Set<string>): string {
+	let key = preferredKey;
+	let suffix = 1;
+	while (usedKeys.has(key)) {
+		key = `${preferredKey}-${suffix}`;
+		suffix++;
+	}
+	usedKeys.add(key);
+	return key;
 }
 
 // ─── Targeting Rule Building ─────────────────────────────────────────────────

@@ -54,20 +54,23 @@ export function planVariantSync(
 	existingVariants: DatadogVariantDetail[],
 ): VariantSyncPlan {
 	// Index existing variants by their migration_metadata.source_id (preferred,
-	// survives source-side renames), by key and name (fallbacks for legacy
-	// variants without source_id), and by value (last-resort for variants whose
-	// key/name drifted — only used when the value is unique across all existing
-	// variants so the match is unambiguous).
+	// survives source-side renames). Key/name/value fallbacks are only for
+	// legacy variants that predate source_id metadata, with name/value limited
+	// to unique matches across all existing variants.
 	const existingBySourceId = new Map<string, DatadogVariantDetail>();
 	const existingByKey = new Map<string, DatadogVariantDetail>();
 	const existingByName = new Map<string, DatadogVariantDetail>();
+	const nameCounts = new Map<string, number>();
 	const valueCounts = new Map<string, number>();
 	for (const ev of existingVariants) {
-		existingByKey.set(ev.key, ev);
-		existingByName.set(ev.name, ev);
+		nameCounts.set(ev.name, (nameCounts.get(ev.name) ?? 0) + 1);
 		valueCounts.set(ev.value, (valueCounts.get(ev.value) ?? 0) + 1);
 		const sid = readSourceIdFromMetadata(ev.migration_metadata);
-		if (sid !== undefined) existingBySourceId.set(sid, ev);
+		if (sid !== undefined) {
+			existingBySourceId.set(sid, ev);
+		} else {
+			existingByKey.set(ev.key, ev);
+		}
 	}
 	// Only index non-JSON values: JSON serialisation is key-order-sensitive so
 	// the same object can stringify differently across LD API calls, making it
@@ -75,6 +78,10 @@ export function planVariantSync(
 	// never start with '{' or '['.
 	const existingByValue = new Map<string, DatadogVariantDetail>();
 	for (const ev of existingVariants) {
+		if (readSourceIdFromMetadata(ev.migration_metadata) !== undefined) continue;
+		if (nameCounts.get(ev.name) === 1) {
+			existingByName.set(ev.name, ev);
+		}
 		if (
 			valueCounts.get(ev.value) === 1 &&
 			!ev.value.startsWith('{') &&
@@ -84,9 +91,10 @@ export function planVariantSync(
 		}
 	}
 
-	const toCreate: SourceVariant[] = [];
+	const toCreate: VariantSyncPlan['toCreate'] = [];
 	const toUpdate: VariantSyncPlan['toUpdate'] = [];
 	const matchedExistingIds = new Set<string>();
+	const reservedVariantKeys = new Set(existingVariants.map((ev) => ev.key));
 
 	for (const sv of sourceVariants) {
 		// 1. Prefer match on stable source_id (survives rename).
@@ -94,23 +102,36 @@ export function planVariantSync(
 		// 3. Name match: catches key drift when the display name is stable.
 		// 4. Value match: catches key+name drift (e.g. "Variation 0" → "true")
 		//    when the value uniquely identifies the variant.
-		const existing =
-			existingBySourceId.get(sv.sourceId) ??
-			existingByKey.get(sv.key) ??
-			existingByName.get(sv.name) ??
-			existingByValue.get(sv.value);
+		const existingBySid = existingBySourceId.get(sv.sourceId);
+		const fallbackCandidates = [
+			existingByKey.get(sv.key),
+			existingByName.get(sv.name),
+			existingByValue.get(sv.value),
+		];
+		const fallbackMatch = fallbackCandidates.find(
+			(candidate): candidate is DatadogVariantDetail =>
+				candidate !== undefined && !matchedExistingIds.has(candidate.id),
+		);
+		const existing = existingBySid ?? fallbackMatch;
 		if (!existing) {
-			toCreate.push(sv);
+			const key = reserveCreateVariantKey(sv.key, reservedVariantKeys);
+			toCreate.push(key === sv.key ? sv : { ...sv, key, sourceKey: sv.key });
 			continue;
 		}
 		matchedExistingIds.add(existing.id);
 
-		// Rename detection: if we matched by source_id but the slugified key
-		// drifted, treat it as an update (name almost certainly changed too).
-		// Otherwise update only on actual name/value drift.
+		// Rename detection: if the slugified source key drifted, treat it as an
+		// update. Legacy fallback matches also update even when name/value/key are
+		// identical so they get stamped with source_id for future runs.
 		const renamed = existing.key !== sv.key;
+		const legacyFallback = existingBySid === undefined;
 
-		if (existing.name !== sv.name || existing.value !== sv.value || renamed) {
+		if (
+			existing.name !== sv.name ||
+			existing.value !== sv.value ||
+			renamed ||
+			legacyFallback
+		) {
 			toUpdate.push({
 				id: existing.id,
 				// Keep the DD-side key: variant key is immutable on the backend.
@@ -134,6 +155,25 @@ export function planVariantSync(
 	return { toCreate, toUpdate, toDelete };
 }
 
+function reserveCreateVariantKey(
+	sourceKey: string,
+	reservedVariantKeys: Set<string>,
+): string {
+	if (!reservedVariantKeys.has(sourceKey)) {
+		reservedVariantKeys.add(sourceKey);
+		return sourceKey;
+	}
+
+	let suffix = 1;
+	let key = `${sourceKey}-${suffix}`;
+	while (reservedVariantKeys.has(key)) {
+		suffix++;
+		key = `${sourceKey}-${suffix}`;
+	}
+	reservedVariantKeys.add(key);
+	return key;
+}
+
 /**
  * Build dry-run request descriptors for a variant sync. Order matches the live
  * code path: creates + updates first (before allocation sync) and deletes
@@ -151,6 +191,7 @@ export function buildVariantSyncDryRunRequests(
 		body: unknown;
 	}>;
 	deleteRequests: Array<{ method: 'DELETE'; path: string; body: unknown }>;
+	sourceKeyToDatadogKey: Map<string, string>;
 } {
 	const plan = planVariantSync(sourceVariants, existingVariants);
 	const createUpdateRequests: Array<{
@@ -158,7 +199,9 @@ export function buildVariantSyncDryRunRequests(
 		path: string;
 		body: unknown;
 	}> = [];
+	const sourceKeyToDatadogKey = new Map<string, string>();
 	for (const v of plan.toUpdate) {
+		sourceKeyToDatadogKey.set(v.sourceKey, v.key);
 		createUpdateRequests.push({
 			method: 'PUT',
 			path: `/api/v2/feature-flags/${flagId}/variants/${v.id}`,
@@ -180,6 +223,8 @@ export function buildVariantSyncDryRunRequests(
 		});
 	}
 	for (const v of plan.toCreate) {
+		const sourceKey = v.sourceKey ?? v.key;
+		sourceKeyToDatadogKey.set(sourceKey, v.key);
 		createUpdateRequests.push({
 			method: 'POST',
 			path: `/api/v2/feature-flags/${flagId}/variants`,
@@ -193,7 +238,7 @@ export function buildVariantSyncDryRunRequests(
 						migration_metadata: {
 							provider,
 							source_id: v.sourceId,
-							source_key: v.key,
+							source_key: sourceKey,
 						},
 					},
 				},
@@ -212,5 +257,5 @@ export function buildVariantSyncDryRunRequests(
 			body: {},
 		});
 	}
-	return { createUpdateRequests, deleteRequests };
+	return { createUpdateRequests, deleteRequests, sourceKeyToDatadogKey };
 }

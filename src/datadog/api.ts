@@ -577,6 +577,7 @@ export async function syncVariantsCreatesAndUpdates(
 	site = 'datadoghq.com',
 ): Promise<{
 	variantKeyToId: Map<string, string>;
+	sourceKeyToDatadogKey: Map<string, string>;
 	counts: VariantSyncCounts;
 	pendingDeletes: PendingVariantDelete[];
 }> {
@@ -590,6 +591,7 @@ export async function syncVariantsCreatesAndUpdates(
 
 	const variantKeyToId = new Map<string, string>();
 	for (const v of existingVariants) variantKeyToId.set(v.key, v.id);
+	const sourceKeyToDatadogKey = new Map<string, string>();
 
 	for (const v of plan.toUpdate) {
 		await updateVariant(
@@ -608,8 +610,11 @@ export async function syncVariantsCreatesAndUpdates(
 			},
 			site,
 		);
+		variantKeyToId.set(v.sourceKey, v.id);
+		sourceKeyToDatadogKey.set(v.sourceKey, v.key);
 	}
 	for (const v of plan.toCreate) {
+		const sourceKey = v.sourceKey ?? v.key;
 		const created = await createVariant(
 			apiKey,
 			appKey,
@@ -621,16 +626,19 @@ export async function syncVariantsCreatesAndUpdates(
 				migrationMetadata: {
 					provider,
 					source_id: v.sourceId,
-					source_key: v.key,
+					source_key: sourceKey,
 				},
 			},
 			site,
 		);
 		variantKeyToId.set(created.key, created.id);
+		variantKeyToId.set(sourceKey, created.id);
+		sourceKeyToDatadogKey.set(sourceKey, created.key);
 	}
 
 	return {
 		variantKeyToId,
+		sourceKeyToDatadogKey,
 		counts: {
 			added: plan.toCreate.length,
 			updated: plan.toUpdate.length,
@@ -700,6 +708,7 @@ export async function syncAllocationsForEnvironment(
 	allocations: DatadogAllocationSyncRequest[],
 	site = 'datadoghq.com',
 	defaultVariantKey?: string,
+	variantKeyToIdAliases?: ReadonlyMap<string, string>,
 ): Promise<void> {
 	const baseUrl = `https://api.${site}`;
 
@@ -711,6 +720,9 @@ export async function syncAllocationsForEnvironment(
 		flagId,
 		site,
 	);
+	for (const [key, id] of variantKeyToIdAliases ?? []) {
+		variantKeyToId.set(key, id);
+	}
 	const existingKeyToId =
 		allocationKeyToIdByEnv.get(environmentId) ?? new Map<string, string>();
 

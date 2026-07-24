@@ -1750,6 +1750,8 @@ async function executeMigration(
 							// Boolean flags have immutable variants in DD — skip sync.
 							const variantSyncResult = isBooleanFlag
 								? {
+										variantKeyToId: new Map<string, string>(),
+										sourceKeyToDatadogKey: new Map<string, string>(),
 										counts: { added: 0, updated: 0, deleted: 0 },
 										pendingDeletes: [] as Array<{ id: string; key: string }>,
 									}
@@ -1783,6 +1785,8 @@ async function executeMigration(
 									ddEnv.id,
 									syncReqs,
 									ddSite,
+									undefined,
+									variantSyncResult.variantKeyToId,
 								);
 								syncedAllocCount += syncReqs.length;
 								syncedRuleCount += syncReqs.reduce(

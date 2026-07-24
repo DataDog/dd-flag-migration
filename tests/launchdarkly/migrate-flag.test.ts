@@ -161,10 +161,10 @@ describe('migrate a simple boolean flag (on in one env, off in another)', () => 
 		expect(result.request?.value_type).toBe('BOOLEAN');
 	});
 
-	it('has two variants with slugified keys', () => {
+	it('has two variants with boolean value keys', () => {
 		expect(result.request?.variants).toEqual([
-			{ key: 'enabled', name: 'Enabled', value: 'true', sourceId: 'v0' },
-			{ key: 'disabled', name: 'Disabled', value: 'false', sourceId: 'v1' },
+			{ key: 'true', name: 'Enabled', value: 'true', sourceId: 'v0' },
+			{ key: 'false', name: 'Disabled', value: 'false', sourceId: 'v1' },
 		]);
 	});
 
@@ -858,8 +858,8 @@ describe('migrate a flag with rollout percentages in fallthrough', () => {
 	it('normalizes LD weights (out of 100,000) to 0-100', () => {
 		const ft = result.request?.allocations?.[0];
 		expect(ft?.variant_weights).toEqual([
-			{ variant_key: 'on', value: 30 },
-			{ variant_key: 'off', value: 70 },
+			{ variant_key: 'true', value: 30 },
+			{ variant_key: 'false', value: 70 },
 		]);
 	});
 });
@@ -999,8 +999,8 @@ describe('migrate a flag across multiple environments with different configs', (
 		const staging = result.request?.allocations?.[0];
 		expect(staging?.environment_id).toBe('dd-staging');
 		expect(staging?.variant_weights).toEqual([
-			{ variant_key: 'on', value: 100 },
-			{ variant_key: 'off', value: 0 },
+			{ variant_key: 'true', value: 100 },
+			{ variant_key: 'false', value: 0 },
 		]);
 	});
 
@@ -1008,8 +1008,8 @@ describe('migrate a flag across multiple environments with different configs', (
 		const prod = result.request?.allocations?.[1];
 		expect(prod?.environment_id).toBe('dd-prod');
 		expect(prod?.variant_weights).toEqual([
-			{ variant_key: 'on', value: 50 },
-			{ variant_key: 'off', value: 50 },
+			{ variant_key: 'true', value: 50 },
+			{ variant_key: 'false', value: 50 },
 		]);
 	});
 
@@ -1228,8 +1228,8 @@ describe('migrate a flag with a rule rollout in a rule (not fallthrough)', () =>
 		const rule = result.request?.allocations?.[0];
 		expect(rule?.name).toBe('US 10% rollout');
 		expect(rule?.variant_weights).toEqual([
-			{ variant_key: 'on', value: 10 },
-			{ variant_key: 'off', value: 90 },
+			{ variant_key: 'true', value: 10 },
+			{ variant_key: 'false', value: 90 },
 		]);
 	});
 
@@ -2022,8 +2022,8 @@ describe('migrate a realistic flag with targets, rules, LD tags, and a team main
 			value: ['US', 'CA'],
 		});
 		expect(prodRule?.variant_weights).toEqual([
-			{ variant_key: 'enabled', value: 20 },
-			{ variant_key: 'disabled', value: 80 },
+			{ variant_key: 'true', value: 20 },
+			{ variant_key: 'false', value: 80 },
 		]);
 	});
 
