@@ -1851,7 +1851,7 @@ async function executeMigration(
 
 					const request: DatadogCreateFlagRequest = {
 						key: ddKey,
-						name: flag.name,
+						name: flag.name === flag.key ? ddKey : flag.name,
 						value_type: mapFlagType(flag),
 						variants,
 						allocations: allocations.length > 0 ? allocations : undefined,

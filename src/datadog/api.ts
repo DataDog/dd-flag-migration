@@ -271,16 +271,40 @@ export async function createFeatureFlag(
 	site = 'datadoghq.com',
 ): Promise<DatadogCreatedFlag> {
 	const baseUrl = `https://api.${site}`;
-	const body = { data: { type: 'feature-flags', attributes: request } };
-	const response = await ddClient.post<{
-		data: { id: string; attributes: { key: string } };
-	}>(`${baseUrl}/api/v2/feature-flags`, body, {
-		headers: {
-			...ddHeaders(apiKey, appKey),
-			'Content-Type': 'application/json',
-		},
-	});
-	return { id: response.data.data.id, key: response.data.data.attributes.key };
+	let attempt = 0;
+	for (;;) {
+		const name = attempt === 0 ? request.name : `${request.name} (${attempt})`;
+		const body = {
+			data: { type: 'feature-flags', attributes: { ...request, name } },
+		};
+		try {
+			const response = await ddClient.post<{
+				data: { id: string; attributes: { key: string } };
+			}>(`${baseUrl}/api/v2/feature-flags`, body, {
+				headers: {
+					...ddHeaders(apiKey, appKey),
+					'Content-Type': 'application/json',
+				},
+			});
+			return {
+				id: response.data.data.id,
+				key: response.data.data.attributes.key,
+			};
+		} catch (err) {
+			if (
+				attempt < 9 &&
+				axios.isAxiosError(err) &&
+				err.response?.status === 409 &&
+				JSON.stringify(err.response.data).includes(
+					'a feature flag with this name already exists',
+				)
+			) {
+				attempt++;
+				continue;
+			}
+			throw err;
+		}
+	}
 }
 
 export async function fetchFlagTags(
