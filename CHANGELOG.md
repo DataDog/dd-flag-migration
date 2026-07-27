@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.0] — 2026-07-27
+
+### Migration — LaunchDarkly
+
+- Feat: allow users to prefix all flags from a LaunchDarkly project at once (#111)
+- Feat: resolve key conflicts before migration starts instead of mid-run (#115)
+- Feat: retry flag creation with a suffixed name on 409 name conflicts (#116)
+- Fix: update flag name when it matches the key and the key is renamed (#116)
+- Fix: resolve variant sync failures for boolean flags and name-conflicting flags (#118)
+- Fix: force `distribution_channel: CLIENT` when a flag references a semver saved filter (#113)
+- Fix: force `distribution_channel: CLIENT` for SEMVER targeting; add xlsx warnings (#106)
+- Fix: reserve custom key immediately; include semver/JSON-array keys in SIGINT partial save (#112)
+
+### Export
+
+- Feat: add environment mappings section to migration `.xlsx` (#117)
+- Feat: default xlsx export prompt to Yes (#117)
+
+### CLI
+
+- Fix: remove `MAX_SETTLED` cap that broke rendering for migrations with more than 500 flags (#114)
+- Fix: add checkmark prefix to created/synced output lines; fix progress bar counter (#109)
+
 ## [1.2.0] — 2026-07-06
 
 ### CLI
