@@ -826,6 +826,7 @@ interface MigrationOptions {
 async function executeMigration(
 	flags: LDFlag[],
 	envMapping: Map<string, DatadogEnvironment>,
+	ldEnvironments: LDEnvironment[],
 	datadogFlags: DatadogFlagEntry[],
 	selectedEnvs: string[],
 	opts: MigrationOptions,
@@ -1167,9 +1168,10 @@ async function executeMigration(
 
 	const environmentMappingArr: LDMigrationFile['environmentMapping'] = [];
 	for (const [ldEnvKey, ddEnv] of envMapping) {
+		const ldEnv = ldEnvironments.find((e) => e.key === ldEnvKey);
 		environmentMappingArr.push({
 			sourceEnvId: ldEnvKey,
-			sourceEnvName: ldEnvKey,
+			sourceEnvName: ldEnv?.name ?? ldEnvKey,
 			datadogEnvId: ddEnv.id,
 			datadogEnvName: ddEnv.name,
 			datadogDdEnvNames: ddEnv.queries,
@@ -2408,6 +2410,7 @@ export async function runLaunchDarklyMigration(
 				const action = await executeMigration(
 					prevSelectedFlags,
 					prevEnvMapping,
+					ldEnvironments,
 					datadogFlags,
 					prevSelectedEnvKeys,
 					{
@@ -2572,6 +2575,7 @@ async function runLaunchDarklyMigrationNonInteractive(
 	await executeMigration(
 		selectedFlags,
 		envMapping,
+		ldEnvironments,
 		datadogFlags,
 		selectedEnvKeys,
 		{
