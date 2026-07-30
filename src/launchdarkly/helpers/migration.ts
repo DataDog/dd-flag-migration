@@ -422,11 +422,11 @@ function buildVariantWeights(
 	}
 
 	if (variationIndex !== undefined) {
-		// 100% on the specified variation
-		return variants.map((v, i) => ({
-			variant_key: v.key,
-			value: i === variationIndex ? 100 : 0,
-		}));
+		// 100% on the specified variation (single variant, no split)
+		const target = variants[variationIndex];
+		if (target) {
+			return [{ variant_key: target.key, value: 100 }];
+		}
 	}
 
 	// Fallback: equal weight
