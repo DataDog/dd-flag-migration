@@ -725,7 +725,6 @@ describe('buildAllocations', () => {
 		expect(allocations[2].targeting_rules).toBeUndefined();
 		// 100% on variation index 1 (false)
 		expect(allocations[2].variant_weights).toEqual([
-			{ variant_key: 'true', value: 0 },
 			{ variant_key: 'false', value: 100 },
 		]);
 	});

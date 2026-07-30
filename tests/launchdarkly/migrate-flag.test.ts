@@ -252,7 +252,6 @@ describe('migrate a flag with individual targets, rules, and fallthrough', () =>
 		// 100% on variation 0 (true)
 		expect(target?.variant_weights).toEqual([
 			{ variant_key: 'true', value: 100 },
-			{ variant_key: 'false', value: 0 },
 		]);
 	});
 
@@ -275,10 +274,7 @@ describe('migrate a flag with individual targets, rules, and fallthrough', () =>
 		const ft = result.request?.allocations?.[2];
 		expect(ft?.targeting_rules).toBeUndefined();
 		// 100% on variation 1 (false)
-		expect(ft?.variant_weights).toEqual([
-			{ variant_key: 'true', value: 0 },
-			{ variant_key: 'false', value: 100 },
-		]);
+		expect(ft?.variant_weights).toEqual([{ variant_key: 'false', value: 100 }]);
 	});
 
 	it('enables production because flag is on', () => {
@@ -362,16 +358,12 @@ describe('migrate a multivariate JSON flag', () => {
 		const rule = result.request?.allocations?.[0];
 		expect(rule?.variant_weights).toEqual([
 			{ variant_key: 'config-a', value: 100 },
-			{ variant_key: 'config-b', value: 0 },
-			{ variant_key: 'default', value: 0 },
 		]);
 	});
 
 	it('fallthrough gives 100% to the default variation', () => {
 		const ft = result.request?.allocations?.[1];
 		expect(ft?.variant_weights).toEqual([
-			{ variant_key: 'config-a', value: 0 },
-			{ variant_key: 'config-b', value: 0 },
 			{ variant_key: 'default', value: 100 },
 		]);
 	});
@@ -1000,7 +992,6 @@ describe('migrate a flag across multiple environments with different configs', (
 		expect(staging?.environment_id).toBe('dd-staging');
 		expect(staging?.variant_weights).toEqual([
 			{ variant_key: 'true', value: 100 },
-			{ variant_key: 'false', value: 0 },
 		]);
 	});
 
