@@ -25,11 +25,11 @@ import {
 	applyVariantDeletes,
 	createFeatureFlag,
 	enableFeatureFlagEnvironment,
+	fetchCurrentUserIdentity,
 	fetchDatadogEnvironments,
 	fetchDatadogFlags,
 	fetchDatadogTeams,
 	fetchFlagDetail,
-	fetchOrgId,
 	fetchRestrictionPolicy,
 	syncAllocationsForEnvironment,
 	syncVariantsCreatesAndUpdates,
@@ -105,6 +105,7 @@ function ddEnvLabel(env: DatadogEnvironment): string {
 function buildDryRunRestrictionPolicy(
 	flagId: string,
 	editorTeamIds: string[],
+	userId: string,
 	orgId: string,
 	existingBindings: DDRestrictionBinding[],
 	approximationNote?: string,
@@ -119,21 +120,26 @@ function buildDryRunRestrictionPolicy(
 	const mergedEditorPrincipals = [
 		...new Set([
 			...(editorBinding?.principals ?? []),
-			`org:${orgId}`,
+			`user:${userId}`,
 			...newPrincipals,
 		]),
 	];
 	const otherBindings = existingBindings.filter(
 		(b) => b.relation !== 'editor' && b.relation !== 'viewer',
 	);
+	const viewerBinding = existingBindings.find((b) => b.relation === 'viewer');
+	const mergedViewerPrincipals = [
+		...new Set([...(viewerBinding?.principals ?? []), `org:${orgId}`]),
+	];
 	const updatedBindings: DDRestrictionBinding[] = [
 		...otherBindings,
+		{ principals: mergedViewerPrincipals, relation: 'viewer' },
 		{ principals: mergedEditorPrincipals, relation: 'editor' },
 	];
 	return {
 		method: 'POST',
 		path: `/api/v2/restriction_policy/feature-flag:${flagId}`,
-		params: { allow_self_lockout: true },
+		params: { allow_self_lockout: false },
 		body: {
 			...(approximationNote ? { _note: approximationNote } : {}),
 			data: {
@@ -150,6 +156,7 @@ async function applyRestrictionPolicyForFlag(
 	ddAppKey: string,
 	flagId: string,
 	editorTeamIds: string[],
+	userId: string,
 	orgId: string,
 	ddSite: string,
 	flagKey: string,
@@ -161,6 +168,7 @@ async function applyRestrictionPolicyForFlag(
 			ddAppKey,
 			flagId,
 			editorTeamIds,
+			userId,
 			orgId,
 			ddSite,
 		);
@@ -1057,7 +1065,10 @@ async function executeMigration(
 		);
 	}
 
-	const orgId = await fetchOrgId(ddApiKey, ddAppKey, ddSite);
+	const restrictionPolicyIdentity =
+		editorTeamIds.length > 0
+			? await fetchCurrentUserIdentity(ddApiKey, ddAppKey, ddSite)
+			: { userId: '', orgId: '' };
 
 	// ── Phase 1: Migrate segments as saved filters ─────────────────────────────
 	let savedFilterLookup = new Map<string, string>();
@@ -1522,6 +1533,40 @@ async function executeMigration(
 						projectKey,
 						editorTeamHandles,
 					);
+					// Repair or refresh permissions before mutating an existing flag. A
+					// previous migration may have restricted the authenticated user to
+					// viewer access, which would make every subsequent update fail.
+					if (editorTeamIds.length > 0) {
+						if (dryRun) {
+							const existingBindings = await fetchRestrictionPolicy(
+								ddApiKey,
+								ddAppKey,
+								existingFlagId,
+								ddSite,
+							);
+							dryRunRequests.push(
+								buildDryRunRestrictionPolicy(
+									existingFlagId,
+									editorTeamIds,
+									restrictionPolicyIdentity.userId,
+									restrictionPolicyIdentity.orgId,
+									existingBindings,
+								),
+							);
+						} else {
+							await applyRestrictionPolicyForFlag(
+								ddApiKey,
+								ddAppKey,
+								existingFlagId,
+								editorTeamIds,
+								restrictionPolicyIdentity.userId,
+								restrictionPolicyIdentity.orgId,
+								ddSite,
+								flag.key,
+								restrictionPolicyFailures,
+							);
+						}
+					}
 
 					if (envsToEnable.length === 0) {
 						// Always sync tags and restriction policy even when no new environments need enabling.
@@ -1576,22 +1621,6 @@ async function executeMigration(
 									},
 								});
 							}
-							if (editorTeamIds.length > 0) {
-								const existingBindings = await fetchRestrictionPolicy(
-									ddApiKey,
-									ddAppKey,
-									existingFlagId,
-									ddSite,
-								);
-								dryRunRequests.push(
-									buildDryRunRestrictionPolicy(
-										existingFlagId,
-										editorTeamIds,
-										orgId,
-										existingBindings,
-									),
-								);
-							}
 						} else {
 							if (!isBooleanFlag) {
 								const result = await syncVariantsCreatesAndUpdates(
@@ -1620,18 +1649,6 @@ async function executeMigration(
 									ddSite,
 								);
 								semverForcedClientKeys.push(flag.key);
-							}
-							if (editorTeamIds.length > 0) {
-								await applyRestrictionPolicyForFlag(
-									ddApiKey,
-									ddAppKey,
-									existingFlagId,
-									editorTeamIds,
-									orgId,
-									ddSite,
-									flag.key,
-									restrictionPolicyFailures,
-								);
 							}
 						}
 						const policyLabel =
@@ -1728,22 +1745,6 @@ async function executeMigration(
 								},
 							},
 						});
-						if (editorTeamIds.length > 0) {
-							const existingBindings = await fetchRestrictionPolicy(
-								ddApiKey,
-								ddAppKey,
-								existingFlagId,
-								ddSite,
-							);
-							dryRunRequests.push(
-								buildDryRunRestrictionPolicy(
-									existingFlagId,
-									editorTeamIds,
-									orgId,
-									existingBindings,
-								),
-							);
-						}
 						const syncFilterLabel = `${syncFilterCount} targeting filter(s)`;
 						const syncRuleLabel =
 							syncRuleCount > 0 ? `, ${syncRuleCount} rule(s)` : '';
@@ -1845,20 +1846,6 @@ async function executeMigration(
 								ddSite,
 							);
 
-							// Apply restriction policy for LD editor teams
-							if (editorTeamIds.length > 0) {
-								await applyRestrictionPolicyForFlag(
-									ddApiKey,
-									ddAppKey,
-									existingFlagId,
-									editorTeamIds,
-									orgId,
-									ddSite,
-									flag.key,
-									restrictionPolicyFailures,
-								);
-							}
-
 							let enabledCount = 0;
 							for (const ddEnv of envsToEnable) {
 								try {
@@ -1945,7 +1932,8 @@ async function executeMigration(
 								buildDryRunRestrictionPolicy(
 									`<uuid-for-${ddKey}>`,
 									editorTeamIds,
-									orgId,
+									restrictionPolicyIdentity.userId,
+									restrictionPolicyIdentity.orgId,
 									[],
 									'Approximate — dd-source adds a creator-team principal on flag creation before this POST runs; that principal is not reflected here.',
 								),
@@ -1979,7 +1967,8 @@ async function executeMigration(
 									ddAppKey,
 									createdFlag.id,
 									editorTeamIds,
-									orgId,
+									restrictionPolicyIdentity.userId,
+									restrictionPolicyIdentity.orgId,
 									ddSite,
 									flag.key,
 									restrictionPolicyFailures,

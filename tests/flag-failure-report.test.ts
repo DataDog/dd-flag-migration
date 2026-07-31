@@ -289,9 +289,6 @@ describe('flag-level migration failures', () => {
 			items: [],
 			totalCount: 0,
 		});
-		ddMock
-			.onGet(`${DD_BASE}/api/v1/org`)
-			.reply(200, { orgs: [{ public_id: 'test-org-id' }] });
 		ddMock.onGet(`${DD_BASE}/api/v2/feature-flags`).reply(200, {
 			data: [
 				{
@@ -365,9 +362,6 @@ describe('flag-level migration failures', () => {
 			items: [],
 			totalCount: 0,
 		});
-		ddMock
-			.onGet(`${DD_BASE}/api/v1/org`)
-			.reply(200, { orgs: [{ public_id: 'test-org-id' }] });
 		ddMock.onGet(`${DD_BASE}/api/v2/feature-flags`).reply(200, {
 			data: [],
 			meta: { page: { total: 0 } },

@@ -16,6 +16,7 @@ import {
 	ddClient,
 	deleteVariant,
 	enableFeatureFlagEnvironment,
+	fetchCurrentUserIdentity,
 	fetchCurrentUserPermissions,
 	fetchDatadogEnvironments,
 	fetchDatadogFlagKeys,
@@ -1167,6 +1168,46 @@ describe('fetchDatadogTeams', () => {
 	});
 });
 
+// ─── fetchCurrentUserIdentity ─────────────────────────────────────────────────
+
+describe('fetchCurrentUserIdentity', () => {
+	let mock: AxiosMockAdapter;
+
+	beforeEach(() => {
+		mock = new AxiosMockAdapter(ddClient as never);
+	});
+
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('returns the authenticated user and org UUIDs', async () => {
+		mock.onGet(`${BASE}/api/v2/current_user`).reply(200, {
+			data: {
+				id: 'user-uuid',
+				type: 'users',
+				relationships: {
+					org: { data: { id: 'org-uuid', type: 'orgs' } },
+				},
+			},
+		});
+
+		await expect(
+			fetchCurrentUserIdentity(API_KEY, APP_KEY, SITE),
+		).resolves.toEqual({ userId: 'user-uuid', orgId: 'org-uuid' });
+	});
+
+	it('throws when the response does not contain both IDs', async () => {
+		mock.onGet(`${BASE}/api/v2/current_user`).reply(200, {
+			data: { id: '', relationships: { org: { data: { id: '' } } } },
+		});
+
+		await expect(
+			fetchCurrentUserIdentity(API_KEY, APP_KEY, SITE),
+		).rejects.toThrow('Could not determine Datadog user and org IDs');
+	});
+});
+
 // ─── fetchRestrictionPolicy ───────────────────────────────────────────────────
 
 describe('fetchRestrictionPolicy', () => {
@@ -1272,6 +1313,7 @@ describe('applyRestrictionPolicy', () => {
 			APP_KEY,
 			'flag-abc',
 			['platform', 'sre'],
+			'test-user-id',
 			'test-org-id',
 			SITE,
 		);
@@ -1288,14 +1330,19 @@ describe('applyRestrictionPolicy', () => {
 		const editorBinding = bindings.find((b) => b.relation === 'editor');
 		expect(editorBinding?.principals).toEqual(
 			expect.arrayContaining([
-				'org:test-org-id',
+				'user:test-user-id',
 				'team:creator-team',
 				'team:platform',
 				'team:sre',
 			]),
 		);
 		expect(editorBinding?.principals).toHaveLength(4);
-		expect(bindings.find((b) => b.relation === 'viewer')).toBeUndefined();
+		expect(bindings.find((b) => b.relation === 'viewer')?.principals).toEqual([
+			'org:test-org-id',
+		]);
+		expect(mock.history.post[0]?.params).toEqual({
+			allow_self_lockout: false,
+		});
 	});
 
 	it('creates a new editor binding when no policy exists (404)', async () => {
@@ -1316,6 +1363,7 @@ describe('applyRestrictionPolicy', () => {
 			APP_KEY,
 			'flag-new',
 			['platform'],
+			'test-user-id',
 			'test-org-id',
 			SITE,
 		);
@@ -1329,9 +1377,11 @@ describe('applyRestrictionPolicy', () => {
 				};
 			}
 		).data.attributes.bindings;
-		expect(bindings.find((b) => b.relation === 'viewer')).toBeUndefined();
+		expect(bindings.find((b) => b.relation === 'viewer')?.principals).toEqual([
+			'org:test-org-id',
+		]);
 		expect(bindings.find((b) => b.relation === 'editor')?.principals).toEqual(
-			expect.arrayContaining(['org:test-org-id', 'team:platform']),
+			expect.arrayContaining(['user:test-user-id', 'team:platform']),
 		);
 	});
 
@@ -1356,6 +1406,7 @@ describe('applyRestrictionPolicy', () => {
 			APP_KEY,
 			'flag-empty',
 			[],
+			'test-user-id',
 			'test-org-id',
 			SITE,
 		);
@@ -1390,6 +1441,7 @@ describe('applyRestrictionPolicy', () => {
 			APP_KEY,
 			'flag-dup',
 			['platform'],
+			'test-user-id',
 			'test-org-id',
 			SITE,
 		);
@@ -1411,7 +1463,7 @@ describe('applyRestrictionPolicy', () => {
 		expect(platformCount).toBe(1);
 	});
 
-	it('drops stale viewer bindings and includes org in editor', async () => {
+	it('preserves viewer bindings and adds the org as a viewer', async () => {
 		mock
 			.onGet(`${BASE}/api/v2/restriction_policy/feature-flag:flag-multi`)
 			.reply(200, {
@@ -1440,6 +1492,7 @@ describe('applyRestrictionPolicy', () => {
 			APP_KEY,
 			'flag-multi',
 			['platform'],
+			'test-user-id',
 			'test-org-id',
 			SITE,
 		);
@@ -1453,11 +1506,14 @@ describe('applyRestrictionPolicy', () => {
 				};
 			}
 		).data.attributes.bindings;
+		const viewerBinding = bindings.find((b) => b.relation === 'viewer');
 		const editorBinding = bindings.find((b) => b.relation === 'editor');
-		expect(bindings.find((b) => b.relation === 'viewer')).toBeUndefined();
+		expect(viewerBinding?.principals).toEqual(
+			expect.arrayContaining(['orgs/my-org', 'org:test-org-id']),
+		);
 		expect(editorBinding?.principals).toEqual(
 			expect.arrayContaining([
-				'org:test-org-id',
+				'user:test-user-id',
 				'team:creator-team',
 				'team:platform',
 			]),

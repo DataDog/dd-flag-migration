@@ -794,20 +794,28 @@ export async function syncAllocationsForEnvironment(
 
 // ─── Restriction Policy ───────────────────────────────────────────────────────
 
-export async function fetchOrgId(
+export async function fetchCurrentUserIdentity(
 	apiKey: string,
 	appKey: string,
 	site = 'datadoghq.com',
-): Promise<string> {
+): Promise<{ userId: string; orgId: string }> {
 	const baseUrl = `https://api.${site}`;
-	const response = await ddClient.get<{ orgs: Array<{ public_id: string }> }>(
-		`${baseUrl}/api/v1/org`,
-		{ headers: ddHeaders(apiKey, appKey) },
-	);
-	const orgId = response.data.orgs[0]?.public_id;
-	if (!orgId)
-		throw new Error('Could not determine Datadog org ID from /api/v1/org');
-	return orgId;
+	const response = await ddClient.get<{
+		data: {
+			id: string;
+			relationships: { org: { data: { id: string } } };
+		};
+	}>(`${baseUrl}/api/v2/current_user`, {
+		headers: ddHeaders(apiKey, appKey),
+	});
+	const userId = response.data.data.id;
+	const orgId = response.data.data.relationships.org.data.id;
+	if (!userId || !orgId) {
+		throw new Error(
+			'Could not determine Datadog user and org IDs from /api/v2/current_user',
+		);
+	}
+	return { userId, orgId };
 }
 
 /**
@@ -843,8 +851,8 @@ export async function fetchRestrictionPolicy(
  *
  * Teams are specified as Datadog team UUIDs and converted to "team:<id>"
  * principals (the `type:id` format the restriction policy API expects).
- * The org is always included as a viewer so it retains visibility after the
- * editor restriction is applied.
+ * The authenticated user is included as an editor so the migration can be
+ * rerun, while the org remains a viewer.
  *
  * POST on a resource with no existing policy creates it (upsert semantics), so
  * the 404→[] path in fetchRestrictionPolicy + a subsequent POST is safe and
@@ -855,6 +863,7 @@ export async function applyRestrictionPolicy(
 	appKey: string,
 	flagId: string,
 	editorTeamIds: string[],
+	userId: string,
 	orgId: string,
 	site = 'datadoghq.com',
 ): Promise<void> {
@@ -873,23 +882,26 @@ export async function applyRestrictionPolicy(
 		site,
 	);
 
-	// Find the existing editor binding (if any) and merge principals. The org is
-	// always included as an editor so that org-level credentials (e.g. the migration
-	// tool itself) retain edit access on subsequent runs — consistent with how LD
-	// treats org admins as able to override team restrictions.
+	// Keep the authenticated user as an editor so applying the policy does not
+	// prevent the migration from updating the flag on subsequent runs.
 	const editorBinding = existingBindings.find((b) => b.relation === 'editor');
 	const existingPrincipals = editorBinding?.principals ?? [];
 	const mergedEditorPrincipals = [
-		...new Set([...existingPrincipals, `org:${orgId}`, ...newPrincipals]),
+		...new Set([...existingPrincipals, `user:${userId}`, ...newPrincipals]),
 	];
 
-	// Preserve non-editor, non-viewer bindings; drop any stale viewer binding
-	// since the org already has viewer access via the editor binding above.
+	// Preserve all other relations and existing viewers, then ensure the org can
+	// still view the resource after editor access is restricted.
 	const otherBindings = existingBindings.filter(
 		(b) => b.relation !== 'editor' && b.relation !== 'viewer',
 	);
+	const viewerBinding = existingBindings.find((b) => b.relation === 'viewer');
+	const mergedViewerPrincipals = [
+		...new Set([...(viewerBinding?.principals ?? []), `org:${orgId}`]),
+	];
 	const updatedBindings: DDRestrictionBinding[] = [
 		...otherBindings,
+		{ principals: mergedViewerPrincipals, relation: 'viewer' },
 		{ principals: mergedEditorPrincipals, relation: 'editor' },
 	];
 
@@ -909,7 +921,7 @@ export async function applyRestrictionPolicy(
 				...ddHeaders(apiKey, appKey),
 				'Content-Type': 'application/json',
 			},
-			params: { allow_self_lockout: true },
+			params: { allow_self_lockout: false },
 		},
 	);
 }
