@@ -1827,7 +1827,7 @@ describe('Datadog client rate-limit handling', () => {
 				errors: [
 					{
 						detail:
-							'feature flag permission for modifying feature flag flag-uuid: permission denied',
+							'feature-flag permission for modifying feature flag flag-uuid: permission denied',
 					},
 				],
 			})

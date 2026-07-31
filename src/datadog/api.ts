@@ -52,7 +52,7 @@ function isFeatureFlagPermissionPropagationError(error: unknown): boolean {
 		responseBody.includes(
 			'feature-flag permission for contributing to feature flag',
 		) ||
-		responseBody.includes('feature flag permission for modifying feature flag');
+		responseBody.includes('feature-flag permission for modifying feature flag');
 	return (
 		method !== 'GET' &&
 		url.includes('/api/v2/feature-flags/') &&
