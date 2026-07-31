@@ -182,7 +182,7 @@ The tool translates LaunchDarkly targeting rules, individual user targets, perce
 
 ### Non-interactive mode
 
-Pass `--interactive=false` to run the migration entirely from CLI arguments, with no prompts. This is useful for scripted or CI environments.
+Pass `--non-interactive` to run the migration entirely from CLI arguments, with no prompts. This is useful for scripted or CI environments.
 
 Non-interactive migrations write a JSON result document to stdout. Status messages, progress output, and export messages are written to stderr so stdout can be piped into tools such as `jq`.
 
@@ -200,7 +200,7 @@ Non-interactive migrations write a JSON result document to stdout. Status messag
 
 | Flag | Description |
 |---|---|
-| `--dry-run` | Preview changes without writing to Datadog |
+| `--dry-run[=<bool>]` | Preview changes without writing to Datadog (default: `true` when flag is present) |
 | `--export=<bool>` | Export results to an `.xlsx` file after migration (default: `false`) |
 
 **Examples**
@@ -208,7 +208,7 @@ Non-interactive migrations write a JSON result document to stdout. Status messag
 Migrate two LaunchDarkly flags across two environments:
 
 ```bash
-npx @datadog/dd-flag-migration migrate --interactive=false \
+npx @datadog/dd-flag-migration migrate --non-interactive \
   --provider LaunchDarkly \
   --project my-ld-project \
   --datadog-site datadoghq.com \
@@ -221,7 +221,7 @@ npx @datadog/dd-flag-migration migrate --interactive=false \
 Rename a LaunchDarkly flag while migrating it:
 
 ```bash
-npx @datadog/dd-flag-migration migrate --interactive=false \
+npx @datadog/dd-flag-migration migrate --non-interactive \
   --provider LaunchDarkly \
   --project my-ld-project \
   --datadog-site datadoghq.com \
@@ -232,7 +232,7 @@ npx @datadog/dd-flag-migration migrate --interactive=false \
 Migrate Eppo flags (no project key required):
 
 ```bash
-npx @datadog/dd-flag-migration migrate --interactive=false \
+npx @datadog/dd-flag-migration migrate --non-interactive \
   --provider Eppo \
   --datadog-site datadoghq.com \
   --env-map production,Production \

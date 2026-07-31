@@ -49,7 +49,7 @@ const FLAGS: FlagDef[] = [
 	// Boolean flags accept a bare form (means true) or `=<bool>`.
 	{ name: '--dry-run', takesValue: 'optional' },
 	{ name: '--export', takesValue: 'optional' },
-	{ name: '--interactive', takesValue: 'optional' },
+	{ name: '--non-interactive', takesValue: 'optional' },
 	{ name: '--team-restrictions', takesValue: 'optional' },
 	{ name: '--datadog-site', takesValue: 'required' },
 	{ name: '--provider', takesValue: 'required' },
@@ -136,8 +136,8 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 			case '--datadog-site':
 				datadogSite = (value as string).trim();
 				break;
-			case '--interactive':
-				interactive = value === undefined ? true : parseBool(value, name);
+			case '--non-interactive':
+				interactive = value === undefined ? false : !parseBool(value, name);
 				break;
 			case '--provider':
 				provider = normalizeProvider(value as string);

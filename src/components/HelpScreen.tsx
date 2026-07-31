@@ -72,7 +72,7 @@ export function HelpScreen(): JSX.Element {
 			render: () => (
 				<Text>
 					{
-						'  --dry-run                    Preview changes without creating flags'
+						'  --dry-run[=<bool>]           Preview changes without creating flags'
 					}
 				</Text>
 			),
@@ -88,21 +88,11 @@ export function HelpScreen(): JSX.Element {
 			),
 		},
 		{
-			id: 'interactive',
+			id: 'non-interactive',
 			render: () => (
 				<Text>
 					{
-						'  --interactive[=<bool>]       Set to false to run without prompts (default: true)'
-					}
-				</Text>
-			),
-		},
-		{
-			id: 'export',
-			render: () => (
-				<Text>
-					{
-						'  --export[=<bool>]            Non-interactive only: export results to xlsx (default: false)'
+						'  --non-interactive            Run without prompts; requires all flags in the section below'
 					}
 				</Text>
 			),
@@ -122,7 +112,7 @@ export function HelpScreen(): JSX.Element {
 			render: () => (
 				<Text>
 					{
-						'                               Bare flag = true. Required in non-interactive mode. Interactive: prompts if omitted.'
+						'                               Bare flag = true. Omitting in interactive mode triggers a prompt.'
 					}
 				</Text>
 			),
@@ -132,8 +122,8 @@ export function HelpScreen(): JSX.Element {
 			id: 'required-title',
 			render: () => (
 				<Text>
-					<Text bold>Required when</Text>{' '}
-					<Text color="cyan">--interactive=false</Text>:
+					<Text bold>Options for</Text>{' '}
+					<Text color="cyan">migrate --non-interactive</Text>:
 				</Text>
 			),
 		},
@@ -148,11 +138,19 @@ export function HelpScreen(): JSX.Element {
 			),
 		},
 		{
+			id: 'non-interactive-site',
+			render: () => (
+				<Text>
+					{'  --datadog-site=<site>            Set the Datadog site (required)'}
+				</Text>
+			),
+		},
+		{
 			id: 'provider',
 			render: () => (
 				<Text>
 					{
-						'  --provider <Eppo|LaunchDarkly>   Source feature flag provider (case-insensitive)'
+						'  --provider <Eppo|LaunchDarkly>   Source feature flag provider (case-insensitive) (required)'
 					}
 				</Text>
 			),
@@ -162,7 +160,7 @@ export function HelpScreen(): JSX.Element {
 			render: () => (
 				<Text>
 					{
-						'  --env-map <source,target>        Map a source env to a Datadog env (repeatable; ≥1)'
+						'  --env-map <source,target>        Map a source env to a Datadog env (repeatable; ≥1) (required)'
 					}
 				</Text>
 			),
@@ -172,7 +170,7 @@ export function HelpScreen(): JSX.Element {
 			render: () => (
 				<Text>
 					{
-						'  --feature-flag <key>[,<dd-key>]  Flag key to migrate; LaunchDarkly may include a Datadog rename (repeatable; ≥1)'
+						'  --feature-flag <key>[,<dd-key>]  Flag key to migrate; LaunchDarkly may include a Datadog rename (repeatable; ≥1) (required)'
 					}
 				</Text>
 			),
@@ -182,7 +180,7 @@ export function HelpScreen(): JSX.Element {
 			render: () => (
 				<Text>
 					{
-						'  --project <key>                  LaunchDarkly project key (LaunchDarkly only)'
+						'  --project <key>                  LaunchDarkly project key (required for LaunchDarkly)'
 					}
 				</Text>
 			),
@@ -192,7 +190,17 @@ export function HelpScreen(): JSX.Element {
 			render: () => (
 				<Text>
 					{
-						'  --team-restrictions=<bool>       Whether to apply LD team-based editor restrictions'
+						'  --team-restrictions=<bool>       Whether to apply LD team-based editor restrictions (required)'
+					}
+				</Text>
+			),
+		},
+		{
+			id: 'export',
+			render: () => (
+				<Text>
+					{
+						'  --export[=<bool>]               Export results to xlsx (default: false)'
 					}
 				</Text>
 			),
@@ -292,7 +300,7 @@ export function HelpScreen(): JSX.Element {
 				<Text>
 					{'  '}
 					<Text color="gray">$</Text>{' '}
-					{'dd-flag-migration migrate --interactive=false \\'}
+					{'dd-flag-migration migrate --non-interactive \\'}
 				</Text>
 			),
 		},
@@ -319,8 +327,14 @@ export function HelpScreen(): JSX.Element {
 		{
 			id: 'example-noninteractive-5',
 			render: () => (
-				<Text>{'      --feature-flag flag-one --feature-flag flag-two'}</Text>
+				<Text>
+					{'      --feature-flag flag-one --feature-flag flag-two \\'}
+				</Text>
 			),
+		},
+		{
+			id: 'example-noninteractive-6',
+			render: () => <Text>{'      --team-restrictions'}</Text>,
 		},
 		{
 			id: 'example-evaluate',

@@ -33,8 +33,7 @@ describe('parseMigrateArgs', () => {
 
 	it('parses a full non-interactive LaunchDarkly invocation', () => {
 		const args = parseMigrateArgs([
-			'--interactive',
-			'false',
+			'--non-interactive',
 			'--provider',
 			'LaunchDarkly',
 			'--project',
@@ -66,7 +65,7 @@ describe('parseMigrateArgs', () => {
 
 	it('accepts provider names case-insensitively', () => {
 		const args = parseMigrateArgs([
-			'--interactive=false',
+			'--non-interactive',
 			'--provider=EPPO',
 			'--datadog-site=datadoghq.com',
 			'--env-map=prod,prod',
@@ -79,7 +78,7 @@ describe('parseMigrateArgs', () => {
 	it('rejects unknown provider', () => {
 		expect(() =>
 			parseMigrateArgs([
-				'--interactive=false',
+				'--non-interactive',
 				'--provider=Optimizely',
 				'--datadog-site=datadoghq.com',
 				'--env-map=p,p',
@@ -91,7 +90,7 @@ describe('parseMigrateArgs', () => {
 	it('requires --provider in non-interactive mode', () => {
 		expect(() =>
 			parseMigrateArgs([
-				'--interactive=false',
+				'--non-interactive',
 				'--datadog-site=datadoghq.com',
 				'--env-map=p,p',
 				'--feature-flag=x',
@@ -102,7 +101,7 @@ describe('parseMigrateArgs', () => {
 	it('requires at least one --env-map', () => {
 		expect(() =>
 			parseMigrateArgs([
-				'--interactive=false',
+				'--non-interactive',
 				'--provider=eppo',
 				'--datadog-site=datadoghq.com',
 				'--feature-flag=x',
@@ -113,7 +112,7 @@ describe('parseMigrateArgs', () => {
 	it('requires at least one --feature-flag', () => {
 		expect(() =>
 			parseMigrateArgs([
-				'--interactive=false',
+				'--non-interactive',
 				'--provider=eppo',
 				'--datadog-site=datadoghq.com',
 				'--env-map=p,p',
@@ -124,7 +123,7 @@ describe('parseMigrateArgs', () => {
 	it('requires --project for LaunchDarkly', () => {
 		expect(() =>
 			parseMigrateArgs([
-				'--interactive=false',
+				'--non-interactive',
 				'--provider=launchdarkly',
 				'--datadog-site=datadoghq.com',
 				'--env-map=p,p',
@@ -135,7 +134,7 @@ describe('parseMigrateArgs', () => {
 
 	it('does NOT require --project for Eppo', () => {
 		const args = parseMigrateArgs([
-			'--interactive=false',
+			'--non-interactive',
 			'--provider=eppo',
 			'--datadog-site=datadoghq.com',
 			'--env-map=p,p',
@@ -148,7 +147,7 @@ describe('parseMigrateArgs', () => {
 	it('requires --datadog-site in non-interactive mode', () => {
 		expect(() =>
 			parseMigrateArgs([
-				'--interactive=false',
+				'--non-interactive',
 				'--provider=eppo',
 				'--env-map=p,p',
 				'--feature-flag=x',
@@ -159,7 +158,7 @@ describe('parseMigrateArgs', () => {
 	it('rejects malformed --env-map (missing comma)', () => {
 		expect(() =>
 			parseMigrateArgs([
-				'--interactive=false',
+				'--non-interactive',
 				'--provider=eppo',
 				'--datadog-site=datadoghq.com',
 				'--env-map=invalid',
@@ -171,7 +170,7 @@ describe('parseMigrateArgs', () => {
 	it('rejects malformed --env-map (empty side)', () => {
 		expect(() =>
 			parseMigrateArgs([
-				'--interactive=false',
+				'--non-interactive',
 				'--provider=eppo',
 				'--datadog-site=datadoghq.com',
 				'--env-map=src,',
@@ -182,7 +181,7 @@ describe('parseMigrateArgs', () => {
 
 	it('accepts --export=true', () => {
 		const args = parseMigrateArgs([
-			'--interactive=false',
+			'--non-interactive',
 			'--provider=eppo',
 			'--datadog-site=datadoghq.com',
 			'--env-map=p,p',
@@ -195,7 +194,7 @@ describe('parseMigrateArgs', () => {
 
 	it('accepts --export=false', () => {
 		const args = parseMigrateArgs([
-			'--interactive=false',
+			'--non-interactive',
 			'--provider=eppo',
 			'--datadog-site=datadoghq.com',
 			'--env-map=p,p',
@@ -208,7 +207,7 @@ describe('parseMigrateArgs', () => {
 
 	it('defaults doExport to false when --export is omitted', () => {
 		const args = parseMigrateArgs([
-			'--interactive=false',
+			'--non-interactive',
 			'--provider=eppo',
 			'--datadog-site=datadoghq.com',
 			'--env-map=p,p',
@@ -229,13 +228,20 @@ describe('parseMigrateArgs', () => {
 		);
 	});
 
-	it('bare --interactive means true', () => {
-		const args = parseMigrateArgs(['--interactive']);
-		expect(args.interactive).toBe(true);
+	it('bare --non-interactive enables non-interactive mode', () => {
+		const args = parseMigrateArgs([
+			'--non-interactive',
+			'--provider=eppo',
+			'--datadog-site=datadoghq.com',
+			'--env-map=p,p',
+			'--feature-flag=x',
+			'--team-restrictions=true',
+		]);
+		expect(args.interactive).toBe(false);
 	});
 
-	it('rejects --interactive=maybe', () => {
-		expect(() => parseMigrateArgs(['--interactive=maybe'])).toThrow(
+	it('rejects --non-interactive=maybe', () => {
+		expect(() => parseMigrateArgs(['--non-interactive=maybe'])).toThrow(
 			/expects a boolean/,
 		);
 	});
@@ -280,7 +286,7 @@ describe('parseMigrateArgs', () => {
 
 	it('carries applyTeamRestrictions through in non-interactive mode', () => {
 		const args = parseMigrateArgs([
-			'--interactive=false',
+			'--non-interactive',
 			'--provider=eppo',
 			'--datadog-site=datadoghq.com',
 			'--env-map=p,p',
@@ -295,7 +301,7 @@ describe('parseMigrateArgs', () => {
 	it('requires --team-restrictions in non-interactive mode', () => {
 		expect(() =>
 			parseMigrateArgs([
-				'--interactive=false',
+				'--non-interactive',
 				'--provider=eppo',
 				'--datadog-site=datadoghq.com',
 				'--env-map=p,p',
