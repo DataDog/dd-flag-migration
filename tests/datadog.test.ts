@@ -1679,6 +1679,62 @@ describe('Datadog client rate-limit handling', () => {
 		);
 	});
 
+	it('retries a feature flag contribution denial while policy changes propagate', async () => {
+		const url = `${BASE}/api/v2/feature-flags/flag-uuid/environments/env-uuid/allocations`;
+		mock
+			.onPut(url)
+			.replyOnce(403, {
+				errors: [
+					{
+						detail:
+							'feature-flag permission for contributing to feature flag flag-uuid: permission denied',
+					},
+				],
+			})
+			.onPut(url)
+			.replyOnce(200, {});
+
+		const response = await client.put(url, {});
+		expect(response.status).toBe(200);
+		expect(mock.history.put).toHaveLength(2);
+		expect(warnSpy).toHaveBeenCalledWith(
+			expect.stringMatching(
+				/permissions are still propagating.*attempt 1 of 3/i,
+			),
+		);
+	});
+
+	it('does not retry unrelated permission denials', async () => {
+		const url = `${BASE}/api/v2/feature-flags/flag-uuid`;
+		mock.onPut(url).reply(403, {
+			errors: [{ detail: 'application key is missing a required permission' }],
+		});
+
+		await expect(client.put(url, {})).rejects.toMatchObject({
+			response: { status: 403 },
+		});
+		expect(mock.history.put).toHaveLength(1);
+		expect(warnSpy).not.toHaveBeenCalled();
+	});
+
+	it('stops retrying a persistent feature flag contribution denial', async () => {
+		const url = `${BASE}/api/v2/feature-flags/flag-uuid`;
+		mock.onPut(url).reply(403, {
+			errors: [
+				{
+					detail:
+						'feature-flag permission for contributing to feature flag flag-uuid: permission denied',
+				},
+			],
+		});
+
+		await expect(client.put(url, {})).rejects.toMatchObject({
+			response: { status: 403 },
+		});
+		expect(mock.history.put).toHaveLength(4);
+		expect(warnSpy).toHaveBeenCalledTimes(3);
+	});
+
 	it('throws after exhausting max retries on 429', async () => {
 		mock.onGet(`${BASE}/foo`).reply(429);
 

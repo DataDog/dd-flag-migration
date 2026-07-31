@@ -40,6 +40,24 @@ function ddBackoffDelayMs(attempt: number): number {
 	return Math.min(30_000, DD_RETRY_BASE_DELAY_MS * DD_RETRY_FACTOR ** attempt);
 }
 
+function isFeatureFlagPermissionPropagationError(error: unknown): boolean {
+	if (!axios.isAxiosError(error) || error.response?.status !== 403) {
+		return false;
+	}
+
+	const url = error.config?.url ?? '';
+	const method = error.config?.method?.toUpperCase();
+	const responseBody = JSON.stringify(error.response.data);
+	return (
+		method !== 'GET' &&
+		url.includes('/api/v2/feature-flags/') &&
+		responseBody.includes(
+			'feature-flag permission for contributing to feature flag',
+		) &&
+		responseBody.includes('permission denied')
+	);
+}
+
 export function createDDClient(): AxiosInstance {
 	// Earliest epoch-ms at which the next request may be sent. Scoped per client
 	// so tests (and any callers that build their own client) get isolated state.
@@ -81,7 +99,7 @@ export function createDDClient(): AxiosInstance {
 			return response;
 		},
 		async (error) => {
-			if (!axios.isAxiosError(error) || error.response?.status !== 429) {
+			if (!axios.isAxiosError(error)) {
 				throw error;
 			}
 
@@ -89,6 +107,22 @@ export function createDDClient(): AxiosInstance {
 			if (!config) throw error;
 
 			const configAny = config as unknown as Record<string, unknown>;
+			if (isFeatureFlagPermissionPropagationError(error)) {
+				const permissionRetryCount: number =
+					(configAny.__permissionRetryCount as number) ?? 0;
+				if (permissionRetryCount >= DD_MAX_RETRIES) throw error;
+
+				const delayMs = ddBackoffDelayMs(permissionRetryCount);
+				console.warn(
+					`Datadog feature flag permissions are still propagating; retrying after ${Math.ceil(delayMs / 1_000)}s (attempt ${permissionRetryCount + 1} of ${DD_MAX_RETRIES}).`,
+				);
+				configAny.__permissionRetryCount = permissionRetryCount + 1;
+				await sleep(delayMs);
+				return client.request(config);
+			}
+
+			if (error.response?.status !== 429) throw error;
+
 			const retryCount: number = (configAny.__retryCount as number) ?? 0;
 			if (retryCount >= DD_MAX_RETRIES) {
 				throw new Error(
