@@ -919,11 +919,7 @@ export async function applyRestrictionPolicy(
 	// Keep the authenticated user as an editor so applying the policy does not
 	// prevent the migration from updating the flag on subsequent runs.
 	const editorBinding = existingBindings.find((b) => b.relation === 'editor');
-	// Remove the broad org editor grant written by the superseded migration
-	// policy. Keeping it would make the team restrictions ineffective.
-	const existingPrincipals = (editorBinding?.principals ?? []).filter(
-		(principal) => principal !== `org:${orgId}`,
-	);
+	const existingPrincipals = editorBinding?.principals ?? [];
 	const mergedEditorPrincipals = [
 		...new Set([...existingPrincipals, `user:${userId}`, ...newPrincipals]),
 	];
