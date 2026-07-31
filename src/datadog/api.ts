@@ -48,12 +48,15 @@ function isFeatureFlagPermissionPropagationError(error: unknown): boolean {
 	const url = error.config?.url ?? '';
 	const method = error.config?.method?.toUpperCase();
 	const responseBody = JSON.stringify(error.response.data) ?? '';
+	const isFlagRelationDenied =
+		responseBody.includes(
+			'feature-flag permission for contributing to feature flag',
+		) ||
+		responseBody.includes('feature flag permission for modifying feature flag');
 	return (
 		method !== 'GET' &&
 		url.includes('/api/v2/feature-flags/') &&
-		responseBody.includes(
-			'feature-flag permission for contributing to feature flag',
-		) &&
+		isFlagRelationDenied &&
 		responseBody.includes('permission denied')
 	);
 }
@@ -878,6 +881,71 @@ export async function fetchRestrictionPolicy(
 	}
 }
 
+export function buildRestrictionPolicyBindings(
+	editorTeamIds: string[],
+	userId: string,
+	orgId: string,
+	existingBindings: DDRestrictionBinding[],
+): DDRestrictionBinding[] {
+	const requiredEditorPrincipals = [
+		`user:${userId}`,
+		...editorTeamIds.map((id) => `team:${id}`),
+	];
+	const editorBinding = existingBindings.find((b) => b.relation === 'editor');
+	const mergedEditorPrincipals = [
+		...new Set([
+			...(editorBinding?.principals ?? []),
+			...requiredEditorPrincipals,
+		]),
+	];
+	const editorPrincipalSet = new Set(mergedEditorPrincipals);
+
+	// A principal can have only one relation. Promote required editors out of
+	// lower-access bindings and omit bindings that become empty.
+	const otherBindings = existingBindings
+		.filter((b) => b.relation !== 'editor' && b.relation !== 'viewer')
+		.map((binding) => ({
+			...binding,
+			principals: binding.principals.filter(
+				(principal) => !editorPrincipalSet.has(principal),
+			),
+		}))
+		.filter((binding) => binding.principals.length > 0);
+
+	const principalsWithHigherAccess = new Set([
+		...mergedEditorPrincipals,
+		...otherBindings.flatMap((binding) => binding.principals),
+	]);
+	const viewerBinding = existingBindings.find((b) => b.relation === 'viewer');
+	const mergedViewerPrincipals = [
+		...new Set(
+			(viewerBinding?.principals ?? []).filter(
+				(principal) => !principalsWithHigherAccess.has(principal),
+			),
+		),
+	];
+	const orgPrincipal = `org:${orgId}`;
+	if (
+		!principalsWithHigherAccess.has(orgPrincipal) &&
+		!mergedViewerPrincipals.includes(orgPrincipal)
+	) {
+		mergedViewerPrincipals.push(orgPrincipal);
+	}
+
+	return [
+		...otherBindings,
+		...(mergedViewerPrincipals.length > 0
+			? [
+					{
+						principals: mergedViewerPrincipals,
+						relation: 'viewer',
+					},
+				]
+			: []),
+		{ principals: mergedEditorPrincipals, relation: 'editor' },
+	];
+}
+
 /**
  * Grant editor access to additional teams on a feature flag's restriction policy.
  * Fetches the existing policy, merges new team IDs into the editor binding,
@@ -905,8 +973,6 @@ export async function applyRestrictionPolicy(
 
 	const baseUrl = `https://api.${site}`;
 	const resourceId = `feature-flag:${flagId}`;
-	const newPrincipals = editorTeamIds.map((id) => `team:${id}`);
-
 	// GET → merge → POST is not atomic; a concurrent writer between the GET and POST would
 	// cause last-writer-wins. Safe for the expected single in-flight sequential migration.
 	const existingBindings = await fetchRestrictionPolicy(
@@ -916,28 +982,12 @@ export async function applyRestrictionPolicy(
 		site,
 	);
 
-	// Keep the authenticated user as an editor so applying the policy does not
-	// prevent the migration from updating the flag on subsequent runs.
-	const editorBinding = existingBindings.find((b) => b.relation === 'editor');
-	const existingPrincipals = editorBinding?.principals ?? [];
-	const mergedEditorPrincipals = [
-		...new Set([...existingPrincipals, `user:${userId}`, ...newPrincipals]),
-	];
-
-	// Preserve all other relations and existing viewers, then ensure the org can
-	// still view the resource after editor access is restricted.
-	const otherBindings = existingBindings.filter(
-		(b) => b.relation !== 'editor' && b.relation !== 'viewer',
+	const updatedBindings = buildRestrictionPolicyBindings(
+		editorTeamIds,
+		userId,
+		orgId,
+		existingBindings,
 	);
-	const viewerBinding = existingBindings.find((b) => b.relation === 'viewer');
-	const mergedViewerPrincipals = [
-		...new Set([...(viewerBinding?.principals ?? []), `org:${orgId}`]),
-	];
-	const updatedBindings: DDRestrictionBinding[] = [
-		...otherBindings,
-		{ principals: mergedViewerPrincipals, relation: 'viewer' },
-		{ principals: mergedEditorPrincipals, relation: 'editor' },
-	];
 
 	const body = {
 		data: {

@@ -1519,6 +1519,121 @@ describe('applyRestrictionPolicy', () => {
 			]),
 		);
 	});
+
+	it('does not add the org as a viewer when it is already an editor', async () => {
+		mock
+			.onGet(`${BASE}/api/v2/restriction_policy/feature-flag:flag-org-editor`)
+			.reply(200, {
+				data: {
+					attributes: {
+						bindings: [
+							{
+								principals: ['org:test-org-id'],
+								relation: 'editor',
+							},
+						],
+					},
+				},
+			});
+
+		let postBody: unknown;
+		mock
+			.onPost(`${BASE}/api/v2/restriction_policy/feature-flag:flag-org-editor`)
+			.reply((config) => {
+				postBody = JSON.parse(config.data as string);
+				return [200, {}];
+			});
+
+		await applyRestrictionPolicy(
+			API_KEY,
+			APP_KEY,
+			'flag-org-editor',
+			['platform'],
+			'test-user-id',
+			'test-org-id',
+			SITE,
+		);
+
+		const bindings = (
+			postBody as {
+				data: {
+					attributes: {
+						bindings: Array<{ principals: string[]; relation: string }>;
+					};
+				};
+			}
+		).data.attributes.bindings;
+		expect(bindings.find((b) => b.relation === 'viewer')).toBeUndefined();
+		expect(bindings.find((b) => b.relation === 'editor')?.principals).toEqual(
+			expect.arrayContaining([
+				'org:test-org-id',
+				'user:test-user-id',
+				'team:platform',
+			]),
+		);
+	});
+
+	it('promotes required editors out of lower-access bindings', async () => {
+		mock
+			.onGet(`${BASE}/api/v2/restriction_policy/feature-flag:flag-promote`)
+			.reply(200, {
+				data: {
+					attributes: {
+						bindings: [
+							{
+								principals: [
+									'user:test-user-id',
+									'team:platform',
+									'team:existing-contributor',
+								],
+								relation: 'contributor',
+							},
+							{
+								principals: ['org:test-org-id'],
+								relation: 'viewer',
+							},
+						],
+					},
+				},
+			});
+
+		let postBody: unknown;
+		mock
+			.onPost(`${BASE}/api/v2/restriction_policy/feature-flag:flag-promote`)
+			.reply((config) => {
+				postBody = JSON.parse(config.data as string);
+				return [200, {}];
+			});
+
+		await applyRestrictionPolicy(
+			API_KEY,
+			APP_KEY,
+			'flag-promote',
+			['platform'],
+			'test-user-id',
+			'test-org-id',
+			SITE,
+		);
+
+		const bindings = (
+			postBody as {
+				data: {
+					attributes: {
+						bindings: Array<{ principals: string[]; relation: string }>;
+					};
+				};
+			}
+		).data.attributes.bindings;
+		expect(
+			bindings.find((b) => b.relation === 'contributor')?.principals,
+		).toEqual(['team:existing-contributor']);
+		expect(bindings.find((b) => b.relation === 'editor')?.principals).toEqual(
+			expect.arrayContaining(['user:test-user-id', 'team:platform']),
+		);
+
+		const allPrincipals = bindings.flatMap((binding) => binding.principals);
+		expect(new Set(allPrincipals).size).toBe(allPrincipals.length);
+	});
 });
 
 // ─── fetchCurrentUserPermissions ─────────────────────────────────────────────
@@ -1688,6 +1803,31 @@ describe('Datadog client rate-limit handling', () => {
 					{
 						detail:
 							'feature-flag permission for contributing to feature flag flag-uuid: permission denied',
+					},
+				],
+			})
+			.onPut(url)
+			.replyOnce(200, {});
+
+		const response = await client.put(url, {});
+		expect(response.status).toBe(200);
+		expect(mock.history.put).toHaveLength(2);
+		expect(warnSpy).toHaveBeenCalledWith(
+			expect.stringMatching(
+				/permissions are still propagating.*attempt 1 of 3/i,
+			),
+		);
+	});
+
+	it('retries the feature flag edit denial used by the contributor fallback', async () => {
+		const url = `${BASE}/api/v2/feature-flags/flag-uuid`;
+		mock
+			.onPut(url)
+			.replyOnce(403, {
+				errors: [
+					{
+						detail:
+							'feature flag permission for modifying feature flag flag-uuid: permission denied',
 					},
 				],
 			})

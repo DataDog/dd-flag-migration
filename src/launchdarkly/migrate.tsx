@@ -23,6 +23,7 @@ import { formatVariantLabel } from '../components/VariantCounts.js';
 import {
 	applyRestrictionPolicy,
 	applyVariantDeletes,
+	buildRestrictionPolicyBindings,
 	createFeatureFlag,
 	enableFeatureFlagEnvironment,
 	fetchCurrentUserIdentity,
@@ -115,27 +116,12 @@ function buildDryRunRestrictionPolicy(
 	params: Record<string, unknown>;
 	body: unknown;
 } {
-	const newPrincipals = editorTeamIds.map((id) => `team:${id}`);
-	const editorBinding = existingBindings.find((b) => b.relation === 'editor');
-	const mergedEditorPrincipals = [
-		...new Set([
-			...(editorBinding?.principals ?? []),
-			`user:${userId}`,
-			...newPrincipals,
-		]),
-	];
-	const otherBindings = existingBindings.filter(
-		(b) => b.relation !== 'editor' && b.relation !== 'viewer',
+	const updatedBindings = buildRestrictionPolicyBindings(
+		editorTeamIds,
+		userId,
+		orgId,
+		existingBindings,
 	);
-	const viewerBinding = existingBindings.find((b) => b.relation === 'viewer');
-	const mergedViewerPrincipals = [
-		...new Set([...(viewerBinding?.principals ?? []), `org:${orgId}`]),
-	];
-	const updatedBindings: DDRestrictionBinding[] = [
-		...otherBindings,
-		{ principals: mergedViewerPrincipals, relation: 'viewer' },
-		{ principals: mergedEditorPrincipals, relation: 'editor' },
-	];
 	return {
 		method: 'POST',
 		path: `/api/v2/restriction_policy/feature-flag:${flagId}`,
