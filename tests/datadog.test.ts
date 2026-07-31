@@ -1272,30 +1272,11 @@ describe('applyRestrictionPolicy', () => {
 			APP_KEY,
 			'flag-abc',
 			['platform', 'sre'],
+			'test-org-id',
 			SITE,
 		);
 
-		expect(postBody).toEqual({
-			data: {
-				id: 'feature-flag:flag-abc',
-				type: 'restriction_policy',
-				attributes: {
-					bindings: [
-						{
-							principals: expect.arrayContaining([
-								'team:creator-team',
-								'team:platform',
-								'team:sre',
-							]),
-							relation: 'editor',
-						},
-					],
-				},
-			},
-		});
-
-		// Also verify no extra principals were injected
-		const editorBinding = (
+		const bindings = (
 			postBody as {
 				data: {
 					attributes: {
@@ -1303,8 +1284,18 @@ describe('applyRestrictionPolicy', () => {
 					};
 				};
 			}
-		).data.attributes.bindings.find((b) => b.relation === 'editor');
+		).data.attributes.bindings;
+		const editorBinding = bindings.find((b) => b.relation === 'editor');
+		const viewerBinding = bindings.find((b) => b.relation === 'viewer');
+		expect(editorBinding?.principals).toEqual(
+			expect.arrayContaining([
+				'team:creator-team',
+				'team:platform',
+				'team:sre',
+			]),
+		);
 		expect(editorBinding?.principals).toHaveLength(3);
+		expect(viewerBinding?.principals).toEqual(['org:test-org-id']);
 	});
 
 	it('creates a new editor binding when no policy exists (404)', async () => {
@@ -1325,23 +1316,25 @@ describe('applyRestrictionPolicy', () => {
 			APP_KEY,
 			'flag-new',
 			['platform'],
+			'test-org-id',
 			SITE,
 		);
 
-		expect(postBody).toEqual({
-			data: {
-				id: 'feature-flag:flag-new',
-				type: 'restriction_policy',
-				attributes: {
-					bindings: [
-						{
-							principals: ['team:platform'],
-							relation: 'editor',
-						},
-					],
-				},
-			},
-		});
+		const bindings = (
+			postBody as {
+				data: {
+					attributes: {
+						bindings: Array<{ principals: string[]; relation: string }>;
+					};
+				};
+			}
+		).data.attributes.bindings;
+		expect(bindings.find((b) => b.relation === 'viewer')?.principals).toEqual([
+			'org:test-org-id',
+		]);
+		expect(bindings.find((b) => b.relation === 'editor')?.principals).toEqual([
+			'team:platform',
+		]);
 	});
 
 	it('does nothing when editorTeamHandles is empty', async () => {
@@ -1360,7 +1353,14 @@ describe('applyRestrictionPolicy', () => {
 				return [200, {}];
 			});
 
-		await applyRestrictionPolicy(API_KEY, APP_KEY, 'flag-empty', [], SITE);
+		await applyRestrictionPolicy(
+			API_KEY,
+			APP_KEY,
+			'flag-empty',
+			[],
+			'test-org-id',
+			SITE,
+		);
 
 		expect(getCalled).toBe(false);
 		expect(postCalled).toBe(false);
@@ -1392,15 +1392,22 @@ describe('applyRestrictionPolicy', () => {
 			APP_KEY,
 			'flag-dup',
 			['platform'],
+			'test-org-id',
 			SITE,
 		);
 
-		const binding = (
+		const bindings = (
 			postBody as {
-				data: { attributes: { bindings: Array<{ principals: string[] }> } };
+				data: {
+					attributes: {
+						bindings: Array<{ principals: string[]; relation: string }>;
+					};
+				};
 			}
-		).data.attributes.bindings[0];
-		const platformCount = binding.principals.filter(
+		).data.attributes.bindings;
+		const editorPrincipals =
+			bindings.find((b) => b.relation === 'editor')?.principals ?? [];
+		const platformCount = editorPrincipals.filter(
 			(p: string) => p === 'team:platform',
 		).length;
 		expect(platformCount).toBe(1);
@@ -1435,6 +1442,7 @@ describe('applyRestrictionPolicy', () => {
 			APP_KEY,
 			'flag-multi',
 			['platform'],
+			'test-org-id',
 			SITE,
 		);
 
@@ -1449,10 +1457,9 @@ describe('applyRestrictionPolicy', () => {
 		).data.attributes.bindings;
 		const viewerBinding = bindings.find((b) => b.relation === 'viewer');
 		const editorBinding = bindings.find((b) => b.relation === 'editor');
-		expect(viewerBinding).toEqual({
-			principals: ['orgs/my-org'],
-			relation: 'viewer',
-		});
+		expect(viewerBinding?.principals).toEqual(
+			expect.arrayContaining(['orgs/my-org', 'org:test-org-id']),
+		);
 		expect(editorBinding?.principals).toEqual(
 			expect.arrayContaining(['team:creator-team', 'team:platform']),
 		);

@@ -794,6 +794,22 @@ export async function syncAllocationsForEnvironment(
 
 // ─── Restriction Policy ───────────────────────────────────────────────────────
 
+export async function fetchOrgId(
+	apiKey: string,
+	appKey: string,
+	site = 'datadoghq.com',
+): Promise<string> {
+	const baseUrl = `https://api.${site}`;
+	const response = await ddClient.get<{ orgs: Array<{ public_id: string }> }>(
+		`${baseUrl}/api/v1/org`,
+		{ headers: ddHeaders(apiKey, appKey) },
+	);
+	const orgId = response.data.orgs[0]?.public_id;
+	if (!orgId)
+		throw new Error('Could not determine Datadog org ID from /api/v1/org');
+	return orgId;
+}
+
 /**
  * Fetch the current restriction policy bindings for a feature flag.
  * Returns empty array when no policy exists (404).
@@ -827,6 +843,8 @@ export async function fetchRestrictionPolicy(
  *
  * Teams are specified as Datadog team UUIDs and converted to "team:<id>"
  * principals (the `type:id` format the restriction policy API expects).
+ * The org is always included as a viewer so it retains visibility after the
+ * editor restriction is applied.
  *
  * POST on a resource with no existing policy creates it (upsert semantics), so
  * the 404→[] path in fetchRestrictionPolicy + a subsequent POST is safe and
@@ -837,6 +855,7 @@ export async function applyRestrictionPolicy(
 	appKey: string,
 	flagId: string,
 	editorTeamIds: string[],
+	orgId: string,
 	site = 'datadoghq.com',
 ): Promise<void> {
 	if (editorTeamIds.length === 0) return;
@@ -857,15 +876,25 @@ export async function applyRestrictionPolicy(
 	// Find the existing editor binding (if any) and merge principals
 	const editorBinding = existingBindings.find((b) => b.relation === 'editor');
 	const existingPrincipals = editorBinding?.principals ?? [];
-	const mergedPrincipals = [
+	const mergedEditorPrincipals = [
 		...new Set([...existingPrincipals, ...newPrincipals]),
 	];
 
-	// Keep all non-editor bindings intact; replace (or add) the editor binding
-	const otherBindings = existingBindings.filter((b) => b.relation !== 'editor');
+	// Preserve non-editor, non-viewer bindings; rebuild viewer to ensure the org
+	// retains view access (required by the API when editor restrictions are set).
+	const otherBindings = existingBindings.filter(
+		(b) => b.relation !== 'editor' && b.relation !== 'viewer',
+	);
+	const existingViewerBinding = existingBindings.find(
+		(b) => b.relation === 'viewer',
+	);
+	const mergedViewerPrincipals = [
+		...new Set([...(existingViewerBinding?.principals ?? []), `org:${orgId}`]),
+	];
 	const updatedBindings: DDRestrictionBinding[] = [
 		...otherBindings,
-		{ principals: mergedPrincipals, relation: 'editor' },
+		{ principals: mergedViewerPrincipals, relation: 'viewer' },
+		{ principals: mergedEditorPrincipals, relation: 'editor' },
 	];
 
 	const body = {

@@ -29,6 +29,7 @@ import {
 	fetchDatadogFlags,
 	fetchDatadogTeams,
 	fetchFlagDetail,
+	fetchOrgId,
 	fetchRestrictionPolicy,
 	syncAllocationsForEnvironment,
 	syncVariantsCreatesAndUpdates,
@@ -104,6 +105,7 @@ function ddEnvLabel(env: DatadogEnvironment): string {
 function buildDryRunRestrictionPolicy(
 	flagId: string,
 	editorTeamIds: string[],
+	orgId: string,
 	existingBindings: DDRestrictionBinding[],
 	approximationNote?: string,
 ): {
@@ -114,13 +116,22 @@ function buildDryRunRestrictionPolicy(
 } {
 	const newPrincipals = editorTeamIds.map((id) => `team:${id}`);
 	const editorBinding = existingBindings.find((b) => b.relation === 'editor');
-	const mergedPrincipals = [
+	const mergedEditorPrincipals = [
 		...new Set([...(editorBinding?.principals ?? []), ...newPrincipals]),
 	];
-	const otherBindings = existingBindings.filter((b) => b.relation !== 'editor');
+	const otherBindings = existingBindings.filter(
+		(b) => b.relation !== 'editor' && b.relation !== 'viewer',
+	);
+	const existingViewerBinding = existingBindings.find(
+		(b) => b.relation === 'viewer',
+	);
+	const mergedViewerPrincipals = [
+		...new Set([...(existingViewerBinding?.principals ?? []), `org:${orgId}`]),
+	];
 	const updatedBindings: DDRestrictionBinding[] = [
 		...otherBindings,
-		{ principals: mergedPrincipals, relation: 'editor' },
+		{ principals: mergedViewerPrincipals, relation: 'viewer' },
+		{ principals: mergedEditorPrincipals, relation: 'editor' },
 	];
 	return {
 		method: 'POST',
@@ -142,6 +153,7 @@ async function applyRestrictionPolicyForFlag(
 	ddAppKey: string,
 	flagId: string,
 	editorTeamIds: string[],
+	orgId: string,
 	ddSite: string,
 	flagKey: string,
 	failures: Array<{ key: string; error: string }>,
@@ -152,6 +164,7 @@ async function applyRestrictionPolicyForFlag(
 			ddAppKey,
 			flagId,
 			editorTeamIds,
+			orgId,
 			ddSite,
 		);
 	} catch (err) {
@@ -1047,6 +1060,8 @@ async function executeMigration(
 		);
 	}
 
+	const orgId = await fetchOrgId(ddApiKey, ddAppKey, ddSite);
+
 	// ── Phase 1: Migrate segments as saved filters ─────────────────────────────
 	let savedFilterLookup = new Map<string, string>();
 	let segmentConstantLookup = new Map<string, boolean>();
@@ -1575,6 +1590,7 @@ async function executeMigration(
 									buildDryRunRestrictionPolicy(
 										existingFlagId,
 										editorTeamIds,
+										orgId,
 										existingBindings,
 									),
 								);
@@ -1614,6 +1630,7 @@ async function executeMigration(
 									ddAppKey,
 									existingFlagId,
 									editorTeamIds,
+									orgId,
 									ddSite,
 									flag.key,
 									restrictionPolicyFailures,
@@ -1725,6 +1742,7 @@ async function executeMigration(
 								buildDryRunRestrictionPolicy(
 									existingFlagId,
 									editorTeamIds,
+									orgId,
 									existingBindings,
 								),
 							);
@@ -1837,6 +1855,7 @@ async function executeMigration(
 									ddAppKey,
 									existingFlagId,
 									editorTeamIds,
+									orgId,
 									ddSite,
 									flag.key,
 									restrictionPolicyFailures,
@@ -1929,6 +1948,7 @@ async function executeMigration(
 								buildDryRunRestrictionPolicy(
 									`<uuid-for-${ddKey}>`,
 									editorTeamIds,
+									orgId,
 									[],
 									'Approximate — dd-source adds a creator-team principal on flag creation before this POST runs; that principal is not reflected here.',
 								),
@@ -1962,6 +1982,7 @@ async function executeMigration(
 									ddAppKey,
 									createdFlag.id,
 									editorTeamIds,
+									orgId,
 									ddSite,
 									flag.key,
 									restrictionPolicyFailures,
