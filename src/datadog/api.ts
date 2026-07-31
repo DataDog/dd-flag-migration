@@ -873,27 +873,23 @@ export async function applyRestrictionPolicy(
 		site,
 	);
 
-	// Find the existing editor binding (if any) and merge principals
+	// Find the existing editor binding (if any) and merge principals. The org is
+	// always included as an editor so that org-level credentials (e.g. the migration
+	// tool itself) retain edit access on subsequent runs — consistent with how LD
+	// treats org admins as able to override team restrictions.
 	const editorBinding = existingBindings.find((b) => b.relation === 'editor');
 	const existingPrincipals = editorBinding?.principals ?? [];
 	const mergedEditorPrincipals = [
-		...new Set([...existingPrincipals, ...newPrincipals]),
+		...new Set([...existingPrincipals, `org:${orgId}`, ...newPrincipals]),
 	];
 
-	// Preserve non-editor, non-viewer bindings; rebuild viewer to ensure the org
-	// retains view access (required by the API when editor restrictions are set).
+	// Preserve non-editor, non-viewer bindings; drop any stale viewer binding
+	// since the org already has viewer access via the editor binding above.
 	const otherBindings = existingBindings.filter(
 		(b) => b.relation !== 'editor' && b.relation !== 'viewer',
 	);
-	const existingViewerBinding = existingBindings.find(
-		(b) => b.relation === 'viewer',
-	);
-	const mergedViewerPrincipals = [
-		...new Set([...(existingViewerBinding?.principals ?? []), `org:${orgId}`]),
-	];
 	const updatedBindings: DDRestrictionBinding[] = [
 		...otherBindings,
-		{ principals: mergedViewerPrincipals, relation: 'viewer' },
 		{ principals: mergedEditorPrincipals, relation: 'editor' },
 	];
 

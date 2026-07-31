@@ -117,20 +117,17 @@ function buildDryRunRestrictionPolicy(
 	const newPrincipals = editorTeamIds.map((id) => `team:${id}`);
 	const editorBinding = existingBindings.find((b) => b.relation === 'editor');
 	const mergedEditorPrincipals = [
-		...new Set([...(editorBinding?.principals ?? []), ...newPrincipals]),
+		...new Set([
+			...(editorBinding?.principals ?? []),
+			`org:${orgId}`,
+			...newPrincipals,
+		]),
 	];
 	const otherBindings = existingBindings.filter(
 		(b) => b.relation !== 'editor' && b.relation !== 'viewer',
 	);
-	const existingViewerBinding = existingBindings.find(
-		(b) => b.relation === 'viewer',
-	);
-	const mergedViewerPrincipals = [
-		...new Set([...(existingViewerBinding?.principals ?? []), `org:${orgId}`]),
-	];
 	const updatedBindings: DDRestrictionBinding[] = [
 		...otherBindings,
-		{ principals: mergedViewerPrincipals, relation: 'viewer' },
 		{ principals: mergedEditorPrincipals, relation: 'editor' },
 	];
 	return {

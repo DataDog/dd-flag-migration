@@ -1286,16 +1286,16 @@ describe('applyRestrictionPolicy', () => {
 			}
 		).data.attributes.bindings;
 		const editorBinding = bindings.find((b) => b.relation === 'editor');
-		const viewerBinding = bindings.find((b) => b.relation === 'viewer');
 		expect(editorBinding?.principals).toEqual(
 			expect.arrayContaining([
+				'org:test-org-id',
 				'team:creator-team',
 				'team:platform',
 				'team:sre',
 			]),
 		);
-		expect(editorBinding?.principals).toHaveLength(3);
-		expect(viewerBinding?.principals).toEqual(['org:test-org-id']);
+		expect(editorBinding?.principals).toHaveLength(4);
+		expect(bindings.find((b) => b.relation === 'viewer')).toBeUndefined();
 	});
 
 	it('creates a new editor binding when no policy exists (404)', async () => {
@@ -1329,12 +1329,10 @@ describe('applyRestrictionPolicy', () => {
 				};
 			}
 		).data.attributes.bindings;
-		expect(bindings.find((b) => b.relation === 'viewer')?.principals).toEqual([
-			'org:test-org-id',
-		]);
-		expect(bindings.find((b) => b.relation === 'editor')?.principals).toEqual([
-			'team:platform',
-		]);
+		expect(bindings.find((b) => b.relation === 'viewer')).toBeUndefined();
+		expect(bindings.find((b) => b.relation === 'editor')?.principals).toEqual(
+			expect.arrayContaining(['org:test-org-id', 'team:platform']),
+		);
 	});
 
 	it('does nothing when editorTeamHandles is empty', async () => {
@@ -1413,7 +1411,7 @@ describe('applyRestrictionPolicy', () => {
 		expect(platformCount).toBe(1);
 	});
 
-	it('preserves non-editor bindings (e.g. viewer) alongside the updated editor binding', async () => {
+	it('drops stale viewer bindings and includes org in editor', async () => {
 		mock
 			.onGet(`${BASE}/api/v2/restriction_policy/feature-flag:flag-multi`)
 			.reply(200, {
@@ -1455,13 +1453,14 @@ describe('applyRestrictionPolicy', () => {
 				};
 			}
 		).data.attributes.bindings;
-		const viewerBinding = bindings.find((b) => b.relation === 'viewer');
 		const editorBinding = bindings.find((b) => b.relation === 'editor');
-		expect(viewerBinding?.principals).toEqual(
-			expect.arrayContaining(['orgs/my-org', 'org:test-org-id']),
-		);
+		expect(bindings.find((b) => b.relation === 'viewer')).toBeUndefined();
 		expect(editorBinding?.principals).toEqual(
-			expect.arrayContaining(['team:creator-team', 'team:platform']),
+			expect.arrayContaining([
+				'org:test-org-id',
+				'team:creator-team',
+				'team:platform',
+			]),
 		);
 	});
 });
