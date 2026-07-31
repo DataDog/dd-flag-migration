@@ -47,7 +47,7 @@ function isFeatureFlagPermissionPropagationError(error: unknown): boolean {
 
 	const url = error.config?.url ?? '';
 	const method = error.config?.method?.toUpperCase();
-	const responseBody = JSON.stringify(error.response.data);
+	const responseBody = JSON.stringify(error.response.data) ?? '';
 	return (
 		method !== 'GET' &&
 		url.includes('/api/v2/feature-flags/') &&
@@ -919,7 +919,11 @@ export async function applyRestrictionPolicy(
 	// Keep the authenticated user as an editor so applying the policy does not
 	// prevent the migration from updating the flag on subsequent runs.
 	const editorBinding = existingBindings.find((b) => b.relation === 'editor');
-	const existingPrincipals = editorBinding?.principals ?? [];
+	// Remove the broad org editor grant written by the superseded migration
+	// policy. Keeping it would make the team restrictions ineffective.
+	const existingPrincipals = (editorBinding?.principals ?? []).filter(
+		(principal) => principal !== `org:${orgId}`,
+	);
 	const mergedEditorPrincipals = [
 		...new Set([...existingPrincipals, `user:${userId}`, ...newPrincipals]),
 	];

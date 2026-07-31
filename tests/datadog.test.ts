@@ -1385,6 +1385,59 @@ describe('applyRestrictionPolicy', () => {
 		);
 	});
 
+	it('demotes a legacy org editor grant to viewer', async () => {
+		mock
+			.onGet(`${BASE}/api/v2/restriction_policy/feature-flag:flag-legacy`)
+			.reply(200, {
+				data: {
+					attributes: {
+						bindings: [
+							{
+								principals: ['org:test-org-id', 'team:existing-team'],
+								relation: 'editor',
+							},
+						],
+					},
+				},
+			});
+
+		let postBody: unknown;
+		mock
+			.onPost(`${BASE}/api/v2/restriction_policy/feature-flag:flag-legacy`)
+			.reply((config) => {
+				postBody = JSON.parse(config.data as string);
+				return [200, {}];
+			});
+
+		await applyRestrictionPolicy(
+			API_KEY,
+			APP_KEY,
+			'flag-legacy',
+			['platform'],
+			'test-user-id',
+			'test-org-id',
+			SITE,
+		);
+
+		const bindings = (
+			postBody as {
+				data: {
+					attributes: {
+						bindings: Array<{ principals: string[]; relation: string }>;
+					};
+				};
+			}
+		).data.attributes.bindings;
+		expect(bindings.find((b) => b.relation === 'editor')?.principals).toEqual([
+			'team:existing-team',
+			'user:test-user-id',
+			'team:platform',
+		]);
+		expect(bindings.find((b) => b.relation === 'viewer')?.principals).toEqual([
+			'org:test-org-id',
+		]);
+	});
+
 	it('does nothing when editorTeamHandles is empty', async () => {
 		let getCalled = false;
 		let postCalled = false;

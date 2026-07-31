@@ -117,9 +117,12 @@ function buildDryRunRestrictionPolicy(
 } {
 	const newPrincipals = editorTeamIds.map((id) => `team:${id}`);
 	const editorBinding = existingBindings.find((b) => b.relation === 'editor');
+	const existingEditorPrincipals = (editorBinding?.principals ?? []).filter(
+		(principal) => principal !== `org:${orgId}`,
+	);
 	const mergedEditorPrincipals = [
 		...new Set([
-			...(editorBinding?.principals ?? []),
+			...existingEditorPrincipals,
 			`user:${userId}`,
 			...newPrincipals,
 		]),
