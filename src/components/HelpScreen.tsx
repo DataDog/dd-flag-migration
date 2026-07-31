@@ -92,7 +92,7 @@ export function HelpScreen(): JSX.Element {
 			render: () => (
 				<Text>
 					{
-						'  --interactive=<bool>         Set to false to run without prompts (default: true)'
+						'  --interactive[=<bool>]       Set to false to run without prompts (default: true)'
 					}
 				</Text>
 			),
@@ -102,7 +102,27 @@ export function HelpScreen(): JSX.Element {
 			render: () => (
 				<Text>
 					{
-						'  --export=<bool>              Non-interactive only: export results to xlsx (default: false)'
+						'  --export[=<bool>]            Non-interactive only: export results to xlsx (default: false)'
+					}
+				</Text>
+			),
+		},
+		{
+			id: 'team-restrictions',
+			render: () => (
+				<Text>
+					{
+						'  --team-restrictions[=<bool>] Apply team-based editor restrictions (LaunchDarkly).'
+					}
+				</Text>
+			),
+		},
+		{
+			id: 'team-restrictions-detail',
+			render: () => (
+				<Text>
+					{
+						'                               Bare flag = true. Required in non-interactive mode. Interactive: prompts if omitted.'
 					}
 				</Text>
 			),
@@ -163,6 +183,16 @@ export function HelpScreen(): JSX.Element {
 				<Text>
 					{
 						'  --project <key>                  LaunchDarkly project key (LaunchDarkly only)'
+					}
+				</Text>
+			),
+		},
+		{
+			id: 'required-team-restrictions',
+			render: () => (
+				<Text>
+					{
+						'  --team-restrictions=<bool>       Whether to apply LD team-based editor restrictions'
 					}
 				</Text>
 			),

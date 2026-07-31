@@ -821,6 +821,8 @@ interface MigrationOptions {
 	nonInteractive?: boolean;
 	doExport?: boolean;
 	targetKeyBySource?: Map<string, string>;
+	// undefined = prompt the user (only in interactive mode).
+	applyTeamRestrictions?: boolean;
 }
 
 async function executeMigration(
@@ -892,6 +894,21 @@ async function executeMigration(
 		if (action === 'select-more') return 'select-more';
 	}
 
+	// Resolve whether to apply team-based editor restrictions.
+	// undefined + interactive = prompt; undefined + non-interactive = true.
+	let applyTeamRestrictions = opts.applyTeamRestrictions;
+	if (applyTeamRestrictions === undefined) {
+		if (nonInteractive) {
+			applyTeamRestrictions = true;
+		} else {
+			applyTeamRestrictions = await confirm({
+				message:
+					'Apply team-based editor restrictions from LaunchDarkly RBAC to migrated flags?',
+				default: true,
+			});
+		}
+	}
+
 	// Fetch full flag details for selected flags
 	const detailSpinner = createSpinner(
 		`Fetching details for ${flags.length} flag(s)… (0/${flags.length} downloaded)`,
@@ -910,139 +927,158 @@ async function executeMigration(
 		return 'cancel';
 	}
 
-	// Discover teams with edit access via RBAC (project-level)
-	let projectEditorTeamKeys = new Set<string>();
-	const roleSpinner = createSpinner('Fetching custom roles and teams…').start();
-	try {
-		const [customRoles, teamsWithRoles] = await Promise.all([
-			fetchCustomRoles(ldApiKey),
-			fetchTeamsWithRoles(ldApiKey),
-		]);
+	// Editor team resolution — populated only when applyTeamRestrictions is true.
+	// When the user opts out, these remain empty and every downstream
+	// `if (editorTeamIds.length > 0)` guard naturally skips team restriction work.
+	const editorTeamIds: string[] = [];
+	const editorTeamHandles: string[] = [];
 
-		if (customRoles.length === 0 && teamsWithRoles.length === 0) {
-			roleSpinner.warn(
-				'Custom Roles API not available — restriction policy editor teams will be skipped (requires Enterprise plan)',
-			);
-		} else {
-			const editorRoleKeys = findProjectEditorRoleKeys(customRoles, projectKey);
-			projectEditorTeamKeys = findTeamsWithEditAccess(
-				teamsWithRoles,
-				editorRoleKeys,
-			);
+	if (applyTeamRestrictions) {
+		// Discover teams with edit access via RBAC (project-level)
+		let projectEditorTeamKeys = new Set<string>();
+		const roleSpinner = createSpinner(
+			'Fetching custom roles and teams…',
+		).start();
+		try {
+			const [customRoles, teamsWithRoles] = await Promise.all([
+				fetchCustomRoles(ldApiKey),
+				fetchTeamsWithRoles(ldApiKey),
+			]);
 
-			if (projectEditorTeamKeys.size > 0) {
-				roleSpinner.succeed(
-					`Found ${projectEditorTeamKeys.size} team(s) with edit access to project "${projectKey}"`,
+			if (customRoles.length === 0 && teamsWithRoles.length === 0) {
+				roleSpinner.warn(
+					'Custom Roles API not available — restriction policy editor teams will be skipped (requires Enterprise plan)',
 				);
 			} else {
-				roleSpinner.warn(
-					`No teams found with edit access to project "${projectKey}"`,
+				const editorRoleKeys = findProjectEditorRoleKeys(
+					customRoles,
+					projectKey,
 				);
-			}
-		}
-	} catch (err) {
-		roleSpinner.warn(`Could not resolve team access: ${formatAxiosError(err)}`);
-	}
-
-	// Detect LD→DD team key mismatches and prompt for interactive mapping
-	let teamKeyMapping: Map<string, string> | undefined;
-	let ddHandleToId = new Map<string, string>();
-	let ddTeamsFetchFailed = false;
-	const ldTeamKeys = [...projectEditorTeamKeys];
-
-	if (ldTeamKeys.length > 0) {
-		const teamSpinner = createSpinner('Fetching Datadog teams…').start();
-		try {
-			const ddTeams = await fetchDatadogTeams(ddApiKey, ddAppKey, ddSite);
-			teamSpinner.succeed(`Found ${ddTeams.length} Datadog team(s)`);
-
-			ddHandleToId = new Map(ddTeams.map((t) => [t.handle, t.id]));
-			const ddHandles = new Set(ddTeams.map((t) => t.handle));
-			const mismatched = [...ldTeamKeys].filter((k) => !ddHandles.has(k));
-
-			if (mismatched.length > 0) {
-				console.log();
-				console.log(
-					chalk.yellow(
-						`  ${mismatched.length} LD team key(s) do not match any Datadog team handle:`,
-					),
+				projectEditorTeamKeys = findTeamsWithEditAccess(
+					teamsWithRoles,
+					editorRoleKeys,
 				);
-				for (const key of mismatched) {
-					console.log(chalk.yellow(`    • ${key}`));
-				}
-				console.log();
 
-				const shouldMap = nonInteractive
-					? false
-					: await confirm({
-							message:
-								'Would you like to map these to Datadog team handles now?',
-							default: true,
-						});
-
-				if (shouldMap) {
-					teamKeyMapping = new Map<string, string>();
-					for (const ldKey of mismatched) {
-						const ddHandle = await promptForTeamMapping(ldKey, ddTeams);
-						if (ddHandle) {
-							teamKeyMapping.set(ldKey, ddHandle);
-						}
-					}
-					if (teamKeyMapping.size > 0) {
-						console.log();
-						console.log(
-							chalk.green(`  Mapped ${teamKeyMapping.size} team key(s)`),
-						);
-					}
+				if (projectEditorTeamKeys.size > 0) {
+					roleSpinner.succeed(
+						`Found ${projectEditorTeamKeys.size} team(s) with edit access to project "${projectKey}"`,
+					);
+				} else {
+					roleSpinner.warn(
+						`No teams found with edit access to project "${projectKey}"`,
+					);
 				}
 			}
 		} catch (err) {
-			ddTeamsFetchFailed = true;
-			teamSpinner.warn(
-				`Could not fetch Datadog teams: ${formatAxiosError(err)}`,
+			roleSpinner.warn(
+				`Could not resolve team access: ${formatAxiosError(err)}`,
 			);
 		}
-	}
 
-	// Resolve LD editor-team keys to Datadog team UUIDs once. Skip-and-warn for
-	// any team handle we can't resolve to a DD team ID — sending the bare
-	// handle to the restriction-policy API would silently produce a broken
-	// principal and undermine the access controls this feature exists to set.
-	const editorTeamIds: string[] = [];
-	const editorTeamHandles: string[] = [];
-	const unresolvedEditorTeams: string[] = [];
-	if (!ddTeamsFetchFailed) {
-		for (const ldKey of projectEditorTeamKeys) {
-			const ddHandle = teamKeyMapping?.get(ldKey) ?? ldKey;
-			const ddId = ddHandleToId.get(ddHandle);
-			if (ddId) {
-				editorTeamIds.push(ddId);
-				editorTeamHandles.push(ddHandle);
-			} else {
-				unresolvedEditorTeams.push(ddHandle);
+		// Detect LD→DD team key mismatches and prompt for interactive mapping
+		let teamKeyMapping: Map<string, string> | undefined;
+		let ddHandleToId = new Map<string, string>();
+		let ddTeamsFetchFailed = false;
+		const ldTeamKeys = [...projectEditorTeamKeys];
+
+		if (ldTeamKeys.length > 0) {
+			const teamSpinner = createSpinner('Fetching Datadog teams…').start();
+			try {
+				const ddTeams = await fetchDatadogTeams(ddApiKey, ddAppKey, ddSite);
+				teamSpinner.succeed(`Found ${ddTeams.length} Datadog team(s)`);
+
+				ddHandleToId = new Map(ddTeams.map((t) => [t.handle, t.id]));
+				const ddHandles = new Set(ddTeams.map((t) => t.handle));
+				const mismatched = [...ldTeamKeys].filter((k) => !ddHandles.has(k));
+
+				if (mismatched.length > 0) {
+					console.log();
+					console.log(
+						chalk.yellow(
+							`  ${mismatched.length} LD team key(s) do not match any Datadog team handle:`,
+						),
+					);
+					for (const key of mismatched) {
+						console.log(chalk.yellow(`    • ${key}`));
+					}
+					console.log();
+
+					const shouldMap = nonInteractive
+						? false
+						: await confirm({
+								message:
+									'Would you like to map these to Datadog team handles now?',
+								default: true,
+							});
+
+					if (shouldMap) {
+						teamKeyMapping = new Map<string, string>();
+						for (const ldKey of mismatched) {
+							const ddHandle = await promptForTeamMapping(ldKey, ddTeams);
+							if (ddHandle) {
+								teamKeyMapping.set(ldKey, ddHandle);
+							}
+						}
+						if (teamKeyMapping.size > 0) {
+							console.log();
+							console.log(
+								chalk.green(`  Mapped ${teamKeyMapping.size} team key(s)`),
+							);
+						}
+					}
+				}
+			} catch (err) {
+				ddTeamsFetchFailed = true;
+				teamSpinner.warn(
+					`Could not fetch Datadog teams: ${formatAxiosError(err)}`,
+				);
 			}
 		}
-	}
-	if (ddTeamsFetchFailed && projectEditorTeamKeys.size > 0) {
+
+		// Resolve LD editor-team keys to Datadog team UUIDs once. Skip-and-warn for
+		// any team handle we can't resolve to a DD team ID — sending the bare
+		// handle to the restriction-policy API would silently produce a broken
+		// principal and undermine the access controls this feature exists to set.
+		const unresolvedEditorTeams: string[] = [];
+		if (!ddTeamsFetchFailed) {
+			for (const ldKey of projectEditorTeamKeys) {
+				const ddHandle = teamKeyMapping?.get(ldKey) ?? ldKey;
+				const ddId = ddHandleToId.get(ddHandle);
+				if (ddId) {
+					editorTeamIds.push(ddId);
+					editorTeamHandles.push(ddHandle);
+				} else {
+					unresolvedEditorTeams.push(ddHandle);
+				}
+			}
+		}
+		if (ddTeamsFetchFailed && projectEditorTeamKeys.size > 0) {
+			console.log(
+				chalk.yellow(
+					`  ⚠ Skipping restriction policy because Datadog teams could not be fetched.`,
+				),
+			);
+			console.log(
+				chalk.dim(
+					'    Editor access will not be granted on migrated flags. Verify the Datadog application key has the teams_read scope and rerun.',
+				),
+			);
+		} else if (unresolvedEditorTeams.length > 0) {
+			console.log(
+				chalk.yellow(
+					`  ⚠ Skipping ${unresolvedEditorTeams.length} editor team(s) without a matching Datadog team handle: ${unresolvedEditorTeams.join(', ')}`,
+				),
+			);
+			console.log(
+				chalk.dim(
+					'    These teams will not be granted editor access on migrated flags.',
+				),
+			);
+		}
+	} else {
 		console.log(
-			chalk.yellow(
-				`  ⚠ Skipping restriction policy because Datadog teams could not be fetched.`,
-			),
-		);
-		console.log(
-			chalk.dim(
-				'    Editor access will not be granted on migrated flags. Verify the Datadog application key has the teams_read scope and rerun.',
-			),
-		);
-	} else if (unresolvedEditorTeams.length > 0) {
-		console.log(
-			chalk.yellow(
-				`  ⚠ Skipping ${unresolvedEditorTeams.length} editor team(s) without a matching Datadog team handle: ${unresolvedEditorTeams.join(', ')}`,
-			),
-		);
-		console.log(
-			chalk.dim(
-				'    These teams will not be granted editor access on migrated flags.',
+			chalk.gray(
+				'  Skipping team-based editor restrictions (--team-restrictions=false).',
 			),
 		);
 	}
@@ -2123,6 +2159,9 @@ export interface LDNonInteractiveOptions {
 export interface RunLaunchDarklyMigrationOptions {
 	nonInteractive?: LDNonInteractiveOptions;
 	doExport?: boolean;
+	// undefined in interactive mode = prompt the user. Non-interactive callers
+	// must resolve undefined to a concrete boolean before invoking.
+	applyTeamRestrictions?: boolean;
 }
 
 export async function runLaunchDarklyMigration(
@@ -2145,6 +2184,7 @@ export async function runLaunchDarklyMigration(
 			dryRun,
 			options.nonInteractive,
 			options.doExport ?? false,
+			options.applyTeamRestrictions ?? true,
 		);
 		return;
 	}
@@ -2422,6 +2462,7 @@ export async function runLaunchDarklyMigration(
 						ddSite,
 						dryRun,
 						conflictResolution,
+						applyTeamRestrictions: options?.applyTeamRestrictions,
 					},
 				);
 				if (action === 'cancel') break outer;
@@ -2481,6 +2522,7 @@ async function runLaunchDarklyMigrationNonInteractive(
 	dryRun: boolean,
 	ni: LDNonInteractiveOptions,
 	doExport: boolean,
+	applyTeamRestrictions: boolean,
 ): Promise<void> {
 	console.log(chalk.gray('  Running in non-interactive mode\n'));
 	if (dryRun) {
@@ -2591,6 +2633,7 @@ async function runLaunchDarklyMigrationNonInteractive(
 			nonInteractive: true,
 			doExport,
 			targetKeyBySource,
+			applyTeamRestrictions,
 		},
 	);
 }

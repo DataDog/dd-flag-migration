@@ -49,6 +49,7 @@ describe('parseMigrateArgs', () => {
 			'flag-a',
 			'--feature-flag',
 			'flag-b',
+			'--team-restrictions=true',
 		]);
 		expect(args.interactive).toBe(false);
 		expect(args.nonInteractive).toEqual({
@@ -59,6 +60,7 @@ describe('parseMigrateArgs', () => {
 				['Staging', 'QA'],
 			],
 			flagKeys: ['flag-a', 'flag-b'],
+			applyTeamRestrictions: true,
 		});
 	});
 
@@ -69,6 +71,7 @@ describe('parseMigrateArgs', () => {
 			'--datadog-site=datadoghq.com',
 			'--env-map=prod,prod',
 			'--feature-flag=foo',
+			'--team-restrictions=true',
 		]);
 		expect(args.nonInteractive?.provider).toBe('eppo');
 	});
@@ -137,6 +140,7 @@ describe('parseMigrateArgs', () => {
 			'--datadog-site=datadoghq.com',
 			'--env-map=p,p',
 			'--feature-flag=x',
+			'--team-restrictions=true',
 		]);
 		expect(args.nonInteractive?.projectKey).toBeUndefined();
 	});
@@ -184,6 +188,7 @@ describe('parseMigrateArgs', () => {
 			'--env-map=p,p',
 			'--feature-flag=x',
 			'--export=true',
+			'--team-restrictions=true',
 		]);
 		expect(args.doExport).toBe(true);
 	});
@@ -196,6 +201,7 @@ describe('parseMigrateArgs', () => {
 			'--env-map=p,p',
 			'--feature-flag=x',
 			'--export=false',
+			'--team-restrictions=true',
 		]);
 		expect(args.doExport).toBe(false);
 	});
@@ -207,12 +213,14 @@ describe('parseMigrateArgs', () => {
 			'--datadog-site=datadoghq.com',
 			'--env-map=p,p',
 			'--feature-flag=x',
+			'--team-restrictions=true',
 		]);
 		expect(args.doExport).toBe(false);
 	});
 
-	it('rejects --export without a value', () => {
-		expect(() => parseMigrateArgs(['--export'])).toThrow(/requires a value/);
+	it('bare --export means true', () => {
+		const args = parseMigrateArgs(['--export']);
+		expect(args.doExport).toBe(true);
 	});
 
 	it('rejects --export=maybe', () => {
@@ -221,15 +229,78 @@ describe('parseMigrateArgs', () => {
 		);
 	});
 
-	it('rejects --interactive without a value', () => {
-		expect(() => parseMigrateArgs(['--interactive'])).toThrow(
-			/requires a value/,
-		);
+	it('bare --interactive means true', () => {
+		const args = parseMigrateArgs(['--interactive']);
+		expect(args.interactive).toBe(true);
 	});
 
 	it('rejects --interactive=maybe', () => {
 		expect(() => parseMigrateArgs(['--interactive=maybe'])).toThrow(
 			/expects a boolean/,
 		);
+	});
+
+	it('defaults applyTeamRestrictions to undefined when omitted', () => {
+		const args = parseMigrateArgs([]);
+		expect(args.applyTeamRestrictions).toBeUndefined();
+	});
+
+	it('parses bare --team-restrictions as true', () => {
+		const args = parseMigrateArgs(['--team-restrictions']);
+		expect(args.applyTeamRestrictions).toBe(true);
+	});
+
+	it('parses --team-restrictions=true', () => {
+		const args = parseMigrateArgs(['--team-restrictions=true']);
+		expect(args.applyTeamRestrictions).toBe(true);
+	});
+
+	it('parses --team-restrictions=false', () => {
+		const args = parseMigrateArgs(['--team-restrictions=false']);
+		expect(args.applyTeamRestrictions).toBe(false);
+	});
+
+	it('rejects --team-restrictions=maybe', () => {
+		expect(() => parseMigrateArgs(['--team-restrictions=maybe'])).toThrow(
+			/expects a boolean/,
+		);
+	});
+
+	it('does NOT consume a following flag token for bare --team-restrictions', () => {
+		// Bare --team-restrictions must not swallow an adjacent flag as its value.
+		const args = parseMigrateArgs(['--team-restrictions', '--dry-run']);
+		expect(args.applyTeamRestrictions).toBe(true);
+		expect(args.dryRun).toBe(true);
+	});
+
+	it('parses --team-restrictions with a space-separated value', () => {
+		const args = parseMigrateArgs(['--team-restrictions', 'false']);
+		expect(args.applyTeamRestrictions).toBe(false);
+	});
+
+	it('carries applyTeamRestrictions through in non-interactive mode', () => {
+		const args = parseMigrateArgs([
+			'--interactive=false',
+			'--provider=eppo',
+			'--datadog-site=datadoghq.com',
+			'--env-map=p,p',
+			'--feature-flag=x',
+			'--team-restrictions=false',
+		]);
+		expect(args.interactive).toBe(false);
+		expect(args.applyTeamRestrictions).toBe(false);
+		expect(args.nonInteractive?.applyTeamRestrictions).toBe(false);
+	});
+
+	it('requires --team-restrictions in non-interactive mode', () => {
+		expect(() =>
+			parseMigrateArgs([
+				'--interactive=false',
+				'--provider=eppo',
+				'--datadog-site=datadoghq.com',
+				'--env-map=p,p',
+				'--feature-flag=x',
+			]),
+		).toThrow(/--team-restrictions is required/);
 	});
 });

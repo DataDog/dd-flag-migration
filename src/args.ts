@@ -5,6 +5,8 @@ export interface NonInteractiveArgs {
 	projectKey?: string;
 	envMap: Array<[string, string]>;
 	flagKeys: string[];
+	// Required in non-interactive mode — validated in parseMigrateArgs.
+	applyTeamRestrictions: boolean;
 }
 
 export interface MigrateArgs {
@@ -12,6 +14,9 @@ export interface MigrateArgs {
 	datadogSite: string | undefined;
 	interactive: boolean;
 	doExport: boolean;
+	// Interactive mode only: undefined = flag not supplied, should prompt.
+	// In non-interactive mode this is echoed from NonInteractiveArgs.
+	applyTeamRestrictions: boolean | undefined;
 	nonInteractive?: NonInteractiveArgs;
 }
 
@@ -37,18 +42,20 @@ function normalizeProvider(raw: string): ProviderValue {
 
 interface FlagDef {
 	name: string;
-	takesValue: boolean;
+	takesValue: 'no' | 'required' | 'optional';
 }
 
 const FLAGS: FlagDef[] = [
-	{ name: '--dry-run', takesValue: false },
-	{ name: '--export', takesValue: true },
-	{ name: '--datadog-site', takesValue: true },
-	{ name: '--interactive', takesValue: true },
-	{ name: '--provider', takesValue: true },
-	{ name: '--project', takesValue: true },
-	{ name: '--env-map', takesValue: true },
-	{ name: '--feature-flag', takesValue: true },
+	// Boolean flags accept a bare form (means true) or `=<bool>`.
+	{ name: '--dry-run', takesValue: 'optional' },
+	{ name: '--export', takesValue: 'optional' },
+	{ name: '--interactive', takesValue: 'optional' },
+	{ name: '--team-restrictions', takesValue: 'optional' },
+	{ name: '--datadog-site', takesValue: 'required' },
+	{ name: '--provider', takesValue: 'required' },
+	{ name: '--project', takesValue: 'required' },
+	{ name: '--env-map', takesValue: 'required' },
+	{ name: '--feature-flag', takesValue: 'required' },
 ];
 
 /**
@@ -62,6 +69,7 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 	let interactive: boolean | undefined;
 	let provider: ProviderValue | undefined;
 	let projectKey: string | undefined;
+	let applyTeamRestrictions: boolean | undefined;
 	const envMap: Array<[string, string]> = [];
 	const flagKeys: string[] = [];
 
@@ -84,7 +92,7 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 		}
 
 		let value: string | undefined;
-		if (def.takesValue) {
+		if (def.takesValue === 'required') {
 			if (valueFromEquals !== undefined) {
 				value = valueFromEquals;
 			} else {
@@ -97,22 +105,39 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 			if (value.trim().length === 0) {
 				throw new ArgParseError(`${name} value must not be empty`);
 			}
+		} else if (def.takesValue === 'optional') {
+			// Accept `=value`, or a space-separated value only if the next
+			// argv token doesn't itself look like a flag. A bare flag with
+			// no consumable value means "supplied without a value".
+			if (valueFromEquals !== undefined) {
+				value = valueFromEquals;
+				if (value.trim().length === 0) {
+					throw new ArgParseError(`${name} value must not be empty`);
+				}
+			} else if (i + 1 < argv.length && !argv[i + 1].startsWith('--')) {
+				value = argv[i + 1];
+				i++;
+				if (value.trim().length === 0) {
+					throw new ArgParseError(`${name} value must not be empty`);
+				}
+			}
 		} else if (valueFromEquals !== undefined) {
 			throw new ArgParseError(`${name} does not take a value`);
 		}
 
 		switch (name) {
 			case '--dry-run':
-				dryRun = true;
+				// Bare flag means true; explicit `=<bool>` is honored.
+				dryRun = value === undefined ? true : parseBool(value, name);
 				break;
 			case '--export':
-				doExport = parseBool(value as string, name);
+				doExport = value === undefined ? true : parseBool(value, name);
 				break;
 			case '--datadog-site':
 				datadogSite = (value as string).trim();
 				break;
 			case '--interactive':
-				interactive = parseBool(value as string, name);
+				interactive = value === undefined ? true : parseBool(value, name);
 				break;
 			case '--provider':
 				provider = normalizeProvider(value as string);
@@ -136,6 +161,12 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 			}
 			case '--feature-flag':
 				flagKeys.push((value as string).trim());
+				break;
+			case '--team-restrictions':
+				// Bare flag (`--team-restrictions`) means true; explicit value
+				// (`--team-restrictions=false`) is parsed as a boolean.
+				applyTeamRestrictions =
+					value === undefined ? true : parseBool(value, name);
 				break;
 		}
 	}
@@ -166,16 +197,23 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 				'--datadog-site is required in non-interactive mode',
 			);
 		}
+		if (applyTeamRestrictions === undefined) {
+			throw new ArgParseError(
+				'--team-restrictions is required in non-interactive mode',
+			);
+		}
 		return {
 			dryRun,
 			datadogSite,
 			interactive: false,
 			doExport,
+			applyTeamRestrictions,
 			nonInteractive: {
 				provider,
 				projectKey,
 				envMap,
 				flagKeys,
+				applyTeamRestrictions,
 			},
 		};
 	}
@@ -185,5 +223,6 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 		datadogSite,
 		interactive: true,
 		doExport,
+		applyTeamRestrictions,
 	};
 }
