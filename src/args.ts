@@ -49,6 +49,8 @@ const FLAGS: FlagDef[] = [
 	// Boolean flags accept a bare form (means true) or `=<bool>`.
 	{ name: '--dry-run', takesValue: 'optional' },
 	{ name: '--export', takesValue: 'optional' },
+	// --interactive is kept for backwards compatibility; --non-interactive is preferred.
+	{ name: '--interactive', takesValue: 'optional' },
 	{ name: '--non-interactive', takesValue: 'optional' },
 	{ name: '--team-restrictions', takesValue: 'optional' },
 	{ name: '--datadog-site', takesValue: 'required' },
@@ -66,7 +68,8 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 	let dryRun = false;
 	let doExport = false;
 	let datadogSite: string | undefined;
-	let interactive: boolean | undefined;
+	let interactiveFlag: boolean | undefined; // from --interactive (backwards compat)
+	let nonInteractiveFlag: boolean | undefined; // from --non-interactive; true = non-interactive
 	let provider: ProviderValue | undefined;
 	let projectKey: string | undefined;
 	let applyTeamRestrictions: boolean | undefined;
@@ -136,8 +139,12 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 			case '--datadog-site':
 				datadogSite = (value as string).trim();
 				break;
+			case '--interactive':
+				interactiveFlag = value === undefined ? true : parseBool(value, name);
+				break;
 			case '--non-interactive':
-				interactive = value === undefined ? false : !parseBool(value, name);
+				nonInteractiveFlag =
+					value === undefined ? true : parseBool(value, name);
 				break;
 			case '--provider':
 				provider = normalizeProvider(value as string);
@@ -171,7 +178,21 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 		}
 	}
 
-	const isInteractive = interactive ?? true;
+	if (
+		interactiveFlag !== undefined &&
+		nonInteractiveFlag !== undefined &&
+		interactiveFlag === nonInteractiveFlag
+	) {
+		throw new ArgParseError(
+			`--interactive=${interactiveFlag} conflicts with --non-interactive=${nonInteractiveFlag}`,
+		);
+	}
+	const isInteractive =
+		interactiveFlag !== undefined
+			? interactiveFlag
+			: nonInteractiveFlag !== undefined
+				? !nonInteractiveFlag
+				: true;
 
 	if (!isInteractive) {
 		if (!provider) {

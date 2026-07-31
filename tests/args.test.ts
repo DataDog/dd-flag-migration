@@ -309,4 +309,61 @@ describe('parseMigrateArgs', () => {
 			]),
 		).toThrow(/--team-restrictions is required/);
 	});
+
+	describe('--interactive backwards compat', () => {
+		it('bare --interactive means interactive mode', () => {
+			const args = parseMigrateArgs(['--interactive']);
+			expect(args.interactive).toBe(true);
+		});
+
+		it('--interactive=true means interactive mode', () => {
+			const args = parseMigrateArgs(['--interactive=true']);
+			expect(args.interactive).toBe(true);
+		});
+
+		it('--interactive=false triggers non-interactive mode', () => {
+			const args = parseMigrateArgs([
+				'--interactive=false',
+				'--provider=eppo',
+				'--datadog-site=datadoghq.com',
+				'--env-map=p,p',
+				'--feature-flag=x',
+				'--team-restrictions=true',
+			]);
+			expect(args.interactive).toBe(false);
+		});
+
+		it('--interactive=false and --non-interactive are consistent (both non-interactive)', () => {
+			const args = parseMigrateArgs([
+				'--interactive=false',
+				'--non-interactive',
+				'--provider=eppo',
+				'--datadog-site=datadoghq.com',
+				'--env-map=p,p',
+				'--feature-flag=x',
+				'--team-restrictions=true',
+			]);
+			expect(args.interactive).toBe(false);
+		});
+
+		it('--interactive=true and --non-interactive=false are consistent (both interactive)', () => {
+			const args = parseMigrateArgs([
+				'--interactive=true',
+				'--non-interactive=false',
+			]);
+			expect(args.interactive).toBe(true);
+		});
+
+		it('throws when --interactive=false conflicts with --non-interactive=false', () => {
+			expect(() =>
+				parseMigrateArgs(['--interactive=false', '--non-interactive=false']),
+			).toThrow(/--interactive=false conflicts with --non-interactive=false/);
+		});
+
+		it('throws when --interactive=true conflicts with --non-interactive=true', () => {
+			expect(() =>
+				parseMigrateArgs(['--interactive=true', '--non-interactive=true']),
+			).toThrow(/--interactive=true conflicts with --non-interactive=true/);
+		});
+	});
 });
