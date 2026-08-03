@@ -16,6 +16,7 @@ import {
 	ddClient,
 	deleteVariant,
 	enableFeatureFlagEnvironment,
+	fetchCurrentUserIdentity,
 	fetchCurrentUserPermissions,
 	fetchDatadogEnvironments,
 	fetchDatadogFlagKeys,
@@ -1167,6 +1168,46 @@ describe('fetchDatadogTeams', () => {
 	});
 });
 
+// ─── fetchCurrentUserIdentity ─────────────────────────────────────────────────
+
+describe('fetchCurrentUserIdentity', () => {
+	let mock: AxiosMockAdapter;
+
+	beforeEach(() => {
+		mock = new AxiosMockAdapter(ddClient as never);
+	});
+
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('returns the authenticated user and org UUIDs', async () => {
+		mock.onGet(`${BASE}/api/v2/current_user`).reply(200, {
+			data: {
+				id: 'user-uuid',
+				type: 'users',
+				relationships: {
+					org: { data: { id: 'org-uuid', type: 'orgs' } },
+				},
+			},
+		});
+
+		await expect(
+			fetchCurrentUserIdentity(API_KEY, APP_KEY, SITE),
+		).resolves.toEqual({ userId: 'user-uuid', orgId: 'org-uuid' });
+	});
+
+	it('throws when the response does not contain both IDs', async () => {
+		mock.onGet(`${BASE}/api/v2/current_user`).reply(200, {
+			data: { id: '', relationships: { org: { data: { id: '' } } } },
+		});
+
+		await expect(
+			fetchCurrentUserIdentity(API_KEY, APP_KEY, SITE),
+		).rejects.toThrow('Could not determine Datadog user and org IDs');
+	});
+});
+
 // ─── fetchRestrictionPolicy ───────────────────────────────────────────────────
 
 describe('fetchRestrictionPolicy', () => {
@@ -1272,30 +1313,12 @@ describe('applyRestrictionPolicy', () => {
 			APP_KEY,
 			'flag-abc',
 			['platform', 'sre'],
+			'test-user-id',
+			'test-org-id',
 			SITE,
 		);
 
-		expect(postBody).toEqual({
-			data: {
-				id: 'feature-flag:flag-abc',
-				type: 'restriction_policy',
-				attributes: {
-					bindings: [
-						{
-							principals: expect.arrayContaining([
-								'team:creator-team',
-								'team:platform',
-								'team:sre',
-							]),
-							relation: 'editor',
-						},
-					],
-				},
-			},
-		});
-
-		// Also verify no extra principals were injected
-		const editorBinding = (
+		const bindings = (
 			postBody as {
 				data: {
 					attributes: {
@@ -1303,8 +1326,23 @@ describe('applyRestrictionPolicy', () => {
 					};
 				};
 			}
-		).data.attributes.bindings.find((b) => b.relation === 'editor');
-		expect(editorBinding?.principals).toHaveLength(3);
+		).data.attributes.bindings;
+		const editorBinding = bindings.find((b) => b.relation === 'editor');
+		expect(editorBinding?.principals).toEqual(
+			expect.arrayContaining([
+				'user:test-user-id',
+				'team:creator-team',
+				'team:platform',
+				'team:sre',
+			]),
+		);
+		expect(editorBinding?.principals).toHaveLength(4);
+		expect(bindings.find((b) => b.relation === 'viewer')?.principals).toEqual([
+			'org:test-org-id',
+		]);
+		expect(mock.history.post[0]?.params).toEqual({
+			allow_self_lockout: false,
+		});
 	});
 
 	it('creates a new editor binding when no policy exists (404)', async () => {
@@ -1325,23 +1363,26 @@ describe('applyRestrictionPolicy', () => {
 			APP_KEY,
 			'flag-new',
 			['platform'],
+			'test-user-id',
+			'test-org-id',
 			SITE,
 		);
 
-		expect(postBody).toEqual({
-			data: {
-				id: 'feature-flag:flag-new',
-				type: 'restriction_policy',
-				attributes: {
-					bindings: [
-						{
-							principals: ['team:platform'],
-							relation: 'editor',
-						},
-					],
-				},
-			},
-		});
+		const bindings = (
+			postBody as {
+				data: {
+					attributes: {
+						bindings: Array<{ principals: string[]; relation: string }>;
+					};
+				};
+			}
+		).data.attributes.bindings;
+		expect(bindings.find((b) => b.relation === 'viewer')?.principals).toEqual([
+			'org:test-org-id',
+		]);
+		expect(bindings.find((b) => b.relation === 'editor')?.principals).toEqual(
+			expect.arrayContaining(['user:test-user-id', 'team:platform']),
+		);
 	});
 
 	it('does nothing when editorTeamHandles is empty', async () => {
@@ -1360,7 +1401,15 @@ describe('applyRestrictionPolicy', () => {
 				return [200, {}];
 			});
 
-		await applyRestrictionPolicy(API_KEY, APP_KEY, 'flag-empty', [], SITE);
+		await applyRestrictionPolicy(
+			API_KEY,
+			APP_KEY,
+			'flag-empty',
+			[],
+			'test-user-id',
+			'test-org-id',
+			SITE,
+		);
 
 		expect(getCalled).toBe(false);
 		expect(postCalled).toBe(false);
@@ -1392,21 +1441,29 @@ describe('applyRestrictionPolicy', () => {
 			APP_KEY,
 			'flag-dup',
 			['platform'],
+			'test-user-id',
+			'test-org-id',
 			SITE,
 		);
 
-		const binding = (
+		const bindings = (
 			postBody as {
-				data: { attributes: { bindings: Array<{ principals: string[] }> } };
+				data: {
+					attributes: {
+						bindings: Array<{ principals: string[]; relation: string }>;
+					};
+				};
 			}
-		).data.attributes.bindings[0];
-		const platformCount = binding.principals.filter(
+		).data.attributes.bindings;
+		const editorPrincipals =
+			bindings.find((b) => b.relation === 'editor')?.principals ?? [];
+		const platformCount = editorPrincipals.filter(
 			(p: string) => p === 'team:platform',
 		).length;
 		expect(platformCount).toBe(1);
 	});
 
-	it('preserves non-editor bindings (e.g. viewer) alongside the updated editor binding', async () => {
+	it('preserves viewer bindings and adds the org as a viewer', async () => {
 		mock
 			.onGet(`${BASE}/api/v2/restriction_policy/feature-flag:flag-multi`)
 			.reply(200, {
@@ -1435,6 +1492,8 @@ describe('applyRestrictionPolicy', () => {
 			APP_KEY,
 			'flag-multi',
 			['platform'],
+			'test-user-id',
+			'test-org-id',
 			SITE,
 		);
 
@@ -1449,13 +1508,131 @@ describe('applyRestrictionPolicy', () => {
 		).data.attributes.bindings;
 		const viewerBinding = bindings.find((b) => b.relation === 'viewer');
 		const editorBinding = bindings.find((b) => b.relation === 'editor');
-		expect(viewerBinding).toEqual({
-			principals: ['orgs/my-org'],
-			relation: 'viewer',
-		});
-		expect(editorBinding?.principals).toEqual(
-			expect.arrayContaining(['team:creator-team', 'team:platform']),
+		expect(viewerBinding?.principals).toEqual(
+			expect.arrayContaining(['orgs/my-org', 'org:test-org-id']),
 		);
+		expect(editorBinding?.principals).toEqual(
+			expect.arrayContaining([
+				'user:test-user-id',
+				'team:creator-team',
+				'team:platform',
+			]),
+		);
+	});
+
+	it('does not add the org as a viewer when it is already an editor', async () => {
+		mock
+			.onGet(`${BASE}/api/v2/restriction_policy/feature-flag:flag-org-editor`)
+			.reply(200, {
+				data: {
+					attributes: {
+						bindings: [
+							{
+								principals: ['org:test-org-id'],
+								relation: 'editor',
+							},
+						],
+					},
+				},
+			});
+
+		let postBody: unknown;
+		mock
+			.onPost(`${BASE}/api/v2/restriction_policy/feature-flag:flag-org-editor`)
+			.reply((config) => {
+				postBody = JSON.parse(config.data as string);
+				return [200, {}];
+			});
+
+		await applyRestrictionPolicy(
+			API_KEY,
+			APP_KEY,
+			'flag-org-editor',
+			['platform'],
+			'test-user-id',
+			'test-org-id',
+			SITE,
+		);
+
+		const bindings = (
+			postBody as {
+				data: {
+					attributes: {
+						bindings: Array<{ principals: string[]; relation: string }>;
+					};
+				};
+			}
+		).data.attributes.bindings;
+		expect(bindings.find((b) => b.relation === 'viewer')).toBeUndefined();
+		expect(bindings.find((b) => b.relation === 'editor')?.principals).toEqual(
+			expect.arrayContaining([
+				'org:test-org-id',
+				'user:test-user-id',
+				'team:platform',
+			]),
+		);
+	});
+
+	it('promotes required editors out of lower-access bindings', async () => {
+		mock
+			.onGet(`${BASE}/api/v2/restriction_policy/feature-flag:flag-promote`)
+			.reply(200, {
+				data: {
+					attributes: {
+						bindings: [
+							{
+								principals: [
+									'user:test-user-id',
+									'team:platform',
+									'team:existing-contributor',
+								],
+								relation: 'contributor',
+							},
+							{
+								principals: ['org:test-org-id'],
+								relation: 'viewer',
+							},
+						],
+					},
+				},
+			});
+
+		let postBody: unknown;
+		mock
+			.onPost(`${BASE}/api/v2/restriction_policy/feature-flag:flag-promote`)
+			.reply((config) => {
+				postBody = JSON.parse(config.data as string);
+				return [200, {}];
+			});
+
+		await applyRestrictionPolicy(
+			API_KEY,
+			APP_KEY,
+			'flag-promote',
+			['platform'],
+			'test-user-id',
+			'test-org-id',
+			SITE,
+		);
+
+		const bindings = (
+			postBody as {
+				data: {
+					attributes: {
+						bindings: Array<{ principals: string[]; relation: string }>;
+					};
+				};
+			}
+		).data.attributes.bindings;
+		expect(
+			bindings.find((b) => b.relation === 'contributor')?.principals,
+		).toEqual(['team:existing-contributor']);
+		expect(bindings.find((b) => b.relation === 'editor')?.principals).toEqual(
+			expect.arrayContaining(['user:test-user-id', 'team:platform']),
+		);
+
+		const allPrincipals = bindings.flatMap((binding) => binding.principals);
+		expect(new Set(allPrincipals).size).toBe(allPrincipals.length);
 	});
 });
 
@@ -1615,6 +1792,87 @@ describe('Datadog client rate-limit handling', () => {
 		expect(warnSpy).toHaveBeenCalledWith(
 			expect.stringMatching(/429.*retrying after 1s/i),
 		);
+	});
+
+	it('retries a feature flag contribution denial while policy changes propagate', async () => {
+		const url = `${BASE}/api/v2/feature-flags/flag-uuid/environments/env-uuid/allocations`;
+		mock
+			.onPut(url)
+			.replyOnce(403, {
+				errors: [
+					{
+						detail:
+							'feature-flag permission for contributing to feature flag flag-uuid: permission denied',
+					},
+				],
+			})
+			.onPut(url)
+			.replyOnce(200, {});
+
+		const response = await client.put(url, {});
+		expect(response.status).toBe(200);
+		expect(mock.history.put).toHaveLength(2);
+		expect(warnSpy).toHaveBeenCalledWith(
+			expect.stringMatching(
+				/permissions are still propagating.*attempt 1 of 3/i,
+			),
+		);
+	});
+
+	it('retries the feature flag edit denial used by the contributor fallback', async () => {
+		const url = `${BASE}/api/v2/feature-flags/flag-uuid`;
+		mock
+			.onPut(url)
+			.replyOnce(403, {
+				errors: [
+					{
+						detail:
+							'feature-flag permission for modifying feature flag flag-uuid: permission denied',
+					},
+				],
+			})
+			.onPut(url)
+			.replyOnce(200, {});
+
+		const response = await client.put(url, {});
+		expect(response.status).toBe(200);
+		expect(mock.history.put).toHaveLength(2);
+		expect(warnSpy).toHaveBeenCalledWith(
+			expect.stringMatching(
+				/permissions are still propagating.*attempt 1 of 3/i,
+			),
+		);
+	});
+
+	it('does not retry unrelated permission denials', async () => {
+		const url = `${BASE}/api/v2/feature-flags/flag-uuid`;
+		mock.onPut(url).reply(403, {
+			errors: [{ detail: 'application key is missing a required permission' }],
+		});
+
+		await expect(client.put(url, {})).rejects.toMatchObject({
+			response: { status: 403 },
+		});
+		expect(mock.history.put).toHaveLength(1);
+		expect(warnSpy).not.toHaveBeenCalled();
+	});
+
+	it('stops retrying a persistent feature flag contribution denial', async () => {
+		const url = `${BASE}/api/v2/feature-flags/flag-uuid`;
+		mock.onPut(url).reply(403, {
+			errors: [
+				{
+					detail:
+						'feature-flag permission for contributing to feature flag flag-uuid: permission denied',
+				},
+			],
+		});
+
+		await expect(client.put(url, {})).rejects.toMatchObject({
+			response: { status: 403 },
+		});
+		expect(mock.history.put).toHaveLength(4);
+		expect(warnSpy).toHaveBeenCalledTimes(3);
 	});
 
 	it('throws after exhausting max retries on 429', async () => {

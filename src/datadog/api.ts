@@ -40,6 +40,27 @@ function ddBackoffDelayMs(attempt: number): number {
 	return Math.min(30_000, DD_RETRY_BASE_DELAY_MS * DD_RETRY_FACTOR ** attempt);
 }
 
+function isFeatureFlagPermissionPropagationError(error: unknown): boolean {
+	if (!axios.isAxiosError(error) || error.response?.status !== 403) {
+		return false;
+	}
+
+	const url = error.config?.url ?? '';
+	const method = error.config?.method?.toUpperCase();
+	const responseBody = JSON.stringify(error.response.data) ?? '';
+	const isFlagRelationDenied =
+		responseBody.includes(
+			'feature-flag permission for contributing to feature flag',
+		) ||
+		responseBody.includes('feature-flag permission for modifying feature flag');
+	return (
+		method !== 'GET' &&
+		url.includes('/api/v2/feature-flags/') &&
+		isFlagRelationDenied &&
+		responseBody.includes('permission denied')
+	);
+}
+
 export function createDDClient(): AxiosInstance {
 	// Earliest epoch-ms at which the next request may be sent. Scoped per client
 	// so tests (and any callers that build their own client) get isolated state.
@@ -81,7 +102,7 @@ export function createDDClient(): AxiosInstance {
 			return response;
 		},
 		async (error) => {
-			if (!axios.isAxiosError(error) || error.response?.status !== 429) {
+			if (!axios.isAxiosError(error)) {
 				throw error;
 			}
 
@@ -89,6 +110,22 @@ export function createDDClient(): AxiosInstance {
 			if (!config) throw error;
 
 			const configAny = config as unknown as Record<string, unknown>;
+			if (isFeatureFlagPermissionPropagationError(error)) {
+				const permissionRetryCount: number =
+					(configAny.__permissionRetryCount as number) ?? 0;
+				if (permissionRetryCount >= DD_MAX_RETRIES) throw error;
+
+				const delayMs = ddBackoffDelayMs(permissionRetryCount);
+				console.warn(
+					`Datadog feature flag permissions are still propagating; retrying after ${Math.ceil(delayMs / 1_000)}s (attempt ${permissionRetryCount + 1} of ${DD_MAX_RETRIES}).`,
+				);
+				configAny.__permissionRetryCount = permissionRetryCount + 1;
+				await sleep(delayMs);
+				return client.request(config);
+			}
+
+			if (error.response?.status !== 429) throw error;
+
 			const retryCount: number = (configAny.__retryCount as number) ?? 0;
 			if (retryCount >= DD_MAX_RETRIES) {
 				throw new Error(
@@ -794,6 +831,30 @@ export async function syncAllocationsForEnvironment(
 
 // ─── Restriction Policy ───────────────────────────────────────────────────────
 
+export async function fetchCurrentUserIdentity(
+	apiKey: string,
+	appKey: string,
+	site = 'datadoghq.com',
+): Promise<{ userId: string; orgId: string }> {
+	const baseUrl = `https://api.${site}`;
+	const response = await ddClient.get<{
+		data: {
+			id: string;
+			relationships: { org: { data: { id: string } } };
+		};
+	}>(`${baseUrl}/api/v2/current_user`, {
+		headers: ddHeaders(apiKey, appKey),
+	});
+	const userId = response.data.data.id;
+	const orgId = response.data.data.relationships.org.data.id;
+	if (!userId || !orgId) {
+		throw new Error(
+			'Could not determine Datadog user and org IDs from /api/v2/current_user',
+		);
+	}
+	return { userId, orgId };
+}
+
 /**
  * Fetch the current restriction policy bindings for a feature flag.
  * Returns empty array when no policy exists (404).
@@ -820,6 +881,71 @@ export async function fetchRestrictionPolicy(
 	}
 }
 
+export function buildRestrictionPolicyBindings(
+	editorTeamIds: string[],
+	userId: string,
+	orgId: string,
+	existingBindings: DDRestrictionBinding[],
+): DDRestrictionBinding[] {
+	const requiredEditorPrincipals = [
+		`user:${userId}`,
+		...editorTeamIds.map((id) => `team:${id}`),
+	];
+	const editorBinding = existingBindings.find((b) => b.relation === 'editor');
+	const mergedEditorPrincipals = [
+		...new Set([
+			...(editorBinding?.principals ?? []),
+			...requiredEditorPrincipals,
+		]),
+	];
+	const editorPrincipalSet = new Set(mergedEditorPrincipals);
+
+	// A principal can have only one relation. Promote required editors out of
+	// lower-access bindings and omit bindings that become empty.
+	const otherBindings = existingBindings
+		.filter((b) => b.relation !== 'editor' && b.relation !== 'viewer')
+		.map((binding) => ({
+			...binding,
+			principals: binding.principals.filter(
+				(principal) => !editorPrincipalSet.has(principal),
+			),
+		}))
+		.filter((binding) => binding.principals.length > 0);
+
+	const principalsWithHigherAccess = new Set([
+		...mergedEditorPrincipals,
+		...otherBindings.flatMap((binding) => binding.principals),
+	]);
+	const viewerBinding = existingBindings.find((b) => b.relation === 'viewer');
+	const mergedViewerPrincipals = [
+		...new Set(
+			(viewerBinding?.principals ?? []).filter(
+				(principal) => !principalsWithHigherAccess.has(principal),
+			),
+		),
+	];
+	const orgPrincipal = `org:${orgId}`;
+	if (
+		!principalsWithHigherAccess.has(orgPrincipal) &&
+		!mergedViewerPrincipals.includes(orgPrincipal)
+	) {
+		mergedViewerPrincipals.push(orgPrincipal);
+	}
+
+	return [
+		...otherBindings,
+		...(mergedViewerPrincipals.length > 0
+			? [
+					{
+						principals: mergedViewerPrincipals,
+						relation: 'viewer',
+					},
+				]
+			: []),
+		{ principals: mergedEditorPrincipals, relation: 'editor' },
+	];
+}
+
 /**
  * Grant editor access to additional teams on a feature flag's restriction policy.
  * Fetches the existing policy, merges new team IDs into the editor binding,
@@ -827,6 +953,8 @@ export async function fetchRestrictionPolicy(
  *
  * Teams are specified as Datadog team UUIDs and converted to "team:<id>"
  * principals (the `type:id` format the restriction policy API expects).
+ * The authenticated user is included as an editor so the migration can be
+ * rerun, while the org remains a viewer.
  *
  * POST on a resource with no existing policy creates it (upsert semantics), so
  * the 404→[] path in fetchRestrictionPolicy + a subsequent POST is safe and
@@ -837,14 +965,14 @@ export async function applyRestrictionPolicy(
 	appKey: string,
 	flagId: string,
 	editorTeamIds: string[],
+	userId: string,
+	orgId: string,
 	site = 'datadoghq.com',
 ): Promise<void> {
 	if (editorTeamIds.length === 0) return;
 
 	const baseUrl = `https://api.${site}`;
 	const resourceId = `feature-flag:${flagId}`;
-	const newPrincipals = editorTeamIds.map((id) => `team:${id}`);
-
 	// GET → merge → POST is not atomic; a concurrent writer between the GET and POST would
 	// cause last-writer-wins. Safe for the expected single in-flight sequential migration.
 	const existingBindings = await fetchRestrictionPolicy(
@@ -854,19 +982,12 @@ export async function applyRestrictionPolicy(
 		site,
 	);
 
-	// Find the existing editor binding (if any) and merge principals
-	const editorBinding = existingBindings.find((b) => b.relation === 'editor');
-	const existingPrincipals = editorBinding?.principals ?? [];
-	const mergedPrincipals = [
-		...new Set([...existingPrincipals, ...newPrincipals]),
-	];
-
-	// Keep all non-editor bindings intact; replace (or add) the editor binding
-	const otherBindings = existingBindings.filter((b) => b.relation !== 'editor');
-	const updatedBindings: DDRestrictionBinding[] = [
-		...otherBindings,
-		{ principals: mergedPrincipals, relation: 'editor' },
-	];
+	const updatedBindings = buildRestrictionPolicyBindings(
+		editorTeamIds,
+		userId,
+		orgId,
+		existingBindings,
+	);
 
 	const body = {
 		data: {
@@ -884,7 +1005,7 @@ export async function applyRestrictionPolicy(
 				...ddHeaders(apiKey, appKey),
 				'Content-Type': 'application/json',
 			},
-			params: { allow_self_lockout: true },
+			params: { allow_self_lockout: false },
 		},
 	);
 }
