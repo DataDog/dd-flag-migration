@@ -1511,11 +1511,7 @@ async function executeMigration(
 				// key when a prefix or custom key was applied during conflict
 				// resolution. This ensures sync re-runs can match existing
 				// allocations by key (preserving UUIDs).
-				allocations = remapAllocationKeys(
-					allocations,
-					flag.key,
-					resolvedDdKey,
-				);
+				allocations = remapAllocationKeys(allocations, flag.key, resolvedDdKey);
 
 				const allRuleCount = allocations.reduce(
 					(sum, a) => sum + (a.targeting_rules?.length ?? 0),

@@ -1326,7 +1326,8 @@ function migrateFlagWithConflicts(
 		name: flag.name === flag.key ? ddKey : flag.name,
 		value_type: mapFlagType(flag),
 		variants,
-		allocations: remappedAllocations.length > 0 ? remappedAllocations : undefined,
+		allocations:
+			remappedAllocations.length > 0 ? remappedAllocations : undefined,
 		migration_metadata: metadata,
 		...(tags.length > 0 ? { tags } : {}),
 	};
@@ -2208,7 +2209,11 @@ describe('remapAllocationKeys', () => {
 	];
 
 	it('remaps allocation key prefix from source key to datadog key', () => {
-		const result = remapAllocationKeys(sampleAllocations, 'my-flag', 'mobile-my-flag');
+		const result = remapAllocationKeys(
+			sampleAllocations,
+			'my-flag',
+			'mobile-my-flag',
+		);
 		expect(result[0].key).toBe('mobile-my-flag-production-fallthrough');
 		expect(result[1].key).toBe('mobile-my-flag-production-rule-0');
 	});
@@ -2247,11 +2252,17 @@ describe('remapAllocationKeys', () => {
 	});
 
 	it('preserves all non-key fields', () => {
-		const result = remapAllocationKeys(sampleAllocations, 'my-flag', 'mobile-my-flag');
+		const result = remapAllocationKeys(
+			sampleAllocations,
+			'my-flag',
+			'mobile-my-flag',
+		);
 		expect(result[0].environment_id).toBe('dd-prod');
 		expect(result[0].name).toBe('my-flag default');
 		expect(result[0].type).toBe('FEATURE_GATE');
-		expect(result[0].variant_weights).toEqual([{ variant_key: 'on', value: 100 }]);
+		expect(result[0].variant_weights).toEqual([
+			{ variant_key: 'on', value: 100 },
+		]);
 	});
 
 	it('preserves targeting_rules', () => {
@@ -2458,12 +2469,23 @@ describe('allocation keys use the resolved Datadog key (multi-env with targets a
 			staging: makeEnv({
 				_environmentName: 'Staging',
 				on: true,
-				targets: [{ contextKind: 'user', variation: 0, values: ['user-a', 'user-b'] }],
+				targets: [
+					{ contextKind: 'user', variation: 0, values: ['user-a', 'user-b'] },
+				],
 				rules: [
 					{
 						_id: 'r1',
 						trackEvents: false,
-						clauses: [{ _id: 'c1', attribute: 'email', op: 'startsWith', values: ['@test.com'], contextKind: 'user', negate: false }],
+						clauses: [
+							{
+								_id: 'c1',
+								attribute: 'email',
+								op: 'startsWith',
+								values: ['@test.com'],
+								contextKind: 'user',
+								negate: false,
+							},
+						],
 						variation: 0,
 					},
 				],
