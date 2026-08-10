@@ -77,6 +77,7 @@ import {
 	hasJsonArrayVariants,
 	hasSemverConditions,
 	mapFlagType,
+	remapAllocationKeys,
 	shouldSkipFlag,
 } from './helpers/migration.js';
 import {
@@ -1432,7 +1433,7 @@ async function executeMigration(
 					);
 					continue;
 				}
-				const allocations = allocationsResult;
+				let allocations = allocationsResult;
 				const envsToEnable = getEnvsToEnable(flag, envMapping);
 				const targetKey = targetKeyBySource?.get(flag.key) ?? flag.key;
 				const conflict = nonInteractive
@@ -1504,6 +1505,13 @@ async function executeMigration(
 						appliedPrefix = undefined;
 					}
 				}
+
+				// Remap allocation keys to use the resolved Datadog key instead of
+				// the original LD flag key, so they stay consistent with the flag
+				// key when a prefix or custom key was applied during conflict
+				// resolution. This ensures sync re-runs can match existing
+				// allocations by key (preserving UUIDs).
+				allocations = remapAllocationKeys(allocations, flag.key, resolvedDdKey);
 
 				const allRuleCount = allocations.reduce(
 					(sum, a) => sum + (a.targeting_rules?.length ?? 0),

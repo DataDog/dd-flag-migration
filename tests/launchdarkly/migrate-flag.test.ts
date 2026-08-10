@@ -18,6 +18,7 @@ import {
 	buildVariants,
 	getEnvsToEnable,
 	mapFlagType,
+	remapAllocationKeys,
 	shouldSkipFlag,
 } from '../../src/launchdarkly/helpers/migration.js';
 import {
@@ -1305,6 +1306,11 @@ function migrateFlagWithConflicts(
 	// Create new flag (possibly with prefix or user-supplied custom key)
 	const ddKey = resolvedDdKey ?? targetPlan.datadogKey;
 
+	// Remap allocation keys to use the resolved Datadog key instead of
+	// the original LD flag key, so they stay consistent with the flag key
+	// when a prefix or custom key was applied during conflict resolution.
+	const remappedAllocations = remapAllocationKeys(allocations, flag.key, ddKey);
+
 	const metadata: MigrationMetadata = {
 		project_key: projectKey,
 		flag_key: flag.key,
@@ -1320,7 +1326,8 @@ function migrateFlagWithConflicts(
 		name: flag.name === flag.key ? ddKey : flag.name,
 		value_type: mapFlagType(flag),
 		variants,
-		allocations: allocations.length > 0 ? allocations : undefined,
+		allocations:
+			remappedAllocations.length > 0 ? remappedAllocations : undefined,
 		migration_metadata: metadata,
 		...(tags.length > 0 ? { tags } : {}),
 	};
@@ -2173,5 +2180,368 @@ describe('migrate a flag with no LD tags and verify the project key tag is still
 
 	it('includes only the project tag when the flag has no LD tags', () => {
 		expect(result.request?.tags).toEqual(['project:solo-project']);
+	});
+});
+
+// ─── Allocation key remapping ─────────────────────────────────────────────────
+//
+// When a flag is renamed during migration (prefix applied or custom key
+// entered during conflict resolution), allocation keys must use the resolved
+// Datadog key — not the original LD flag key — so they stay consistent with
+// the flag key and remain idempotent across re-runs.
+
+describe('remapAllocationKeys', () => {
+	const sampleAllocations = [
+		{
+			environment_id: 'dd-prod',
+			name: 'my-flag default',
+			key: 'my-flag-production-fallthrough',
+			type: 'FEATURE_GATE' as const,
+			variant_weights: [{ variant_key: 'on', value: 100 }],
+		},
+		{
+			environment_id: 'dd-prod',
+			name: 'my-flag rule 1',
+			key: 'my-flag-production-rule-0',
+			type: 'FEATURE_GATE' as const,
+			variant_weights: [{ variant_key: 'off', value: 100 }],
+		},
+	];
+
+	it('remaps allocation key prefix from source key to datadog key', () => {
+		const result = remapAllocationKeys(
+			sampleAllocations,
+			'my-flag',
+			'mobile-my-flag',
+		);
+		expect(result[0].key).toBe('mobile-my-flag-production-fallthrough');
+		expect(result[1].key).toBe('mobile-my-flag-production-rule-0');
+	});
+
+	it('returns allocations unchanged when source key equals datadog key', () => {
+		const result = remapAllocationKeys(sampleAllocations, 'my-flag', 'my-flag');
+		expect(result).toBe(sampleAllocations);
+	});
+
+	it('only replaces the prefix, not later occurrences of the source key', () => {
+		const allocs = [
+			{
+				environment_id: 'dd-prod',
+				name: 'test',
+				key: 'my-flag-production-fallthrough',
+				type: 'FEATURE_GATE' as const,
+				variant_weights: [{ variant_key: 'on', value: 100 }],
+			},
+		];
+		const result = remapAllocationKeys(allocs, 'my-flag', 'x-my-flag');
+		expect(result[0].key).toBe('x-my-flag-production-fallthrough');
+	});
+
+	it('does not modify allocations whose key does not start with the source key', () => {
+		const allocs = [
+			{
+				environment_id: 'dd-prod',
+				name: 'test',
+				key: 'other-flag-production-fallthrough',
+				type: 'FEATURE_GATE' as const,
+				variant_weights: [{ variant_key: 'on', value: 100 }],
+			},
+		];
+		const result = remapAllocationKeys(allocs, 'my-flag', 'mobile-my-flag');
+		expect(result[0].key).toBe('other-flag-production-fallthrough');
+	});
+
+	it('preserves all non-key fields', () => {
+		const result = remapAllocationKeys(
+			sampleAllocations,
+			'my-flag',
+			'mobile-my-flag',
+		);
+		expect(result[0].environment_id).toBe('dd-prod');
+		expect(result[0].name).toBe('my-flag default');
+		expect(result[0].type).toBe('FEATURE_GATE');
+		expect(result[0].variant_weights).toEqual([
+			{ variant_key: 'on', value: 100 },
+		]);
+	});
+
+	it('preserves targeting_rules', () => {
+		const allocs = [
+			{
+				environment_id: 'dd-prod',
+				name: 'test',
+				key: 'my-flag-production-rule-0',
+				type: 'FEATURE_GATE' as const,
+				variant_weights: [{ variant_key: 'on', value: 100 }],
+				targeting_rules: [
+					{
+						conditions: [
+							{
+								operator: 'ONE_OF' as const,
+								attribute: 'id',
+								value: ['user-1'],
+							},
+						],
+					},
+				],
+			},
+		];
+		const result = remapAllocationKeys(allocs, 'my-flag', 'mobile-my-flag');
+		expect(result[0].targeting_rules).toEqual(allocs[0].targeting_rules);
+	});
+});
+
+describe('allocation keys use the resolved Datadog key (prefix scenario)', () => {
+	const flag: LDFlag = {
+		name: 'Enable Dark Mode',
+		kind: 'boolean',
+		key: 'enable-dark-mode',
+		variations: [
+			{ _id: 'v0', value: true, name: 'Enabled' },
+			{ _id: 'v1', value: false, name: 'Disabled' },
+		],
+		defaults: { onVariation: 0, offVariation: 1 },
+		environments: {
+			production: makeEnv({
+				_environmentName: 'Production',
+				on: true,
+				fallthrough: { variation: 0 },
+			}),
+		},
+		tags: [],
+		archived: false,
+		deprecated: false,
+		temporary: false,
+	};
+	const envMapping = new Map([['production', ddProd]]);
+
+	describe('when prefix "mobile-" is applied', () => {
+		const result = migrateFlagWithConflicts(
+			flag,
+			envMapping,
+			['production'],
+			[],
+			'mobile',
+			{ action: 'prefix', prefix: 'mobile-' },
+		);
+
+		it('creates a new flag', () => {
+			expect(result.action).toBe('create');
+		});
+
+		it('uses the prefixed key for the flag', () => {
+			expect(result.request?.key).toBe('mobile-enable-dark-mode');
+		});
+
+		it('uses the prefixed key in allocation keys', () => {
+			const allocKeys = result.request?.allocations?.map((a) => a.key) ?? [];
+			for (const key of allocKeys) {
+				expect(key).toMatch(/^mobile-enable-dark-mode-/);
+			}
+		});
+
+		it('does not use the original LD key in allocation keys', () => {
+			const allocKeys = result.request?.allocations?.map((a) => a.key) ?? [];
+			for (const key of allocKeys) {
+				expect(key).not.toMatch(/^enable-dark-mode-/);
+			}
+		});
+	});
+});
+
+describe('allocation keys use the resolved Datadog key (custom key scenario)', () => {
+	const flag: LDFlag = {
+		name: 'Enable Dark Mode',
+		kind: 'boolean',
+		key: 'enable-dark-mode',
+		variations: [
+			{ _id: 'v0', value: true, name: 'Enabled' },
+			{ _id: 'v1', value: false, name: 'Disabled' },
+		],
+		defaults: { onVariation: 0, offVariation: 1 },
+		environments: {
+			production: makeEnv({
+				_environmentName: 'Production',
+				on: true,
+				fallthrough: { variation: 0 },
+			}),
+		},
+		tags: [],
+		archived: false,
+		deprecated: false,
+		temporary: false,
+	};
+	const envMapping = new Map([['production', ddProd]]);
+
+	describe('when a custom key is provided', () => {
+		const result = migrateFlagWithConflicts(
+			flag,
+			envMapping,
+			['production'],
+			[],
+			'mobile',
+			{ action: 'skip' },
+			'custom-flag-key',
+		);
+
+		it('creates a new flag', () => {
+			expect(result.action).toBe('create');
+		});
+
+		it('uses the custom key for the flag', () => {
+			expect(result.request?.key).toBe('custom-flag-key');
+		});
+
+		it('uses the custom key in allocation keys', () => {
+			const allocKeys = result.request?.allocations?.map((a) => a.key) ?? [];
+			for (const key of allocKeys) {
+				expect(key).toMatch(/^custom-flag-key-/);
+			}
+		});
+
+		it('does not use the original LD key in allocation keys', () => {
+			const allocKeys = result.request?.allocations?.map((a) => a.key) ?? [];
+			for (const key of allocKeys) {
+				expect(key).not.toMatch(/^enable-dark-mode-/);
+			}
+		});
+	});
+});
+
+describe('allocation keys are unchanged when no rename occurs', () => {
+	const flag: LDFlag = {
+		name: 'Enable Dark Mode',
+		kind: 'boolean',
+		key: 'enable-dark-mode',
+		variations: [
+			{ _id: 'v0', value: true, name: 'Enabled' },
+			{ _id: 'v1', value: false, name: 'Disabled' },
+		],
+		defaults: { onVariation: 0, offVariation: 1 },
+		environments: {
+			production: makeEnv({
+				_environmentName: 'Production',
+				on: true,
+				fallthrough: { variation: 0 },
+			}),
+		},
+		tags: [],
+		archived: false,
+		deprecated: false,
+		temporary: false,
+	};
+	const envMapping = new Map([['production', ddProd]]);
+
+	const result = migrateFlagWithConflicts(
+		flag,
+		envMapping,
+		['production'],
+		[],
+		'my-project',
+		{ action: 'skip' },
+	);
+
+	it('creates a new flag', () => {
+		expect(result.action).toBe('create');
+	});
+
+	it('uses the original LD key for the flag', () => {
+		expect(result.request?.key).toBe('enable-dark-mode');
+	});
+
+	it('uses the original LD key in allocation keys', () => {
+		const allocKeys = result.request?.allocations?.map((a) => a.key) ?? [];
+		expect(allocKeys).toContain('enable-dark-mode-production-fallthrough');
+	});
+});
+
+describe('allocation keys use the resolved Datadog key (multi-env with targets and rules)', () => {
+	const flag: LDFlag = {
+		name: 'Checkout Flag',
+		kind: 'boolean',
+		key: 'checkout-flag',
+		variations: [
+			{ _id: 'v0', value: true, name: 'on' },
+			{ _id: 'v1', value: false, name: 'off' },
+		],
+		defaults: { onVariation: 0, offVariation: 1 },
+		environments: {
+			staging: makeEnv({
+				_environmentName: 'Staging',
+				on: true,
+				targets: [
+					{ contextKind: 'user', variation: 0, values: ['user-a', 'user-b'] },
+				],
+				rules: [
+					{
+						_id: 'r1',
+						trackEvents: false,
+						clauses: [
+							{
+								_id: 'c1',
+								attribute: 'email',
+								op: 'startsWith',
+								values: ['@test.com'],
+								contextKind: 'user',
+								negate: false,
+							},
+						],
+						variation: 0,
+					},
+				],
+				fallthrough: { variation: 1 },
+			}),
+			production: makeEnv({
+				_environmentName: 'Production',
+				on: true,
+				fallthrough: { variation: 0 },
+			}),
+		},
+		tags: [],
+		archived: false,
+		deprecated: false,
+		temporary: false,
+	};
+	const envMapping = new Map([
+		['staging', ddStaging],
+		['production', ddProd],
+	]);
+
+	const result = migrateFlagWithConflicts(
+		flag,
+		envMapping,
+		['staging', 'production'],
+		[],
+		'my-project',
+		{ action: 'prefix', prefix: 'ld-' },
+	);
+
+	it('creates a new flag', () => {
+		expect(result.action).toBe('create');
+	});
+
+	it('uses the prefixed key for the flag', () => {
+		expect(result.request?.key).toBe('ld-checkout-flag');
+	});
+
+	it('all allocation keys start with the prefixed Datadog key', () => {
+		const allocKeys = result.request?.allocations?.map((a) => a.key) ?? [];
+		expect(allocKeys.length).toBeGreaterThan(0);
+		for (const key of allocKeys) {
+			expect(key).toMatch(/^ld-checkout-flag-/);
+		}
+	});
+
+	it('no allocation keys start with the original LD key', () => {
+		const allocKeys = result.request?.allocations?.map((a) => a.key) ?? [];
+		for (const key of allocKeys) {
+			expect(key).not.toMatch(/^checkout-flag-/);
+		}
+	});
+
+	it('preserves the correct number of allocations', () => {
+		// staging: 1 target + 1 rule + 1 fallthrough = 3
+		// production: 1 fallthrough = 1
+		expect(result.request?.allocations).toHaveLength(4);
 	});
 });

@@ -656,7 +656,7 @@ describe('createFeatureFlag', () => {
 		).rejects.toThrow();
 
 		// 1 original + 9 retries = 10 total attempts
-		expect(mock.history['post']?.length).toBe(10);
+		expect(mock.history.post?.length).toBe(10);
 	});
 
 	it('does not retry on a 409 with a different error message', async () => {
@@ -668,7 +668,7 @@ describe('createFeatureFlag', () => {
 			createFeatureFlag(API_KEY, APP_KEY, request, SITE),
 		).rejects.toThrow();
 
-		expect(mock.history['post']?.length).toBe(1);
+		expect(mock.history.post?.length).toBe(1);
 	});
 });
 
