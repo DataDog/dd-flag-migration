@@ -12,6 +12,7 @@ export interface MigrationMetadata {
 export interface DatadogFlagEntry {
 	id: string;
 	key: string;
+	tags?: string[];
 	migration_metadata?: MigrationMetadata;
 }
 
@@ -183,6 +184,13 @@ export type DDRestrictionBinding = {
 	principals: string[];
 	relation: string;
 };
+
+export type RestrictionPolicyTeamAction = 'add' | 'remove';
+
+export interface RestrictionPolicyTeamUpdateResult {
+	changedTeamIds: string[];
+	unchangedTeamIds: string[];
+}
 
 // ─── Pagination Types ─────────────────────────────────────────────────────────
 

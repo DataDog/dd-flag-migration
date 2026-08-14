@@ -17,6 +17,8 @@ import type {
 	DDRestrictionBinding,
 	MigrationMetadata,
 	PendingVariantDelete,
+	RestrictionPolicyTeamAction,
+	RestrictionPolicyTeamUpdateResult,
 	SavedFilterMigrationMetadata,
 	SavedFilterSummary,
 	SourceVariant,
@@ -204,6 +206,7 @@ type JsonApiFlag = {
 	attributes: {
 		key: string;
 		name: string;
+		tags?: string[];
 		migration_metadata?: MigrationMetadata;
 	};
 };
@@ -287,6 +290,7 @@ export async function fetchDatadogFlags(
 			allFlags.push({
 				id: f.id,
 				key: f.attributes.key,
+				...(f.attributes.tags !== undefined ? { tags: f.attributes.tags } : {}),
 				migration_metadata: f.attributes.migration_metadata,
 			});
 		}
@@ -946,6 +950,125 @@ export function buildRestrictionPolicyBindings(
 	];
 }
 
+/** Remove selected team principals from every explicit relation. */
+export function buildRestrictionPolicyBindingsForTeamRemoval(
+	teamIds: string[],
+	existingBindings: DDRestrictionBinding[],
+): DDRestrictionBinding[] {
+	const teamPrincipals = new Set(teamIds.map((id) => `team:${id}`));
+	return existingBindings
+		.map((binding) => ({
+			...binding,
+			principals: binding.principals.filter(
+				(principal) => !teamPrincipals.has(principal),
+			),
+		}))
+		.filter((binding) => binding.principals.length > 0);
+}
+
+/**
+ * Add or remove explicit team access on a flag restriction policy.
+ *
+ * Additions grant the editor relation and preserve the authenticated user as
+ * an editor plus the org as a viewer. Removals delete the selected team
+ * principals from every explicit relation. If the requested end state already
+ * exists, no write is sent.
+ */
+export class RestrictionPolicyTeamUpdateError extends Error {
+	constructor(
+		readonly updateResult: RestrictionPolicyTeamUpdateResult,
+		readonly originalError: unknown,
+	) {
+		super('Failed to update restriction policy team permissions');
+		this.name = 'RestrictionPolicyTeamUpdateError';
+	}
+}
+
+export async function updateRestrictionPolicyTeams(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	teamIds: string[],
+	action: RestrictionPolicyTeamAction,
+	userId: string,
+	orgId: string,
+	site = 'datadoghq.com',
+): Promise<RestrictionPolicyTeamUpdateResult> {
+	const uniqueTeamIds = [...new Set(teamIds)];
+	if (uniqueTeamIds.length === 0) {
+		return { changedTeamIds: [], unchangedTeamIds: [] };
+	}
+
+	const existingBindings = await fetchRestrictionPolicy(
+		apiKey,
+		appKey,
+		flagId,
+		site,
+	);
+	const relationByTeamId = new Map<string, string>();
+	for (const binding of existingBindings) {
+		for (const principal of binding.principals) {
+			if (principal.startsWith('team:')) {
+				relationByTeamId.set(principal.slice('team:'.length), binding.relation);
+			}
+		}
+	}
+
+	const changedTeamIds = uniqueTeamIds.filter((teamId) =>
+		action === 'add'
+			? relationByTeamId.get(teamId) !== 'editor'
+			: relationByTeamId.has(teamId),
+	);
+	const changedTeamIdSet = new Set(changedTeamIds);
+	const unchangedTeamIds = uniqueTeamIds.filter(
+		(teamId) => !changedTeamIdSet.has(teamId),
+	);
+	if (changedTeamIds.length === 0) {
+		return { changedTeamIds, unchangedTeamIds };
+	}
+
+	const updatedBindings =
+		action === 'add'
+			? buildRestrictionPolicyBindings(
+					uniqueTeamIds,
+					userId,
+					orgId,
+					existingBindings,
+				)
+			: buildRestrictionPolicyBindingsForTeamRemoval(
+					uniqueTeamIds,
+					existingBindings,
+				);
+	const baseUrl = `https://api.${site}`;
+	const resourceId = `feature-flag:${flagId}`;
+	try {
+		await ddClient.post(
+			`${baseUrl}/api/v2/restriction_policy/${resourceId}`,
+			{
+				data: {
+					id: resourceId,
+					type: 'restriction_policy',
+					attributes: { bindings: updatedBindings },
+				},
+			},
+			{
+				headers: {
+					...ddHeaders(apiKey, appKey),
+					'Content-Type': 'application/json',
+				},
+				params: { allow_self_lockout: false },
+			},
+		);
+	} catch (error) {
+		throw new RestrictionPolicyTeamUpdateError(
+			{ changedTeamIds, unchangedTeamIds },
+			error,
+		);
+	}
+
+	return { changedTeamIds, unchangedTeamIds };
+}
+
 /**
  * Grant editor access to additional teams on a feature flag's restriction policy.
  * Fetches the existing policy, merges new team IDs into the editor binding,
@@ -1022,6 +1145,10 @@ const PROBABLE_PERMISSIONS: ReadonlyMap<string, string> = new Map([
 		'/api/v2/feature-flags/environments',
 	],
 	['teams_read', '/api/v2/team'],
+	[
+		'restriction_policies_read',
+		'/api/v2/restriction_policy/feature-flag:permission-probe',
+	],
 ]);
 
 async function probePermission(

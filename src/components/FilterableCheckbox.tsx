@@ -15,6 +15,11 @@ export type FilterableChoice<T> = {
 	checked?: boolean;
 	migrated?: boolean;
 	categories?: string[];
+	/**
+	 * Additional plain-text fields to search. When present, whitespace-separated
+	 * query terms are combined with OR across the label and these fields.
+	 */
+	searchTerms?: string[];
 };
 
 export type FilterableCheckboxOptions<T> = {
@@ -30,7 +35,29 @@ type NormalizedChoice<T> = {
 	checked: boolean;
 	migrated: boolean;
 	categories: string[];
+	searchTerms?: string[];
 };
+
+export function choiceMatchesTextFilter(
+	choice: Pick<FilterableChoice<unknown>, 'name' | 'searchTerms'>,
+	filterText: string,
+): boolean {
+	const lower = filterText.toLowerCase();
+	if (!lower) return true;
+
+	const label = stripAnsi(choice.name).toLowerCase();
+	if (choice.searchTerms === undefined) return label.includes(lower);
+
+	const queryTerms = lower.trim().split(/\s+/).filter(Boolean);
+	if (queryTerms.length === 0) return true;
+	const searchable = [
+		label,
+		...choice.searchTerms.map((term) => term.toLowerCase()),
+	];
+	return queryTerms.some((query) =>
+		searchable.some((candidate) => candidate.includes(query)),
+	);
+}
 
 const scopeStyles: Record<FilterCategoryScope, (value: string) => string> = {
 	'any environment': chalk.cyan,
@@ -57,6 +84,7 @@ export function FilterableCheckboxView<T>(props: Props<T>): JSX.Element {
 			checked: c.checked ?? false,
 			migrated: c.migrated ?? false,
 			categories: c.categories ?? [],
+			searchTerms: c.searchTerms,
 		})),
 	);
 	const [active, setActive] = useState(0);
@@ -71,14 +99,10 @@ export function FilterableCheckboxView<T>(props: Props<T>): JSX.Element {
 	const [filterActive, setFilterActive] = useState(0);
 
 	const filteredItems = useMemo(() => {
-		const lower = filterText.toLowerCase();
 		const base = allItems.filter((item) =>
 			itemMatchesFilters(item, activeFilters, filterCategories),
 		);
-		if (!lower) return base;
-		return base.filter((item) =>
-			stripAnsi(item.name).toLowerCase().includes(lower),
-		);
+		return base.filter((item) => choiceMatchesTextFilter(item, filterText));
 	}, [allItems, filterText, activeFilters, filterCategories]);
 
 	const safeActive = Math.min(active, Math.max(0, filteredItems.length - 1));
