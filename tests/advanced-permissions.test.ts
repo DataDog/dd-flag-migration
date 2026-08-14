@@ -11,6 +11,10 @@ import {
 } from '@jest/globals';
 import AxiosMockAdapter from 'axios-mock-adapter';
 import ExcelJS from 'exceljs';
+import {
+	planTeamTagUpdate,
+	syncFlagTeamTags,
+} from '../src/advanced-permissions/team-tags.js';
 import { exportAdvancedPermissionChangesToXlsx } from '../src/advanced-permissions/xlsx.js';
 import { choiceMatchesTextFilter } from '../src/components/FilterableCheckbox.js';
 import {
@@ -93,6 +97,86 @@ describe('advanced permission spreadsheet export', () => {
 			consoleSpy.mockRestore();
 			fs.rmSync(outputDirectory, { recursive: true, force: true });
 		}
+	});
+});
+
+describe('team tag syncing', () => {
+	let mock: AxiosMockAdapter;
+
+	beforeEach(() => {
+		mock = new AxiosMockAdapter(ddClient as never);
+	});
+
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('adds matching team tags while preserving unrelated tags', async () => {
+		let putBody: unknown;
+		mock.onPut(`${BASE}/api/v2/feature-flags/flag-1`).reply((config) => {
+			putBody = JSON.parse(config.data as string);
+			return [200, {}];
+		});
+
+		await expect(
+			syncFlagTeamTags(
+				API_KEY,
+				APP_KEY,
+				'flag-1',
+				['project:health-100', 'team:existing'],
+				[
+					{ id: 'existing-id', handle: 'existing', name: 'Existing' },
+					{ id: 'new-id', handle: 'new', name: 'New' },
+				],
+				'add',
+				SITE,
+			),
+		).resolves.toEqual({
+			tags: ['project:health-100', 'team:existing', 'team:new'],
+			changedTeamIds: ['new-id'],
+			unchangedTeamIds: ['existing-id'],
+		});
+		expect(putBody).toEqual({
+			data: {
+				type: 'feature-flags',
+				attributes: {
+					tags: ['project:health-100', 'team:existing', 'team:new'],
+				},
+			},
+		});
+	});
+
+	it('removes matching team tags while preserving unrelated tags', () => {
+		expect(
+			planTeamTagUpdate(
+				['team:remove', 'project:health-100', 'team:keep'],
+				[{ id: 'remove-id', handle: 'remove', name: 'Remove' }],
+				'remove',
+			),
+		).toEqual({
+			tags: ['project:health-100', 'team:keep'],
+			changedTeamIds: ['remove-id'],
+			unchangedTeamIds: [],
+		});
+	});
+
+	it('does not write when team tags are already synced', async () => {
+		await expect(
+			syncFlagTeamTags(
+				API_KEY,
+				APP_KEY,
+				'flag-2',
+				['project:health-100', 'team:existing'],
+				[{ id: 'existing-id', handle: 'existing', name: 'Existing' }],
+				'add',
+				SITE,
+			),
+		).resolves.toEqual({
+			tags: ['project:health-100', 'team:existing'],
+			changedTeamIds: [],
+			unchangedTeamIds: ['existing-id'],
+		});
+		expect(mock.history.put).toHaveLength(0);
 	});
 });
 

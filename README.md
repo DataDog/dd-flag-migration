@@ -279,8 +279,9 @@ The interactive flow lets you:
 1. Choose **Add teams to flags** or **Remove teams from flags**.
 2. Select migrated flags. Type to filter by flag key or tag (for example, `project:health-100`). Whitespace-separated searches use union semantics, so a flag remains visible when either its key or one of its tags matches.
 3. Select one or more Datadog teams.
+4. Choose whether to sync matching `team:<handle>` tags.
 
-Additions grant the selected teams the explicit `editor` relation. Removals delete the selected teams from every explicit relation while preserving unrelated principals and bindings. Repeating either operation is an idempotent no-op when the requested state already exists.
+Additions grant the selected teams the explicit `editor` relation. Removals delete the selected teams from every explicit relation while preserving unrelated principals and bindings. When team tag syncing is enabled, additions add matching team tags and removals remove them while preserving unrelated tags. Repeating either operation is an idempotent no-op when the requested state already exists.
 
 Every confirmed update writes an `advanced-permissions-export-<timestamp>.xlsx` report in the current directory. The report distinguishes changed permissions, idempotent no-ops, and failures for each selected flag/team pair.
 

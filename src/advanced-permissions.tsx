@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import chalk from 'chalk';
+import { syncFlagTeamTags } from './advanced-permissions/team-tags.js';
 import type {
 	PermissionChangeResult,
 	PermissionOperation,
@@ -232,9 +233,14 @@ async function main(): Promise<void> {
 		return;
 	}
 
+	const syncTeamTags = await confirm({
+		message: `${operation === 'add' ? 'Add' : 'Remove'} matching team:<handle> tags too?`,
+		default: true,
+	});
+
 	const pairCount = selectedFlags.length * selectedTeams.length;
 	const shouldContinue = await confirm({
-		message: `${operation === 'add' ? 'Add' : 'Remove'} ${selectedTeams.length} team(s) ${operation === 'add' ? 'to' : 'from'} ${selectedFlags.length} flag(s) (${pairCount} flag/team change(s))?`,
+		message: `${operation === 'add' ? 'Add' : 'Remove'} ${selectedTeams.length} team(s) ${operation === 'add' ? 'to' : 'from'} ${selectedFlags.length} flag(s) (${pairCount} flag/team change(s))${syncTeamTags ? ' and sync team tags' : ''}?`,
 		default: operation === 'add',
 	});
 	if (!shouldContinue) {
@@ -243,10 +249,11 @@ async function main(): Promise<void> {
 	}
 
 	const results: PermissionChangeResult[] = [];
+	let tagUpdatedFlagCount = 0;
 	const progress = spinner().start();
 	for (let index = 0; index < selectedFlags.length; index++) {
 		const flag = selectedFlags[index];
-		progress.text = `${operation === 'add' ? 'Adding' : 'Removing'} teams for ${flag.key} (${index + 1}/${selectedFlags.length})…`;
+		progress.text = `${operation === 'add' ? 'Adding' : 'Removing'} teams${syncTeamTags ? ' and syncing tags' : ''} for ${flag.key} (${index + 1}/${selectedFlags.length})…`;
 		try {
 			const update = await updateRestrictionPolicyTeams(
 				apiKey,
@@ -258,6 +265,19 @@ async function main(): Promise<void> {
 				orgId,
 				site,
 			);
+			if (syncTeamTags) {
+				const tagUpdate = await syncFlagTeamTags(
+					apiKey,
+					appKey,
+					flag.id,
+					flag.tags ?? [],
+					selectedTeams,
+					operation,
+					site,
+				);
+				flag.tags = tagUpdate.tags;
+				if (tagUpdate.changedTeamIds.length > 0) tagUpdatedFlagCount++;
+			}
 			const changedIds = new Set(update.changedTeamIds);
 			for (const team of selectedTeams) {
 				results.push(
@@ -297,7 +317,7 @@ async function main(): Promise<void> {
 		);
 	} else {
 		progress.succeed(
-			`Permission update complete: ${changedCount} changed, ${unchangedCount} unchanged`,
+			`Permission update complete: ${changedCount} changed, ${unchangedCount} unchanged${syncTeamTags ? `; team tags synced on ${tagUpdatedFlagCount} flag(s)` : ''}`,
 		);
 	}
 
