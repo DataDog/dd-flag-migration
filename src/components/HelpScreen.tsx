@@ -68,6 +68,16 @@ export function HelpScreen(): JSX.Element {
 				</Text>
 			),
 		},
+		{
+			id: 'bulk-enable-command',
+			render: () => (
+				<Text>
+					{'  '}
+					<Text color="cyan">bulk-enable</Text>
+					{'   Enable migrated flags in one or more environments'}
+				</Text>
+			),
+		},
 		{ id: 'space-commands', render: () => <Text> </Text> },
 		{
 			id: 'migrate-title',
@@ -317,6 +327,15 @@ export function HelpScreen(): JSX.Element {
 				<Text>
 					{'  '}
 					<Text color="gray">$</Text> dd-flag-migration bulk-permissions
+				</Text>
+			),
+		},
+		{
+			id: 'example-bulk-enable',
+			render: () => (
+				<Text>
+					{'  '}
+					<Text color="gray">$</Text> dd-flag-migration bulk-enable
 				</Text>
 			),
 		},

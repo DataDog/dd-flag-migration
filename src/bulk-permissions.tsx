@@ -17,13 +17,15 @@ import { spinner } from './components/Spinner.js';
 import {
 	fetchCurrentUserIdentity,
 	fetchCurrentUserPermissions,
-	fetchDatadogFlags,
 	fetchDatadogTeams,
-	fetchFlagTags,
 	RestrictionPolicyTeamUpdateError,
 	updateRestrictionPolicyTeams,
 } from './datadog/api.js';
 import type { DatadogFlagEntry, DatadogTeam } from './datadog/types.js';
+import {
+	loadMigratedFlagsWithTags,
+	selectMigratedFlags,
+} from './helpers/bulk-flags.js';
 import { requireEnvVars } from './helpers/env.js';
 import { formatAxiosError } from './helpers/format-axios-error.js';
 import { promptForDatadogSite } from './helpers/prompt-for-datadog-site.js';
@@ -52,46 +54,6 @@ async function checkRequiredPermissions(
 		await renderStatic(<PermissionsError missing={missing} />);
 		process.exit(1);
 	}
-}
-
-function isMigratedFlag(flag: DatadogFlagEntry): boolean {
-	return flag.migration_metadata !== undefined;
-}
-
-async function loadMigratedFlagsWithTags(
-	apiKey: string,
-	appKey: string,
-	site: string,
-): Promise<DatadogFlagEntry[]> {
-	const flags = (await fetchDatadogFlags(apiKey, appKey, site)).filter(
-		isMigratedFlag,
-	);
-	for (const flag of flags) {
-		if (flag.tags === undefined) {
-			flag.tags = await fetchFlagTags(apiKey, appKey, flag.id, site);
-		}
-	}
-	return flags.sort((a, b) => a.key.localeCompare(b.key));
-}
-
-async function selectFlags(
-	flags: DatadogFlagEntry[],
-): Promise<DatadogFlagEntry[] | null> {
-	const pageSize = Math.max(5, (process.stdout.rows ?? 24) - 9);
-	return filterableCheckbox<DatadogFlagEntry>({
-		message: 'Select migrated flags to update:',
-		choices: flags.map((flag) => {
-			const tags = flag.tags ?? [];
-			return {
-				name:
-					flag.key +
-					(tags.length > 0 ? chalk.gray(`  (${tags.join(', ')})`) : ''),
-				value: flag,
-				searchTerms: [flag.key, ...tags],
-			};
-		}),
-		pageSize,
-	});
 }
 
 async function selectTeams(
@@ -192,7 +154,7 @@ async function main(): Promise<void> {
 		return;
 	}
 
-	const selectedFlags = await selectFlags(flags);
+	const selectedFlags = await selectMigratedFlags(flags);
 	if (selectedFlags === null) throw new PromptCancelledError();
 	if (selectedFlags.length === 0) {
 		console.log(chalk.yellow('\nNo flags selected — nothing to update.'));

@@ -82,4 +82,5 @@ export const HEADER_SUBTITLES = {
 	launchdarkly: '          LaunchDarkly → Datadog          ',
 	evaluate: '           Evaluate Migration             ',
 	bulkPermissions: '        Bulk Permission Management        ',
+	bulkEnable: '       Bulk Environment Enablement        ',
 } as const;
