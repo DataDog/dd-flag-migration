@@ -283,7 +283,7 @@ The interactive flow lets you:
 
 Additions grant the selected teams the explicit `editor` relation. Removals delete the selected teams from every explicit relation while preserving unrelated principals and bindings. When team tag syncing is enabled, additions add matching team tags and removals remove them while preserving unrelated tags. Repeating either operation is an idempotent no-op when the requested state already exists.
 
-Every confirmed update writes a `bulk-permissions-export-<timestamp>.xlsx` report in the current directory. The report distinguishes changed permissions, idempotent no-ops, and failures for each selected flag/team pair.
+Every confirmed update writes a `bulk-permissions-export-<timestamp>.xlsx` report in the current directory. The report distinguishes changed permissions, idempotent no-ops, and failures for each selected flag/team pair. When team-tag syncing is enabled, a separate **Tag Sync** sheet records its per-flag results and errors without changing the permission outcomes.
 
 ---
 

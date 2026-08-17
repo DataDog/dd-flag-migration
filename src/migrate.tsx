@@ -6,16 +6,14 @@ import {
 	type ProviderValue,
 	parseMigrateArgs,
 } from './args.js';
-import { confirm } from './components/Confirm.js';
 import { HEADER_SUBTITLES, Header } from './components/Header.js';
-import { input } from './components/Input.js';
 import { PromptCancelledError, renderStatic } from './components/mount.js';
 import { PermissionsError } from './components/PermissionsError.js';
 import { select } from './components/Select.js';
 import { fetchCurrentUserPermissions } from './datadog/api.js';
-import { getDatadogSite, saveDatadogSite } from './helpers/config.js';
 import { requireEnvVars } from './helpers/env.js';
 import { withConsoleLogToStderr } from './helpers/output.js';
+import { promptForDatadogSite } from './helpers/prompt-for-datadog-site.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -67,41 +65,6 @@ async function selectProvider(): Promise<ProviderValue> {
 			short: p.name,
 		})),
 	});
-}
-
-async function promptForDatadogSite(
-	datadogSiteArg: string | undefined,
-): Promise<string> {
-	if (datadogSiteArg !== undefined) {
-		console.log(
-			chalk.gray(`  Using Datadog site: ${chalk.cyan(datadogSiteArg)}\n`),
-		);
-		return datadogSiteArg;
-	}
-
-	const stored = getDatadogSite();
-
-	if (stored) {
-		const useStored = await confirm({
-			message: `Use your saved Datadog site (${stored})?`,
-			default: true,
-		});
-		if (useStored) return stored;
-	}
-
-	console.log(
-		chalk.gray('  (e.g. "datadoghq.com", "datadoghq.eu", "us5.datadoghq.com")'),
-	);
-	const site = await input({
-		message: 'Which Datadog site does your org use?',
-		default: 'datadoghq.com',
-		validate: (v) => (v.trim().length > 0 ? true : 'Site cannot be empty'),
-	});
-
-	const trimmed = site.trim();
-	saveDatadogSite(trimmed);
-	console.log(chalk.gray('  Site saved for future sessions.\n'));
-	return trimmed;
 }
 
 // ─── Permission Check ─────────────────────────────────────────────────────────

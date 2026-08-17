@@ -82,6 +82,16 @@ describe('bulk permission spreadsheet export', () => {
 					},
 				],
 				'add',
+				[
+					{
+						flagId: 'flag-id',
+						flagKey: 'flag-key',
+						targetedTags: ['team:team-handle'],
+						operation: 'add',
+						status: 'Failed',
+						error: 'tag write failed',
+					},
+				],
 				outputDirectory,
 			);
 
@@ -93,6 +103,11 @@ describe('bulk permission spreadsheet export', () => {
 			expect(worksheet?.getCell('A5').value).toBe('flag-key');
 			expect(worksheet?.getCell('C5').value).toBe('project:health-100');
 			expect(worksheet?.getCell('H5').value).toBe('Added');
+			const tagSyncWorksheet = workbook.getWorksheet('Tag Sync');
+			expect(tagSyncWorksheet?.getCell('A5').value).toBe('flag-key');
+			expect(tagSyncWorksheet?.getCell('C5').value).toBe('team:team-handle');
+			expect(tagSyncWorksheet?.getCell('E5').value).toBe('Failed');
+			expect(tagSyncWorksheet?.getCell('F5').value).toBe('tag write failed');
 		} finally {
 			consoleSpy.mockRestore();
 			fs.rmSync(outputDirectory, { recursive: true, force: true });

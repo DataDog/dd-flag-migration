@@ -18,3 +18,14 @@ export interface PermissionChangeResult {
 	status: PermissionChangeStatus;
 	error?: string;
 }
+
+export type TagSyncStatus = 'Updated' | 'Already synced' | 'Failed';
+
+export interface TagSyncResult {
+	flagId: string;
+	flagKey: string;
+	targetedTags: string[];
+	operation: PermissionOperation;
+	status: TagSyncStatus;
+	error?: string;
+}

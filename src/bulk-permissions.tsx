@@ -4,12 +4,12 @@ import { syncFlagTeamTags } from './bulk-permissions/team-tags.js';
 import type {
 	PermissionChangeResult,
 	PermissionOperation,
+	TagSyncResult,
 } from './bulk-permissions/types.js';
 import { exportBulkPermissionChangesToXlsx } from './bulk-permissions/xlsx.js';
 import { confirm } from './components/Confirm.js';
 import { filterableCheckbox } from './components/FilterableCheckbox.js';
 import { HEADER_SUBTITLES, Header } from './components/Header.js';
-import { input } from './components/Input.js';
 import { PromptCancelledError, renderStatic } from './components/mount.js';
 import { PermissionsError } from './components/PermissionsError.js';
 import { select } from './components/Select.js';
@@ -24,9 +24,9 @@ import {
 	updateRestrictionPolicyTeams,
 } from './datadog/api.js';
 import type { DatadogFlagEntry, DatadogTeam } from './datadog/types.js';
-import { getDatadogSite, saveDatadogSite } from './helpers/config.js';
 import { requireEnvVars } from './helpers/env.js';
 import { formatAxiosError } from './helpers/format-axios-error.js';
+import { promptForDatadogSite } from './helpers/prompt-for-datadog-site.js';
 
 const REQUIRED_PERMISSIONS = [
 	'feature_flag_config_read',
@@ -38,31 +38,6 @@ const OPERATIONS = [
 	{ name: 'Add teams to flags', value: 'add' },
 	{ name: 'Remove teams from flags', value: 'remove' },
 ] as const;
-
-async function promptForDatadogSite(): Promise<string> {
-	const stored = getDatadogSite();
-	if (stored) {
-		const useStored = await confirm({
-			message: `Use your saved Datadog site (${stored})?`,
-			default: true,
-		});
-		if (useStored) return stored;
-	}
-
-	console.log(
-		chalk.gray('  (e.g. "datadoghq.com", "datadoghq.eu", "us5.datadoghq.com")'),
-	);
-	const site = await input({
-		message: 'Which Datadog site does your org use?',
-		default: 'datadoghq.com',
-		validate: (value) =>
-			value.trim().length > 0 ? true : 'Site cannot be empty',
-	});
-	const trimmed = site.trim();
-	saveDatadogSite(trimmed);
-	console.log(chalk.gray('  Site saved for future sessions.\n'));
-	return trimmed;
-}
 
 async function checkRequiredPermissions(
 	apiKey: string,
@@ -247,6 +222,8 @@ async function main(): Promise<void> {
 	}
 
 	const results: PermissionChangeResult[] = [];
+	const tagSyncResults: TagSyncResult[] = [];
+	const targetedTeamTags = selectedTeams.map((team) => `team:${team.handle}`);
 	let tagUpdatedFlagCount = 0;
 	const progress = spinner().start();
 	for (let index = 0; index < selectedFlags.length; index++) {
@@ -263,24 +240,46 @@ async function main(): Promise<void> {
 				orgId,
 				site,
 			);
-			if (syncTeamTags) {
-				const tagUpdate = await syncFlagTeamTags(
-					apiKey,
-					appKey,
-					flag.id,
-					flag.tags ?? [],
-					selectedTeams,
-					operation,
-					site,
-				);
-				flag.tags = tagUpdate.tags;
-				if (tagUpdate.changedTeamIds.length > 0) tagUpdatedFlagCount++;
-			}
 			const changedIds = new Set(update.changedTeamIds);
-			for (const team of selectedTeams) {
-				results.push(
-					resultForTeam(flag, team, operation, changedIds.has(team.id)),
-				);
+			const permissionResults = selectedTeams.map((team) =>
+				resultForTeam(flag, team, operation, changedIds.has(team.id)),
+			);
+			results.push(...permissionResults);
+
+			if (syncTeamTags) {
+				try {
+					const tagUpdate = await syncFlagTeamTags(
+						apiKey,
+						appKey,
+						flag.id,
+						flag.tags ?? [],
+						selectedTeams,
+						operation,
+						site,
+					);
+					flag.tags = tagUpdate.tags;
+					for (const result of permissionResults) {
+						result.flagTags = tagUpdate.tags;
+					}
+					const changed = tagUpdate.changedTeamIds.length > 0;
+					if (changed) tagUpdatedFlagCount++;
+					tagSyncResults.push({
+						flagId: flag.id,
+						flagKey: flag.key,
+						targetedTags: targetedTeamTags,
+						operation,
+						status: changed ? 'Updated' : 'Already synced',
+					});
+				} catch (error) {
+					tagSyncResults.push({
+						flagId: flag.id,
+						flagKey: flag.key,
+						targetedTags: targetedTeamTags,
+						operation,
+						status: 'Failed',
+						error: formatAxiosError(error),
+					});
+				}
 			}
 		} catch (error) {
 			const failedUpdate =
@@ -306,21 +305,30 @@ async function main(): Promise<void> {
 		(result) =>
 			result.status === 'Already present' || result.status === 'Not present',
 	).length;
-	const failedCount = results.filter(
+	const permissionFailedCount = results.filter(
 		(result) => result.status === 'Failed',
 	).length;
-	if (failedCount > 0) {
-		progress.warn(
-			`Permission update finished with ${failedCount} failed flag/team result(s)`,
-		);
+	const tagFailedCount = tagSyncResults.filter(
+		(result) => result.status === 'Failed',
+	).length;
+	if (permissionFailedCount > 0 || tagFailedCount > 0) {
+		const failures = [
+			...(permissionFailedCount > 0
+				? [`${permissionFailedCount} failed permission result(s)`]
+				: []),
+			...(tagFailedCount > 0
+				? [`${tagFailedCount} failed team-tag sync(s)`]
+				: []),
+		];
+		progress.warn(`Bulk update finished with ${failures.join(' and ')}`);
 	} else {
 		progress.succeed(
 			`Permission update complete: ${changedCount} changed, ${unchangedCount} unchanged${syncTeamTags ? `; team tags synced on ${tagUpdatedFlagCount} flag(s)` : ''}`,
 		);
 	}
 
-	await exportBulkPermissionChangesToXlsx(results, operation);
-	if (failedCount > 0) process.exitCode = 1;
+	await exportBulkPermissionChangesToXlsx(results, operation, tagSyncResults);
+	if (permissionFailedCount > 0 || tagFailedCount > 0) process.exitCode = 1;
 }
 
 main().catch((error: unknown) => {

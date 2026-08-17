@@ -7,7 +7,11 @@ import {
 	addSheetHeader,
 	colorRow,
 } from '../helpers/xlsx-helpers.js';
-import type { PermissionChangeResult, PermissionOperation } from './types.js';
+import type {
+	PermissionChangeResult,
+	PermissionOperation,
+	TagSyncResult,
+} from './types.js';
 
 const STATUS_COLOR: Record<PermissionChangeResult['status'], string> = {
 	Added: ARGB.created,
@@ -17,9 +21,63 @@ const STATUS_COLOR: Record<PermissionChangeResult['status'], string> = {
 	Failed: ARGB.failed,
 };
 
+const TAG_STATUS_COLOR: Record<TagSyncResult['status'], string> = {
+	Updated: ARGB.created,
+	'Already synced': ARGB.skipped,
+	Failed: ARGB.failed,
+};
+
+function addTagSyncSheet(
+	workbook: ExcelJS.Workbook,
+	results: TagSyncResult[],
+	operationLabel: string,
+): void {
+	if (results.length === 0) return;
+
+	const ws = workbook.addWorksheet('Tag Sync');
+	const headers = [
+		'Flag Key',
+		'Flag ID',
+		'Targeted Team Tags',
+		'Operation',
+		'Result',
+		'Error',
+	];
+	ws.columns = [
+		{ width: 32 },
+		{ width: 38 },
+		{ width: 48 },
+		{ width: 12 },
+		{ width: 18 },
+		{ width: 60 },
+	];
+	addSheetHeader(
+		ws,
+		headers.length,
+		'Team Tag Sync Report',
+		`${operationLabel} operation completed on ${new Date().toLocaleString('en-US')}. These results are independent from the permission changes on the Permission Changes sheet.`,
+	);
+	addHeaderRow(ws, headers);
+
+	for (const result of results
+		.slice()
+		.sort((a, b) => a.flagKey.localeCompare(b.flagKey))) {
+		const row = ws.addRow([
+			result.flagKey,
+			result.flagId,
+			result.targetedTags.join(', '),
+			result.operation === 'add' ? 'Add' : 'Remove',
+			result.status,
+			result.error ?? '',
+		]);
+		colorRow(row, TAG_STATUS_COLOR[result.status]);
+	}
+}
+
 export async function exportBulkPermissionChangesToXlsx(
 	results: PermissionChangeResult[],
 	operation: PermissionOperation,
+	tagSyncResults: TagSyncResult[] = [],
 	outputDirectory = process.cwd(),
 ): Promise<string> {
 	const workbook = new ExcelJS.Workbook();
@@ -79,6 +137,7 @@ export async function exportBulkPermissionChangesToXlsx(
 		]);
 		colorRow(row, STATUS_COLOR[result.status]);
 	}
+	addTagSyncSheet(workbook, tagSyncResults, operationLabel);
 
 	const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
 	const filename = `bulk-permissions-export-${timestamp}.xlsx`;
@@ -90,7 +149,7 @@ export async function exportBulkPermissionChangesToXlsx(
 	console.log(`  ${chalk.cyan(filepath)}`);
 	console.log(
 		chalk.gray(
-			`  ${results.length} flag/team result${results.length === 1 ? '' : 's'} exported`,
+			`  ${results.length} flag/team result${results.length === 1 ? '' : 's'} exported${tagSyncResults.length > 0 ? `; ${tagSyncResults.length} tag-sync result${tagSyncResults.length === 1 ? '' : 's'} exported` : ''}`,
 		),
 	);
 	console.log();
