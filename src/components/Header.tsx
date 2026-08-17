@@ -81,4 +81,5 @@ export const HEADER_SUBTITLES = {
 	eppo: '              Eppo → Datadog              ',
 	launchdarkly: '          LaunchDarkly → Datadog          ',
 	evaluate: '           Evaluate Migration             ',
+	bulkPermissions: '        Bulk Permission Management        ',
 } as const;

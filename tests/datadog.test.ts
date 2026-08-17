@@ -292,6 +292,7 @@ describe('fetchDatadogFlags', () => {
 					attributes: {
 						key: 'flag-a',
 						name: 'Flag A',
+						tags: ['project:health-100'],
 						migration_metadata: {
 							project_key: 'proj-1',
 							flag_key: 'flag-a',
@@ -311,6 +312,7 @@ describe('fetchDatadogFlags', () => {
 			{
 				id: 'uuid-1',
 				key: 'flag-a',
+				tags: ['project:health-100'],
 				migration_metadata: { project_key: 'proj-1', flag_key: 'flag-a' },
 			},
 			{
@@ -1645,6 +1647,8 @@ describe('fetchCurrentUserPermissions', () => {
 		feature_flag_config_read: '/api/v2/feature-flags',
 		feature_flag_environment_config_read: '/api/v2/feature-flags/environments',
 		teams_read: '/api/v2/team',
+		restriction_policies_read:
+			'/api/v2/restriction_policy/feature-flag:permission-probe',
 	} as const;
 
 	beforeEach(() => {
@@ -1661,12 +1665,14 @@ describe('fetchCurrentUserPermissions', () => {
 			.onGet(`${BASE}${PROBE_URLS.feature_flag_environment_config_read}`)
 			.reply(200);
 		mock.onGet(`${BASE}${PROBE_URLS.teams_read}`).reply(403);
+		mock.onGet(`${BASE}${PROBE_URLS.restriction_policies_read}`).reply(200);
 
 		const result = await fetchCurrentUserPermissions(API_KEY, APP_KEY, SITE);
 		expect(result).toEqual(
 			expect.arrayContaining([
 				'feature_flag_config_read',
 				'feature_flag_environment_config_read',
+				'restriction_policies_read',
 			]),
 		);
 		expect(result).not.toContain('teams_read');
@@ -1678,6 +1684,7 @@ describe('fetchCurrentUserPermissions', () => {
 			.onGet(`${BASE}${PROBE_URLS.feature_flag_environment_config_read}`)
 			.reply(404);
 		mock.onGet(`${BASE}${PROBE_URLS.teams_read}`).reply(404);
+		mock.onGet(`${BASE}${PROBE_URLS.restriction_policies_read}`).reply(404);
 
 		const result = await fetchCurrentUserPermissions(API_KEY, APP_KEY, SITE);
 		expect(result).toEqual(
@@ -1685,6 +1692,7 @@ describe('fetchCurrentUserPermissions', () => {
 				'feature_flag_config_read',
 				'feature_flag_environment_config_read',
 				'teams_read',
+				'restriction_policies_read',
 			]),
 		);
 	});
@@ -1695,6 +1703,7 @@ describe('fetchCurrentUserPermissions', () => {
 			.onGet(`${BASE}${PROBE_URLS.feature_flag_environment_config_read}`)
 			.reply(403);
 		mock.onGet(`${BASE}${PROBE_URLS.teams_read}`).reply(403);
+		mock.onGet(`${BASE}${PROBE_URLS.restriction_policies_read}`).reply(403);
 
 		const result = await fetchCurrentUserPermissions(API_KEY, APP_KEY, SITE);
 		expect(result).toEqual([]);
@@ -1708,6 +1717,7 @@ describe('fetchCurrentUserPermissions', () => {
 			.onGet(`${euBase}${PROBE_URLS.feature_flag_environment_config_read}`)
 			.reply(403);
 		mock.onGet(`${euBase}${PROBE_URLS.teams_read}`).reply(403);
+		mock.onGet(`${euBase}${PROBE_URLS.restriction_policies_read}`).reply(403);
 
 		const result = await fetchCurrentUserPermissions(API_KEY, APP_KEY, eu);
 		expect(result).toEqual(['feature_flag_config_read']);
@@ -1726,9 +1736,12 @@ describe('fetchCurrentUserPermissions', () => {
 			.onGet(`${BASE}${PROBE_URLS.feature_flag_environment_config_read}`)
 			.reply(captureAndAllow);
 		mock.onGet(`${BASE}${PROBE_URLS.teams_read}`).reply(captureAndAllow);
+		mock
+			.onGet(`${BASE}${PROBE_URLS.restriction_policies_read}`)
+			.reply(captureAndAllow);
 
 		await fetchCurrentUserPermissions(API_KEY, APP_KEY, SITE);
-		expect(headers).toHaveLength(3);
+		expect(headers).toHaveLength(4);
 		for (const h of headers) {
 			expect(h['dd-api-key']).toBe(API_KEY);
 			expect(h['dd-application-key']).toBe(APP_KEY);

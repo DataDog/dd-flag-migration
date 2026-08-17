@@ -58,6 +58,16 @@ export function HelpScreen(): JSX.Element {
 				</Text>
 			),
 		},
+		{
+			id: 'bulk-permissions-command',
+			render: () => (
+				<Text>
+					{'  '}
+					<Text color="cyan">bulk-permissions</Text>
+					{'   Add or remove team permissions on migrated flags'}
+				</Text>
+			),
+		},
 		{ id: 'space-commands', render: () => <Text> </Text> },
 		{
 			id: 'migrate-title',
@@ -298,6 +308,15 @@ export function HelpScreen(): JSX.Element {
 				<Text>
 					{'  '}
 					<Text color="gray">$</Text> dd-flag-migration evaluate
+				</Text>
+			),
+		},
+		{
+			id: 'example-bulk-permissions',
+			render: () => (
+				<Text>
+					{'  '}
+					<Text color="gray">$</Text> dd-flag-migration bulk-permissions
 				</Text>
 			),
 		},

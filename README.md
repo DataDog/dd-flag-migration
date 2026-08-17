@@ -22,6 +22,9 @@ npx @datadog/dd-flag-migration migrate
 
 # evaluate migrated flags
 npx @datadog/dd-flag-migration evaluate
+
+# manage team permissions after migration
+npx @datadog/dd-flag-migration bulk-permissions
 ```
 
 ### Contributing / running from source
@@ -32,7 +35,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Credentials you'll need
 
-Credentials are read from environment variables. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running `migrate` or `evaluate`. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1.
+Credentials are read from environment variables. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running `migrate`, `evaluate`, or `bulk-permissions`. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1.
 
 ### Required for `migrate`
 
@@ -55,6 +58,13 @@ Your LaunchDarkly access token needs **Reader** role permissions (or a custom ro
 | `EPPO_SDK_KEY` | migration was from Eppo | Eppo → SDK Keys (server SDK key, one per environment) |
 | `LAUNCHDARKLY_API_KEY` | migration was from LaunchDarkly *(preferred)* | LaunchDarkly → Account settings → Authorization → Access tokens |
 
+### Required for `bulk-permissions`
+
+| Variable | Required when | Where to find it |
+|---|---|---|
+| `DD_API_KEY` | always | Datadog → Organization Settings → API Keys |
+| `DD_APP_KEY` | always | Datadog → Organization Settings → Application Keys |
+
 ### Datadog Application Key permissions
 
 Your Datadog Application Key must have the following scopes enabled:
@@ -66,8 +76,10 @@ Your Datadog Application Key must have the following scopes enabled:
 | `feature_flag_config_write` | Edit Feature Flag Configurations |
 | `feature_flag_environment_config_read` | Ability to view Feature Flag Environment settings |
 | `teams_read` | View Teams *(required for team-based access controls)* |
+| `restriction_policies_read` | View restriction policies *(required by `bulk-permissions`)* |
+| `restriction_policies_write` | Edit restriction policies *(required by `bulk-permissions`)* |
 
-To set these permissions, go to **Organization Settings → Application Keys**, select your key, and enable the scopes listed above. The feature flag scopes are under the **Feature Flags** section; `teams_read` is under **Teams**.
+To set these permissions, go to **Organization Settings → Application Keys**, select your key, and enable the scopes listed above. The feature flag scopes are under the **Feature Flags** section; `teams_read` is under **Teams**. The restriction-policy scopes are only required when using `bulk-permissions`.
 
 ### Examples
 
@@ -248,6 +260,30 @@ npx @datadog/dd-flag-migration migrate --dry-run
 ```
 
 This writes the full list of API requests that would be sent to a `dry-run-<timestamp>.json` file in the current directory.
+
+---
+
+## Bulk Permission Management
+
+After flags have been migrated, add or remove explicit Datadog team permissions with:
+
+```bash
+npx @datadog/dd-flag-migration bulk-permissions
+
+# When running from this repository:
+yarn bulk-permissions
+```
+
+The interactive flow lets you:
+
+1. Choose **Add teams to flags** or **Remove teams from flags**.
+2. Select migrated flags. Type to filter by flag key or tag (for example, `project:health-100`). Whitespace-separated searches use union semantics, so a flag remains visible when either its key or one of its tags matches.
+3. Select one or more Datadog teams.
+4. Choose whether to sync matching `team:<handle>` tags.
+
+Additions grant the selected teams the explicit `editor` relation. Removals delete the selected teams from every explicit relation while preserving unrelated principals and bindings. When team tag syncing is enabled, additions add matching team tags and removals remove them while preserving unrelated tags. Team tags are metadata for migration visibility and do not control permission access; explicit Datadog permissions remain the source of access control after migration. Repeating either operation is an idempotent no-op when the requested state already exists.
+
+Every confirmed update writes a `bulk-permissions-export-<timestamp>.xlsx` report in the current directory. The report distinguishes changed permissions, idempotent no-ops, and failures for each selected flag/team pair. When team-tag syncing is enabled, a separate **Tag Sync** sheet records its per-flag results and errors without changing the permission outcomes.
 
 ---
 

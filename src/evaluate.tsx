@@ -40,12 +40,9 @@ import {
 	SyntheticSource,
 	type TestCaseSource,
 } from './evaluate/test-case-sources.js';
-import {
-	CONFIG_DIR,
-	getDatadogSite,
-	saveDatadogSite,
-} from './helpers/config.js';
+import { CONFIG_DIR } from './helpers/config.js';
 import { requireEnvVars } from './helpers/env.js';
+import { promptForDatadogSite } from './helpers/prompt-for-datadog-site.js';
 import { fetchEnvironmentSdkKey, findSdkKeyOwner } from './launchdarkly/api.js';
 import {
 	evaluateLDFlag,
@@ -298,43 +295,6 @@ async function pickCsvFile(csvPathArg: string | undefined): Promise<string> {
 		},
 	});
 	return path.resolve(entered.trim());
-}
-
-// ─── Datadog Site Prompt ─────────────────────────────────────────────────────
-
-async function promptForDatadogSite(
-	datadogSiteArg: string | undefined,
-): Promise<string> {
-	if (datadogSiteArg !== undefined) {
-		console.log(
-			chalk.gray(`  Using Datadog site: ${chalk.cyan(datadogSiteArg)}\n`),
-		);
-		return datadogSiteArg;
-	}
-
-	const stored = getDatadogSite();
-
-	if (stored) {
-		const useStored = await confirm({
-			message: `Use your saved Datadog site (${stored})?`,
-			default: true,
-		});
-		if (useStored) return stored;
-	}
-
-	console.log(
-		chalk.gray('  (e.g. "datadoghq.com", "datadoghq.eu", "us5.datadoghq.com")'),
-	);
-	const site = await input({
-		message: 'Which Datadog site does your org use?',
-		default: 'datadoghq.com',
-		validate: (v) => (v.trim().length > 0 ? true : 'Site cannot be empty'),
-	});
-
-	const trimmed = site.trim();
-	saveDatadogSite(trimmed);
-	console.log(chalk.gray('  Site saved for future sessions.\n'));
-	return trimmed;
 }
 
 // ─── Datadog Environment Selection ───────────────────────────────────────────
