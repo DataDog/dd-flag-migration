@@ -281,7 +281,7 @@ The interactive flow lets you:
 3. Select one or more Datadog teams.
 4. Choose whether to sync matching `team:<handle>` tags.
 
-Additions grant the selected teams the explicit `editor` relation. Removals delete the selected teams from every explicit relation while preserving unrelated principals and bindings. When team tag syncing is enabled, additions add matching team tags and removals remove them while preserving unrelated tags. Repeating either operation is an idempotent no-op when the requested state already exists.
+Additions grant the selected teams the explicit `editor` relation. Removals delete the selected teams from every explicit relation while preserving unrelated principals and bindings. When team tag syncing is enabled, additions add matching team tags and removals remove them while preserving unrelated tags. Team tags are metadata for migration visibility and do not control permission access; explicit Datadog permissions remain the source of access control after migration. Repeating either operation is an idempotent no-op when the requested state already exists.
 
 Every confirmed update writes a `bulk-permissions-export-<timestamp>.xlsx` report in the current directory. The report distinguishes changed permissions, idempotent no-ops, and failures for each selected flag/team pair. When team-tag syncing is enabled, a separate **Tag Sync** sheet records its per-flag results and errors without changing the permission outcomes.
 
