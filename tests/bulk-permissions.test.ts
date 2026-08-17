@@ -14,8 +14,8 @@ import ExcelJS from 'exceljs';
 import {
 	planTeamTagUpdate,
 	syncFlagTeamTags,
-} from '../src/advanced-permissions/team-tags.js';
-import { exportAdvancedPermissionChangesToXlsx } from '../src/advanced-permissions/xlsx.js';
+} from '../src/bulk-permissions/team-tags.js';
+import { exportBulkPermissionChangesToXlsx } from '../src/bulk-permissions/xlsx.js';
 import { choiceMatchesTextFilter } from '../src/components/FilterableCheckbox.js';
 import {
 	buildRestrictionPolicyBindingsForTeamRemoval,
@@ -29,7 +29,7 @@ const APP_KEY = 'test-app-key';
 const SITE = 'test.invalid';
 const BASE = `https://api.${SITE}`;
 
-describe('advanced permission filtering', () => {
+describe('bulk permission filtering', () => {
 	const choice = {
 		name: 'checkout-redesign',
 		searchTerms: [
@@ -61,14 +61,14 @@ describe('advanced permission filtering', () => {
 	});
 });
 
-describe('advanced permission spreadsheet export', () => {
+describe('bulk permission spreadsheet export', () => {
 	it('writes flag/team outcomes to an xlsx workbook', async () => {
 		const outputDirectory = fs.mkdtempSync(
-			path.join(os.tmpdir(), 'advanced-permissions-'),
+			path.join(os.tmpdir(), 'bulk-permissions-'),
 		);
 		const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
 		try {
-			const filepath = await exportAdvancedPermissionChangesToXlsx(
+			const filepath = await exportBulkPermissionChangesToXlsx(
 				[
 					{
 						flagId: 'flag-id',
@@ -85,7 +85,7 @@ describe('advanced permission spreadsheet export', () => {
 				outputDirectory,
 			);
 
-			expect(filepath).toMatch(/advanced-permissions-export-.*\.xlsx$/);
+			expect(filepath).toMatch(/bulk-permissions-export-.*\.xlsx$/);
 			expect(fs.existsSync(filepath)).toBe(true);
 			const workbook = new ExcelJS.Workbook();
 			await workbook.xlsx.readFile(filepath);

@@ -30,9 +30,9 @@ if (subcommand === '--version' || subcommand === '-V') {
 } else if (subcommand === 'evaluate') {
 	process.argv.splice(2, 1);
 	await import('./evaluate.js');
-} else if (subcommand === 'advanced-permissions') {
+} else if (subcommand === 'bulk-permissions') {
 	process.argv.splice(2, 1);
-	await import('./advanced-permissions.js');
+	await import('./bulk-permissions.js');
 } else {
 	console.error(chalk.red(`\nUnknown command: ${subcommand}`));
 	console.error(chalk.gray('Run dd-flag-migration --help for usage.\n'));

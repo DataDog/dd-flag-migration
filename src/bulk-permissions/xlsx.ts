@@ -17,7 +17,7 @@ const STATUS_COLOR: Record<PermissionChangeResult['status'], string> = {
 	Failed: ARGB.failed,
 };
 
-export async function exportAdvancedPermissionChangesToXlsx(
+export async function exportBulkPermissionChangesToXlsx(
 	results: PermissionChangeResult[],
 	operation: PermissionOperation,
 	outputDirectory = process.cwd(),
@@ -52,7 +52,7 @@ export async function exportAdvancedPermissionChangesToXlsx(
 	addSheetHeader(
 		ws,
 		headers.length,
-		'Advanced Feature Flag Permission Report',
+		'Bulk Feature Flag Permission Report',
 		`${operationLabel} operation completed on ${new Date().toLocaleString('en-US')}. Green rows changed an explicit team permission, yellow rows were idempotent no-ops, and red rows failed.`,
 	);
 	addHeaderRow(ws, headers);
@@ -81,7 +81,7 @@ export async function exportAdvancedPermissionChangesToXlsx(
 	}
 
 	const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-	const filename = `advanced-permissions-export-${timestamp}.xlsx`;
+	const filename = `bulk-permissions-export-${timestamp}.xlsx`;
 	const filepath = path.join(outputDirectory, filename);
 	await workbook.xlsx.writeFile(filepath);
 

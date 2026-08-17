@@ -59,11 +59,11 @@ export function HelpScreen(): JSX.Element {
 			),
 		},
 		{
-			id: 'advanced-permissions-command',
+			id: 'bulk-permissions-command',
 			render: () => (
 				<Text>
 					{'  '}
-					<Text color="cyan">advanced-permissions</Text>
+					<Text color="cyan">bulk-permissions</Text>
 					{'   Add or remove team permissions on migrated flags'}
 				</Text>
 			),
@@ -312,11 +312,11 @@ export function HelpScreen(): JSX.Element {
 			),
 		},
 		{
-			id: 'example-advanced-permissions',
+			id: 'example-bulk-permissions',
 			render: () => (
 				<Text>
 					{'  '}
-					<Text color="gray">$</Text> dd-flag-migration advanced-permissions
+					<Text color="gray">$</Text> dd-flag-migration bulk-permissions
 				</Text>
 			),
 		},

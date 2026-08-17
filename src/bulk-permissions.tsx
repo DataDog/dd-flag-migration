@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import chalk from 'chalk';
-import { syncFlagTeamTags } from './advanced-permissions/team-tags.js';
+import { syncFlagTeamTags } from './bulk-permissions/team-tags.js';
 import type {
 	PermissionChangeResult,
 	PermissionOperation,
-} from './advanced-permissions/types.js';
-import { exportAdvancedPermissionChangesToXlsx } from './advanced-permissions/xlsx.js';
+} from './bulk-permissions/types.js';
+import { exportBulkPermissionChangesToXlsx } from './bulk-permissions/xlsx.js';
 import { confirm } from './components/Confirm.js';
 import { filterableCheckbox } from './components/FilterableCheckbox.js';
 import { HEADER_SUBTITLES, Header } from './components/Header.js';
@@ -171,9 +171,7 @@ async function main(): Promise<void> {
 	const appKey = env.DD_APP_KEY;
 
 	process.stdout.write('\x1Bc');
-	await renderStatic(
-		<Header subtitle={HEADER_SUBTITLES.advancedPermissions} />,
-	);
+	await renderStatic(<Header subtitle={HEADER_SUBTITLES.bulkPermissions} />);
 	const site = await promptForDatadogSite();
 	await checkRequiredPermissions(apiKey, appKey, site);
 
@@ -321,7 +319,7 @@ async function main(): Promise<void> {
 		);
 	}
 
-	await exportAdvancedPermissionChangesToXlsx(results, operation);
+	await exportBulkPermissionChangesToXlsx(results, operation);
 	if (failedCount > 0) process.exitCode = 1;
 }
 

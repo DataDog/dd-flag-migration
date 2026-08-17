@@ -24,7 +24,7 @@ npx @datadog/dd-flag-migration migrate
 npx @datadog/dd-flag-migration evaluate
 
 # manage team permissions after migration
-npx @datadog/dd-flag-migration advanced-permissions
+npx @datadog/dd-flag-migration bulk-permissions
 ```
 
 ### Contributing / running from source
@@ -35,7 +35,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Credentials you'll need
 
-Credentials are read from environment variables. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running `migrate`, `evaluate`, or `advanced-permissions`. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1.
+Credentials are read from environment variables. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running `migrate`, `evaluate`, or `bulk-permissions`. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1.
 
 ### Required for `migrate`
 
@@ -58,7 +58,7 @@ Your LaunchDarkly access token needs **Reader** role permissions (or a custom ro
 | `EPPO_SDK_KEY` | migration was from Eppo | Eppo → SDK Keys (server SDK key, one per environment) |
 | `LAUNCHDARKLY_API_KEY` | migration was from LaunchDarkly *(preferred)* | LaunchDarkly → Account settings → Authorization → Access tokens |
 
-### Required for `advanced-permissions`
+### Required for `bulk-permissions`
 
 | Variable | Required when | Where to find it |
 |---|---|---|
@@ -76,10 +76,10 @@ Your Datadog Application Key must have the following scopes enabled:
 | `feature_flag_config_write` | Edit Feature Flag Configurations |
 | `feature_flag_environment_config_read` | Ability to view Feature Flag Environment settings |
 | `teams_read` | View Teams *(required for team-based access controls)* |
-| `restriction_policies_read` | View restriction policies *(required by `advanced-permissions`)* |
-| `restriction_policies_write` | Edit restriction policies *(required by `advanced-permissions`)* |
+| `restriction_policies_read` | View restriction policies *(required by `bulk-permissions`)* |
+| `restriction_policies_write` | Edit restriction policies *(required by `bulk-permissions`)* |
 
-To set these permissions, go to **Organization Settings → Application Keys**, select your key, and enable the scopes listed above. The feature flag scopes are under the **Feature Flags** section; `teams_read` is under **Teams**. The restriction-policy scopes are only required when using `advanced-permissions`.
+To set these permissions, go to **Organization Settings → Application Keys**, select your key, and enable the scopes listed above. The feature flag scopes are under the **Feature Flags** section; `teams_read` is under **Teams**. The restriction-policy scopes are only required when using `bulk-permissions`.
 
 ### Examples
 
@@ -263,15 +263,15 @@ This writes the full list of API requests that would be sent to a `dry-run-<time
 
 ---
 
-## Manage advanced permissions
+## Bulk Permission Management
 
 After flags have been migrated, add or remove explicit Datadog team permissions with:
 
 ```bash
-npx @datadog/dd-flag-migration advanced-permissions
+npx @datadog/dd-flag-migration bulk-permissions
 
 # When running from this repository:
-yarn advanced-permissions
+yarn bulk-permissions
 ```
 
 The interactive flow lets you:
@@ -283,7 +283,7 @@ The interactive flow lets you:
 
 Additions grant the selected teams the explicit `editor` relation. Removals delete the selected teams from every explicit relation while preserving unrelated principals and bindings. When team tag syncing is enabled, additions add matching team tags and removals remove them while preserving unrelated tags. Repeating either operation is an idempotent no-op when the requested state already exists.
 
-Every confirmed update writes an `advanced-permissions-export-<timestamp>.xlsx` report in the current directory. The report distinguishes changed permissions, idempotent no-ops, and failures for each selected flag/team pair.
+Every confirmed update writes a `bulk-permissions-export-<timestamp>.xlsx` report in the current directory. The report distinguishes changed permissions, idempotent no-ops, and failures for each selected flag/team pair.
 
 ---
 
