@@ -47,6 +47,7 @@ import type {
 	DatadogFlagEntry,
 	DatadogTeam,
 	DDRestrictionBinding,
+	EnvironmentMapping,
 } from '../datadog/types.js';
 import { CONFIG_DIR } from '../helpers/config.js';
 import { formatAxiosError } from '../helpers/format-axios-error.js';
@@ -572,14 +573,28 @@ async function selectLDEnvironments(
 async function linkEnvironments(
 	ldEnvs: LDEnvironment[],
 	ddEnvs: DatadogEnvironment[],
-	previousMapping: Map<string, DatadogEnvironment>,
-): Promise<Map<string, DatadogEnvironment> | null> {
-	const mapping = new Map<string, DatadogEnvironment>(previousMapping);
+	previousMapping: EnvironmentMapping<string>,
+): Promise<EnvironmentMapping<string> | null> {
+	const selectedKeys = new Set(ldEnvs.map((env) => env.key));
+	const mapping = new Map(
+		[...previousMapping].filter(([key]) => selectedKeys.has(key)),
+	);
 	let i = 0;
+	let requiresSelection = false;
 
 	while (i < ldEnvs.length) {
 		const ldEnv = ldEnvs[i];
-		const prevChoice = mapping.get(ldEnv.key);
+		const previousIds = new Set(
+			(mapping.get(ldEnv.key) ?? []).map((env) => env.id),
+		);
+		const assignedElsewhere = new Set(
+			[...mapping]
+				.filter(([key]) => key !== ldEnv.key)
+				.flatMap(([, environments]) => environments.map((env) => env.id)),
+		);
+		const availableEnvironments = ddEnvs.filter(
+			(env) => !assignedElsewhere.has(env.id),
+		);
 
 		clearScreen();
 		await printHeader();
@@ -593,26 +608,31 @@ async function linkEnvironments(
 				(ldEnv.name !== ldEnv.key ? chalk.gray(` (${ldEnv.key})`) : ''),
 		);
 		console.log();
+		if (requiresSelection) {
+			console.log(
+				chalk.yellow(
+					'  Please select at least one matching Datadog environment.\n',
+				),
+			);
+		}
 
-		type LinkChoice = DatadogEnvironment | null;
-
-		const result = await select<LinkChoice>({
-			message: 'Select the matching Datadog environment:',
-			choices: [
-				{ name: chalk.dim('← Back'), value: null, short: 'Back' },
-				...ddEnvs.map((env) => ({
-					name: ddEnvLabel(env),
-					value: env as LinkChoice,
-					short: env.name,
-				})),
-			],
-			default: prevChoice,
+		const result = await filterableCheckbox<DatadogEnvironment>({
+			message: 'Select matching Datadog environments:',
+			choices: availableEnvironments.map((env) => ({
+				name: ddEnvLabel(env),
+				value: env,
+				checked: previousIds.has(env.id),
+			})),
 		});
 
 		if (result === null) {
+			requiresSelection = false;
 			if (i === 0) return null;
 			i--;
+		} else if (result.length === 0) {
+			requiresSelection = true;
 		} else {
+			requiresSelection = false;
 			mapping.set(ldEnv.key, result);
 			i++;
 		}
@@ -830,7 +850,7 @@ interface MigrationOptions {
 
 async function executeMigration(
 	flags: LDFlag[],
-	envMapping: Map<string, DatadogEnvironment>,
+	envMapping: EnvironmentMapping<string>,
 	ldEnvironments: LDEnvironment[],
 	datadogFlags: DatadogFlagEntry[],
 	selectedEnvs: string[],
@@ -1177,15 +1197,17 @@ async function executeMigration(
 	let runner: MigrationRunnerHandle | undefined;
 
 	const environmentMappingArr: LDMigrationFile['environmentMapping'] = [];
-	for (const [ldEnvKey, ddEnv] of envMapping) {
+	for (const [ldEnvKey, ddEnvs] of envMapping) {
 		const ldEnv = ldEnvironments.find((e) => e.key === ldEnvKey);
-		environmentMappingArr.push({
-			sourceEnvId: ldEnvKey,
-			sourceEnvName: ldEnv?.name ?? ldEnvKey,
-			datadogEnvId: ddEnv.id,
-			datadogEnvName: ddEnv.name,
-			datadogDdEnvNames: ddEnv.queries,
-		});
+		for (const ddEnv of ddEnvs) {
+			environmentMappingArr.push({
+				sourceEnvId: ldEnvKey,
+				sourceEnvName: ldEnv?.name ?? ldEnvKey,
+				datadogEnvId: ddEnv.id,
+				datadogEnvName: ddEnv.name,
+				datadogDdEnvNames: ddEnv.queries,
+			});
+		}
 	}
 
 	// Pre-flight: collect all key conflict resolutions before the migration runner
@@ -2319,7 +2341,7 @@ export async function runLaunchDarklyMigration(
 	}
 
 	let prevSelectedEnvKeys: string[] = [];
-	let prevEnvMapping = new Map<string, DatadogEnvironment>();
+	let prevEnvMapping: EnvironmentMapping<string> = new Map();
 	let prevSelectedFlags: LDFlag[] = [];
 	const statusEnvs = ldEnvironments.filter((env) => !env.archived);
 	// Cache of LD flag lifecycle statuses per non-archived environment key,
@@ -2438,10 +2460,11 @@ export function resolveLDEnvMap(
 	pairs: Array<[string, string]>,
 	ldEnvironments: LDEnvironment[],
 	datadogEnvs: DatadogEnvironment[],
-): { envMapping: Map<string, DatadogEnvironment>; selectedEnvKeys: string[] } {
-	const envMapping = new Map<string, DatadogEnvironment>();
+): { envMapping: EnvironmentMapping<string>; selectedEnvKeys: string[] } {
+	const envMapping: EnvironmentMapping<string> = new Map();
 	const selectedEnvKeys: string[] = [];
 	const ddByName = new Map(datadogEnvs.map((e) => [e.name, e]));
+	const sourceByDatadogEnvironment = new Map<string, string>();
 	for (const [src, dst] of pairs) {
 		// Match LD env: key first, then name
 		const ldEnv =
@@ -2468,8 +2491,19 @@ export function resolveLDEnvMap(
 				`Datadog environment not found: "${dst}". Available: ${available}`,
 			);
 		}
-		envMapping.set(ldEnv.key, ddEnv);
-		selectedEnvKeys.push(ldEnv.key);
+		const existingSource = sourceByDatadogEnvironment.get(ddEnv.id);
+		if (existingSource !== undefined && existingSource !== ldEnv.key) {
+			throw new Error(
+				`Datadog environment "${ddEnv.name}" cannot be mapped from both LaunchDarkly environments "${existingSource}" and "${ldEnv.key}"`,
+			);
+		}
+		sourceByDatadogEnvironment.set(ddEnv.id, ldEnv.key);
+		const mappedEnvironments = envMapping.get(ldEnv.key) ?? [];
+		if (!mappedEnvironments.some((env) => env.id === ddEnv.id)) {
+			mappedEnvironments.push(ddEnv);
+		}
+		envMapping.set(ldEnv.key, mappedEnvironments);
+		if (!selectedEnvKeys.includes(ldEnv.key)) selectedEnvKeys.push(ldEnv.key);
 	}
 	return { envMapping, selectedEnvKeys };
 }
@@ -2558,7 +2592,7 @@ async function runLaunchDarklyMigrationNonInteractive(
 		process.exit(1);
 	}
 
-	let envMapping: Map<string, DatadogEnvironment>;
+	let envMapping: EnvironmentMapping<string>;
 	let selectedEnvKeys: string[];
 	try {
 		({ envMapping, selectedEnvKeys } = resolveLDEnvMap(

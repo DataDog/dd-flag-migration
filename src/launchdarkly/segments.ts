@@ -10,8 +10,8 @@ import {
 } from '../datadog/api.js';
 import type {
 	DatadogCondition,
-	DatadogEnvironment,
 	DatadogTargetingRule,
+	EnvironmentMappingInput,
 	LDSavedFilterMigrationMetadata,
 	SavedFilterSummary,
 } from '../datadog/types.js';
@@ -430,7 +430,7 @@ export async function migrateSegments(params: {
 	ldApiKey: string;
 	projectKey: string;
 	selectedFlags: LDFlag[];
-	envMapping: Map<string, DatadogEnvironment>;
+	envMapping: EnvironmentMappingInput<string>;
 	ddApiKey: string;
 	ddAppKey: string;
 	ddSite: string;
@@ -859,7 +859,7 @@ export async function planDryRunSegments(params: {
 	ldApiKey: string;
 	projectKey: string;
 	selectedFlags: LDFlag[];
-	envMapping: Map<string, DatadogEnvironment>;
+	envMapping: EnvironmentMappingInput<string>;
 }): Promise<SegmentMigrationResult> {
 	const { ldApiKey, projectKey, selectedFlags, envMapping } = params;
 	const savedFilterLookup = new Map<string, string>();

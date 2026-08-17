@@ -1,8 +1,10 @@
-import type {
-	DatadogAllocationForFlagCreation,
-	DatadogCreateFlagRequest,
-	DatadogEnvironment,
-	DatadogTargetingRule,
+import {
+	type DatadogAllocationForFlagCreation,
+	type DatadogCreateFlagRequest,
+	type DatadogEnvironment,
+	type DatadogTargetingRule,
+	type EnvironmentMappingInput,
+	mappedDatadogEnvironments,
 } from '../../datadog/types.js';
 import type {
 	LDClause,
@@ -445,136 +447,138 @@ export type BuildAllocationsResult =
 
 export function buildAllocations(
 	flag: LDFlag,
-	envMapping: Map<string, DatadogEnvironment>,
+	envMapping: EnvironmentMappingInput<string>,
 	savedFilterLookup: Map<string, string> = new Map(),
 	segmentConstantLookup: Map<string, boolean> = new Map(),
 ): BuildAllocationsResult {
 	const allocations: DatadogAllocationForFlagCreation[] = [];
 
-	for (const [ldEnvKey, ddEnv] of envMapping) {
+	for (const [ldEnvKey, mappedEnvironments] of envMapping) {
 		const envConfig = flag.environments?.[ldEnvKey];
 		if (!envConfig) continue;
 
-		const envSlug = ddEnv.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+		for (const ddEnv of mappedDatadogEnvironments(mappedEnvironments)) {
+			const envSlug = ddEnv.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
 
-		// 1. Individual targets → allocations with ONE_OF targeting.
-		// LD's `targets` are always user-kind; DD's evaluator recognises "id"
-		// (not "key") as the targeting-key alias on the subject.
-		for (let ti = 0; ti < envConfig.targets.length; ti++) {
-			const target = envConfig.targets[ti];
-			if (target.values.length === 0) continue;
+			// 1. Individual targets → allocations with ONE_OF targeting.
+			// LD's `targets` are always user-kind; DD's evaluator recognises "id"
+			// (not "key") as the targeting-key alias on the subject.
+			for (let ti = 0; ti < envConfig.targets.length; ti++) {
+				const target = envConfig.targets[ti];
+				if (target.values.length === 0) continue;
 
-			const variantWeights = buildVariantWeights(flag, target.variation);
-			const targetAttribute = targetKeyAttribute(target.contextKind);
-			const targetingRules: DatadogTargetingRule[] = [
-				{
-					conditions: [
-						{
-							operator: 'ONE_OF',
-							attribute: targetAttribute,
-							value: target.values,
-						},
-					],
-				},
-			];
+				const variantWeights = buildVariantWeights(flag, target.variation);
+				const targetAttribute = targetKeyAttribute(target.contextKind);
+				const targetingRules: DatadogTargetingRule[] = [
+					{
+						conditions: [
+							{
+								operator: 'ONE_OF',
+								attribute: targetAttribute,
+								value: target.values,
+							},
+						],
+					},
+				];
 
-			allocations.push({
-				environment_id: ddEnv.id,
-				name: `${flag.key} target ${ti + 1}`,
-				key: `${flag.key}-${envSlug}-target-${ti}`,
-				type: 'FEATURE_GATE',
-				variant_weights: variantWeights,
-				targeting_rules: targetingRules,
-			});
-		}
-
-		// 1b. Non-user context targets (contextTargets)
-		for (let ti = 0; ti < envConfig.contextTargets.length; ti++) {
-			const target = envConfig.contextTargets[ti];
-			if (target.values.length === 0) continue;
-
-			const variantWeights = buildVariantWeights(flag, target.variation);
-			const targetAttribute = targetKeyAttribute(target.contextKind);
-			const targetingRules: DatadogTargetingRule[] = [
-				{
-					conditions: [
-						{
-							operator: 'ONE_OF',
-							attribute: targetAttribute,
-							value: target.values,
-						},
-					],
-				},
-			];
-
-			allocations.push({
-				environment_id: ddEnv.id,
-				name: `${flag.key} ${target.contextKind} target ${ti + 1}`,
-				key: `${flag.key}-${envSlug}-ctx-target-${ti}`,
-				type: 'FEATURE_GATE',
-				variant_weights: variantWeights,
-				targeting_rules: targetingRules,
-			});
-		}
-
-		// 2. Rules → one allocation per rule (targeting_rules may fan out)
-		for (let ri = 0; ri < envConfig.rules.length; ri++) {
-			const rule = envConfig.rules[ri];
-			if (rule.disabled) continue;
-
-			const targetingRulesResult = buildTargetingRules(
-				rule.clauses,
-				ldEnvKey,
-				savedFilterLookup,
-				segmentConstantLookup,
-			);
-
-			if (
-				targetingRulesResult !== null &&
-				!Array.isArray(targetingRulesResult)
-			) {
-				return {
-					flagSkip: `${targetingRulesResult.flagSkip} (env: ${ldEnvKey})`,
-				};
+				allocations.push({
+					environment_id: ddEnv.id,
+					name: `${flag.key} target ${ti + 1}`,
+					key: `${flag.key}-${envSlug}-target-${ti}`,
+					type: 'FEATURE_GATE',
+					variant_weights: variantWeights,
+					targeting_rules: targetingRules,
+				});
 			}
-			if (targetingRulesResult === null) continue; // skip this rule
 
-			const targetingRules = targetingRulesResult;
-			const variantWeights = buildVariantWeights(
+			// 1b. Non-user context targets (contextTargets)
+			for (let ti = 0; ti < envConfig.contextTargets.length; ti++) {
+				const target = envConfig.contextTargets[ti];
+				if (target.values.length === 0) continue;
+
+				const variantWeights = buildVariantWeights(flag, target.variation);
+				const targetAttribute = targetKeyAttribute(target.contextKind);
+				const targetingRules: DatadogTargetingRule[] = [
+					{
+						conditions: [
+							{
+								operator: 'ONE_OF',
+								attribute: targetAttribute,
+								value: target.values,
+							},
+						],
+					},
+				];
+
+				allocations.push({
+					environment_id: ddEnv.id,
+					name: `${flag.key} ${target.contextKind} target ${ti + 1}`,
+					key: `${flag.key}-${envSlug}-ctx-target-${ti}`,
+					type: 'FEATURE_GATE',
+					variant_weights: variantWeights,
+					targeting_rules: targetingRules,
+				});
+			}
+
+			// 2. Rules → one allocation per rule (targeting_rules may fan out)
+			for (let ri = 0; ri < envConfig.rules.length; ri++) {
+				const rule = envConfig.rules[ri];
+				if (rule.disabled) continue;
+
+				const targetingRulesResult = buildTargetingRules(
+					rule.clauses,
+					ldEnvKey,
+					savedFilterLookup,
+					segmentConstantLookup,
+				);
+
+				if (
+					targetingRulesResult !== null &&
+					!Array.isArray(targetingRulesResult)
+				) {
+					return {
+						flagSkip: `${targetingRulesResult.flagSkip} (env: ${ldEnvKey})`,
+					};
+				}
+				if (targetingRulesResult === null) continue; // skip this rule
+
+				const targetingRules = targetingRulesResult;
+				const variantWeights = buildVariantWeights(
+					flag,
+					rule.variation,
+					rule.rollout,
+				);
+
+				const ruleName = rule.description || `${flag.key} rule ${ri + 1}`;
+
+				allocations.push({
+					environment_id: ddEnv.id,
+					name: ruleName,
+					key: `${flag.key}-${envSlug}-rule-${ri}`,
+					type: 'FEATURE_GATE',
+					variant_weights: variantWeights,
+					...(targetingRules.length > 0
+						? { targeting_rules: targetingRules }
+						: {}),
+				});
+			}
+
+			// 3. Fallthrough → default allocation (no targeting rules)
+			const ft = envConfig.fallthrough;
+			const fallthroughWeights = buildVariantWeights(
 				flag,
-				rule.variation,
-				rule.rollout,
+				ft.variation,
+				ft.rollout,
 			);
-
-			const ruleName = rule.description || `${flag.key} rule ${ri + 1}`;
 
 			allocations.push({
 				environment_id: ddEnv.id,
-				name: ruleName,
-				key: `${flag.key}-${envSlug}-rule-${ri}`,
+				name: `${flag.key} default`,
+				key: `${flag.key}-${envSlug}-fallthrough`,
 				type: 'FEATURE_GATE',
-				variant_weights: variantWeights,
-				...(targetingRules.length > 0
-					? { targeting_rules: targetingRules }
-					: {}),
+				variant_weights: fallthroughWeights,
 			});
 		}
-
-		// 3. Fallthrough → default allocation (no targeting rules)
-		const ft = envConfig.fallthrough;
-		const fallthroughWeights = buildVariantWeights(
-			flag,
-			ft.variation,
-			ft.rollout,
-		);
-
-		allocations.push({
-			environment_id: ddEnv.id,
-			name: `${flag.key} default`,
-			key: `${flag.key}-${envSlug}-fallthrough`,
-			type: 'FEATURE_GATE',
-			variant_weights: fallthroughWeights,
-		});
 	}
 
 	return allocations;
@@ -653,14 +657,14 @@ export function hasSemverConditions(
 /** Determine which DD environments should be enabled for a flag */
 export function getEnvsToEnable(
 	flag: LDFlag,
-	envMapping: Map<string, DatadogEnvironment>,
+	envMapping: EnvironmentMappingInput<string>,
 ): DatadogEnvironment[] {
 	const envsToEnable: DatadogEnvironment[] = [];
 
-	for (const [ldEnvKey, ddEnv] of envMapping) {
+	for (const [ldEnvKey, mappedEnvironments] of envMapping) {
 		const envConfig = flag.environments?.[ldEnvKey];
 		if (envConfig?.on) {
-			envsToEnable.push(ddEnv);
+			envsToEnable.push(...mappedDatadogEnvironments(mappedEnvironments));
 		}
 	}
 

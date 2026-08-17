@@ -23,6 +23,20 @@ export interface DatadogEnvironment {
 	queries: string[];
 }
 
+export type EnvironmentMapping<SourceEnvironmentId extends string | number> =
+	Map<SourceEnvironmentId, DatadogEnvironment[]>;
+
+/** Accepts legacy single-target maps while callers move to one-to-many mappings. */
+export type EnvironmentMappingInput<
+	SourceEnvironmentId extends string | number,
+> = ReadonlyMap<SourceEnvironmentId, DatadogEnvironment | DatadogEnvironment[]>;
+
+export function mappedDatadogEnvironments(
+	value: DatadogEnvironment | DatadogEnvironment[],
+): DatadogEnvironment[] {
+	return Array.isArray(value) ? value : [value];
+}
+
 export interface Config {
 	datadogSite?: string;
 }

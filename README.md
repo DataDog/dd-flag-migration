@@ -149,7 +149,7 @@ npx @datadog/dd-flag-migration migrate
 The tool will walk you through:
 
 1. **Select your provider** — Eppo or LaunchDarkly
-2. **Map environments** — link each source environment (e.g. `production`) to the corresponding Datadog environment
+2. **Map environments** — link each source environment (e.g. `production`) to one or more corresponding Datadog environments
 3. **Select flags** — choose which flags to migrate; flags already in Datadog are marked. Press **Tab** to open the advanced-filter screen and narrow the list by category (see [Advanced filtering](#advanced-filtering)), then **Ctrl+A** to select all remaining flags
 4. **Confirm and migrate** — flags are created in Datadog and enabled in the mapped environments. A progress bar tracks migration status in real time
 
@@ -187,7 +187,7 @@ When migrating from LaunchDarkly, the tool adds these steps:
 
 1. **Select a LaunchDarkly project** — flags in LaunchDarkly are scoped to a project, so you pick one project at a time
 2. **Select LaunchDarkly environments** — choose which environments within that project to migrate
-3. **Link environments** — map each selected LaunchDarkly environment to a Datadog environment
+3. **Link environments** — map each selected LaunchDarkly environment to one or more Datadog environments
 4. **Select flags** — flags already in Datadog are shown with a checkmark and will have their targeting synced for new environments rather than being re-created
 
 The tool translates LaunchDarkly targeting rules, individual user targets, percentage rollouts, and fallthrough variations into equivalent Datadog targeting filters. Before migrating flags, the tool runs a segment migration phase that converts referenced LaunchDarkly segments into Datadog saved filters and substitutes them into targeting rules. Flags that use unsupported operators (`before`, `after`) are automatically skipped with an explanation. Flags with prerequisites are migrated with a warning, since Datadog does not enforce prerequisites.
@@ -204,7 +204,7 @@ Non-interactive migrations write a JSON result document to stdout. Status messag
 |---|---|
 | `--provider <Eppo\|LaunchDarkly>` | Source provider (case-insensitive) |
 | `--datadog-site <site>` | Datadog site (e.g. `datadoghq.com`) |
-| `--env-map <source,target>` | Map a source environment to a Datadog environment. Repeat for each environment |
+| `--env-map <source,target>` | Map a source environment to a Datadog environment. Repeat the option—including the same source—to map one source environment to multiple Datadog environments |
 | `--feature-flag <key>` | Flag key to migrate. Repeat for each flag. For LaunchDarkly, use `<source-key>,<datadog-key>` to rename the Datadog flag |
 | `--project <key>` | LaunchDarkly project key *(LaunchDarkly only)* |
 
@@ -216,6 +216,18 @@ Non-interactive migrations write a JSON result document to stdout. Status messag
 | `--export=<bool>` | Export results to an `.xlsx` file after migration (default: `false`) |
 
 **Examples**
+
+Map one LaunchDarkly environment to two Datadog environments:
+
+```bash
+npx @datadog/dd-flag-migration migrate --interactive=false \
+  --provider LaunchDarkly \
+  --project my-ld-project \
+  --datadog-site datadoghq.com \
+  --env-map Production,Production \
+  --env-map Production,QA \
+  --feature-flag flag-one
+```
 
 Migrate two LaunchDarkly flags across two environments:
 

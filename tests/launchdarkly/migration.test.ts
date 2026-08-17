@@ -994,6 +994,37 @@ describe('buildAllocations', () => {
 		expect(allocations[0].environment_id).toBe('dd-dev');
 		expect(allocations[1].environment_id).toBe('dd-prod');
 	});
+
+	it('builds allocations in every Datadog environment mapped from one LD environment', () => {
+		const flag = makeFlag({
+			key: 'one-to-many',
+			environments: {
+				production: {
+					on: true,
+					archived: false,
+					targets: [],
+					contextTargets: [],
+					rules: [],
+					fallthrough: { variation: 0 },
+					offVariation: 1,
+					prerequisites: [],
+					_environmentName: 'Production',
+				},
+			},
+		});
+
+		const result = buildAllocations(
+			flag,
+			new Map([['production', [ddDev, ddProd]]]),
+		);
+
+		expect(Array.isArray(result)).toBe(true);
+		const allocations = result as DatadogAllocationForFlagCreation[];
+		expect(allocations.map((allocation) => allocation.environment_id)).toEqual([
+			'dd-dev',
+			'dd-prod',
+		]);
+	});
 });
 
 // ─── getEnvsToEnable ──────────────────────────────────────────────────────────
@@ -1036,6 +1067,31 @@ describe('getEnvsToEnable', () => {
 
 		expect(result).toHaveLength(1);
 		expect(result[0].id).toBe('dd-dev');
+	});
+
+	it('returns every Datadog environment mapped from an enabled LD environment', () => {
+		const flag = makeFlag({
+			key: 'test',
+			environments: {
+				production: {
+					on: true,
+					archived: false,
+					targets: [],
+					contextTargets: [],
+					rules: [],
+					fallthrough: { variation: 0 },
+					offVariation: 1,
+					prerequisites: [],
+					_environmentName: 'Production',
+				},
+			},
+		});
+
+		expect(
+			getEnvsToEnable(flag, new Map([['production', [ddDev, ddProd]]])).map(
+				(env) => env.id,
+			),
+		).toEqual(['dd-dev', 'dd-prod']);
 	});
 
 	it('returns empty when flag is off everywhere', () => {
