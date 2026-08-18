@@ -182,9 +182,13 @@ describe('mapOperator', () => {
 		expect(result).toEqual({ operator: 'SEMVER_EQ', values: ['1.0.0'] });
 	});
 
-	it('maps "semVerGreaterThanOrEqual" to SEMVER_GTE', () => {
-		const result = mapOperator('semVerGreaterThanOrEqual', false, ['3.0.0']);
-		expect(result).toEqual({ operator: 'SEMVER_GTE', values: ['3.0.0'] });
+	it.each([
+		['18', '18.0.0'],
+		['18.0', '18.0.0'],
+		['18.0.0', '18.0.0'],
+	])('maps "semVerGreaterThanOrEqual" to SEMVER_GTE and normalizes %s to %s', (value, expected) => {
+		const result = mapOperator('semVerGreaterThanOrEqual', false, [value]);
+		expect(result).toEqual({ operator: 'SEMVER_GTE', values: [expected] });
 	});
 
 	it('passes through segmentMatch uppercased (handled before mapOperator in buildTargetingRules)', () => {
@@ -651,6 +655,28 @@ describe('buildTargetingRules', () => {
 		expect(result).toHaveLength(1);
 		expect(Array.isArray(result)).toBe(true);
 		expect((result as DatadogTargetingRule[])[0].conditions).toHaveLength(2);
+	});
+
+	it('normalizes incomplete semantic versions in migrated conditions', () => {
+		const clauses = [
+			makeClause({
+				attribute: 'version',
+				op: 'semVerGreaterThanOrEqual',
+				values: ['18', '18.0', '18.0.0'],
+			}),
+		];
+
+		expect(buildTargetingRules(clauses)).toEqual([
+			{
+				conditions: [
+					{
+						operator: 'SEMVER_GTE',
+						attribute: 'version',
+						value: ['18.0.0', '18.0.0', '18.0.0'],
+					},
+				],
+			},
+		]);
 	});
 });
 

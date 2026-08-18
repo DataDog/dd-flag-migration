@@ -53,6 +53,20 @@ type OperatorResult =
 	| { skip: string; operator?: undefined; values?: undefined };
 
 const UNSUPPORTED_OPS = new Set(['before', 'after']);
+const LD_SEMVER_OPS = new Set([
+	'semVerEqual',
+	'semVerLessThan',
+	'semVerGreaterThan',
+	'semVerLessThanOrEqual',
+	'semVerGreaterThanOrEqual',
+]);
+
+function normalizeSemverValue(value: string): string {
+	const incompleteSemver = /^(\d+)(?:\.(\d+))?$/.exec(value);
+	if (!incompleteSemver) return value;
+
+	return `${incompleteSemver[1]}.${incompleteSemver[2] ?? '0'}.0`;
+}
 
 /** Map a single LD operator + negate + values → DD operator + transformed values */
 export function mapOperator(
@@ -69,6 +83,9 @@ export function mapOperator(
 	}
 
 	const strValues = values.map((v) => String(v));
+	const mappedValues = LD_SEMVER_OPS.has(op)
+		? strValues.map(normalizeSemverValue)
+		: strValues;
 
 	// Direct mapping operators
 	const directMap: Record<string, string> = {
@@ -131,9 +148,9 @@ export function mapOperator(
 					skip: `Negated "${op}" cannot be mapped to a Datadog operator`,
 				};
 			}
-			return { operator: negated, values: strValues };
+			return { operator: negated, values: mappedValues };
 		}
-		return { operator: directMap[op], values: strValues };
+		return { operator: directMap[op], values: mappedValues };
 	}
 
 	// Unknown operator — pass through uppercased
