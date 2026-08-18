@@ -11,6 +11,7 @@ import type {
 	DatadogCreatedFlag,
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,
+	DatadogEnvironmentStatus,
 	DatadogFlagEntry,
 	DatadogTeam,
 	DatadogVariantDetail,
@@ -208,6 +209,10 @@ type JsonApiFlag = {
 		name: string;
 		tags?: string[];
 		migration_metadata?: MigrationMetadata;
+		feature_flag_environments?: Array<{
+			environment_id: string;
+			status: DatadogEnvironmentStatus;
+		}>;
 	};
 };
 
@@ -287,11 +292,22 @@ export async function fetchDatadogFlags(
 		);
 		const data = response.data.data ?? [];
 		for (const f of data) {
+			const flagEnvironments = f.attributes.feature_flag_environments;
 			allFlags.push({
 				id: f.id,
 				key: f.attributes.key,
 				...(f.attributes.tags !== undefined ? { tags: f.attributes.tags } : {}),
 				migration_metadata: f.attributes.migration_metadata,
+				...(flagEnvironments !== undefined
+					? {
+							environmentStatuses: new Map(
+								flagEnvironments.map(
+									(environment) =>
+										[environment.environment_id, environment.status] as const,
+								),
+							),
+						}
+					: {}),
 			});
 		}
 		const nextOffset = nextFeatureFlagOffset(
@@ -440,15 +456,19 @@ export async function fetchDatadogTeams(
 	return teams;
 }
 
-export async function enableFeatureFlagEnvironment(
+export type FeatureFlagEnvironmentEnableOutcome =
+	| 'enabled'
+	| 'approval_requested';
+
+export async function enableFeatureFlagEnvironmentWithOutcome(
 	apiKey: string,
 	appKey: string,
 	flagId: string,
 	environmentId: string,
 	site = 'datadoghq.com',
-): Promise<void> {
+): Promise<FeatureFlagEnvironmentEnableOutcome> {
 	const baseUrl = `https://api.${site}`;
-	await ddClient.post(
+	const response = await ddClient.post(
 		`${baseUrl}/api/v2/feature-flags/${flagId}/environments/${environmentId}/enable`,
 		{},
 		{
@@ -457,6 +477,23 @@ export async function enableFeatureFlagEnvironment(
 				'Content-Type': 'application/json',
 			},
 		},
+	);
+	return response.status === 202 ? 'approval_requested' : 'enabled';
+}
+
+export async function enableFeatureFlagEnvironment(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	environmentId: string,
+	site = 'datadoghq.com',
+): Promise<void> {
+	await enableFeatureFlagEnvironmentWithOutcome(
+		apiKey,
+		appKey,
+		flagId,
+		environmentId,
+		site,
 	);
 }
 
@@ -475,10 +512,29 @@ type JsonApiFlagDetail = {
 		}>;
 		feature_flag_environments: Array<{
 			environment_id: string;
+			status: 'ENABLED' | 'DISABLED';
 			allocations: Array<{ id: string; key: string }> | null;
 		}>;
 	};
 };
+
+export async function fetchFeatureFlagEnvironmentStatuses(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	site = 'datadoghq.com',
+): Promise<Map<string, 'ENABLED' | 'DISABLED'>> {
+	const baseUrl = `https://api.${site}`;
+	const response = await ddClient.get<{ data: JsonApiFlagDetail }>(
+		`${baseUrl}/api/v2/feature-flags/${flagId}`,
+		{ headers: ddHeaders(apiKey, appKey) },
+	);
+	return new Map(
+		(response.data.data.attributes.feature_flag_environments ?? []).map(
+			(environment) => [environment.environment_id, environment.status],
+		),
+	);
+}
 
 export async function fetchFlagDetail(
 	apiKey: string,

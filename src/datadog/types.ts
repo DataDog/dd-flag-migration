@@ -9,11 +9,14 @@ export interface MigrationMetadata {
 	source_key?: string;
 }
 
+export type DatadogEnvironmentStatus = 'ENABLED' | 'DISABLED';
+
 export interface DatadogFlagEntry {
 	id: string;
 	key: string;
 	tags?: string[];
 	migration_metadata?: MigrationMetadata;
+	environmentStatuses?: Map<string, DatadogEnvironmentStatus>;
 }
 
 export interface DatadogEnvironment {

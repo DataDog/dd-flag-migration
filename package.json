@@ -12,6 +12,7 @@
 		"help": "tsx src/cli.tsx --help",
 		"evaluate": "tsx src/cli.tsx evaluate",
 		"bulk-permissions": "tsx src/cli.tsx bulk-permissions",
+		"bulk-enable": "tsx src/cli.tsx bulk-enable",
 		"build": "tsc -p tsconfig.build.json",
 		"lint": "biome check",
 		"lint:fix": "biome check --write",

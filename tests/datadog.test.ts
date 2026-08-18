@@ -16,12 +16,14 @@ import {
 	ddClient,
 	deleteVariant,
 	enableFeatureFlagEnvironment,
+	enableFeatureFlagEnvironmentWithOutcome,
 	fetchCurrentUserIdentity,
 	fetchCurrentUserPermissions,
 	fetchDatadogEnvironments,
 	fetchDatadogFlagKeys,
 	fetchDatadogFlags,
 	fetchDatadogTeams,
+	fetchFeatureFlagEnvironmentStatuses,
 	fetchFlagTags,
 	fetchRestrictionPolicy,
 	syncAllocationsForEnvironment,
@@ -297,6 +299,10 @@ describe('fetchDatadogFlags', () => {
 							project_key: 'proj-1',
 							flag_key: 'flag-a',
 						},
+						feature_flag_environments: [
+							{ environment_id: 'env-enabled', status: 'ENABLED' },
+							{ environment_id: 'env-disabled', status: 'DISABLED' },
+						],
 					},
 				},
 				{
@@ -314,6 +320,10 @@ describe('fetchDatadogFlags', () => {
 				key: 'flag-a',
 				tags: ['project:health-100'],
 				migration_metadata: { project_key: 'proj-1', flag_key: 'flag-a' },
+				environmentStatuses: new Map([
+					['env-enabled', 'ENABLED'],
+					['env-disabled', 'DISABLED'],
+				]),
 			},
 			{
 				id: 'uuid-2',
@@ -718,6 +728,22 @@ describe('enableFeatureFlagEnvironment', () => {
 		).resolves.toBeUndefined();
 	});
 
+	it('returns approval_requested when enabling requires approval', async () => {
+		mock
+			.onPost(`${BASE}/api/v2/feature-flags/f1/environments/e1/enable`)
+			.reply(202, {});
+
+		await expect(
+			enableFeatureFlagEnvironmentWithOutcome(
+				API_KEY,
+				APP_KEY,
+				'f1',
+				'e1',
+				SITE,
+			),
+		).resolves.toBe('approval_requested');
+	});
+
 	it('throws on HTTP error', async () => {
 		mock
 			.onPost(`${BASE}/api/v2/feature-flags/f1/environments/e1/enable`)
@@ -726,6 +752,51 @@ describe('enableFeatureFlagEnvironment', () => {
 		await expect(
 			enableFeatureFlagEnvironment(API_KEY, APP_KEY, 'f1', 'e1', SITE),
 		).rejects.toThrow();
+	});
+});
+
+describe('fetchFeatureFlagEnvironmentStatuses', () => {
+	let mock: AxiosMockAdapter;
+
+	beforeEach(() => {
+		mock = new AxiosMockAdapter(ddClient as never);
+	});
+
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('returns each environment status from flag detail', async () => {
+		mock.onGet(`${BASE}/api/v2/feature-flags/flag-1`).reply(200, {
+			data: {
+				id: 'flag-1',
+				type: 'feature-flags',
+				attributes: {
+					variants: [],
+					feature_flag_environments: [
+						{
+							environment_id: 'env-enabled',
+							status: 'ENABLED',
+							allocations: [],
+						},
+						{
+							environment_id: 'env-disabled',
+							status: 'DISABLED',
+							allocations: [],
+						},
+					],
+				},
+			},
+		});
+
+		await expect(
+			fetchFeatureFlagEnvironmentStatuses(API_KEY, APP_KEY, 'flag-1', SITE),
+		).resolves.toEqual(
+			new Map([
+				['env-enabled', 'ENABLED'],
+				['env-disabled', 'DISABLED'],
+			]),
+		);
 	});
 });
 

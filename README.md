@@ -25,6 +25,9 @@ npx @datadog/dd-flag-migration evaluate
 
 # manage team permissions after migration
 npx @datadog/dd-flag-migration bulk-permissions
+
+# enable migrated flags in one or more environments
+npx @datadog/dd-flag-migration bulk-enable
 ```
 
 ### Contributing / running from source
@@ -35,7 +38,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Credentials you'll need
 
-Credentials are read from environment variables. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running `migrate`, `evaluate`, or `bulk-permissions`. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1.
+Credentials are read from environment variables. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running `migrate`, `evaluate`, `bulk-permissions`, or `bulk-enable`. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1.
 
 ### Required for `migrate`
 
@@ -58,7 +61,7 @@ Your LaunchDarkly access token needs **Reader** role permissions (or a custom ro
 | `EPPO_SDK_KEY` | migration was from Eppo | Eppo → SDK Keys (server SDK key, one per environment) |
 | `LAUNCHDARKLY_API_KEY` | migration was from LaunchDarkly *(preferred)* | LaunchDarkly → Account settings → Authorization → Access tokens |
 
-### Required for `bulk-permissions`
+### Required for `bulk-permissions` and `bulk-enable`
 
 | Variable | Required when | Where to find it |
 |---|---|---|
@@ -67,19 +70,19 @@ Your LaunchDarkly access token needs **Reader** role permissions (or a custom ro
 
 ### Datadog Application Key permissions
 
-Your Datadog Application Key must have the following scopes enabled:
+Enable the scopes required for the command you are running:
 
-| Scope | Description |
-|---|---|
-| `feature_flag_approvals_override` | Ability to bypass Feature Flag approval requirements |
-| `feature_flag_config_read` | View Feature Flag Configurations |
-| `feature_flag_config_write` | Edit Feature Flag Configurations |
-| `feature_flag_environment_config_read` | Ability to view Feature Flag Environment settings |
-| `teams_read` | View Teams *(required for team-based access controls)* |
-| `restriction_policies_read` | View restriction policies *(required by `bulk-permissions`)* |
-| `restriction_policies_write` | Edit restriction policies *(required by `bulk-permissions`)* |
+| Scope | Required by | Description |
+|---|---|---|
+| `feature_flag_approvals_override` | Optional for `bulk-enable` | Bypasses Feature Flag approval requirements. Without it, approval-protected changes are submitted as approval requests and reported as such. |
+| `feature_flag_config_read` | `migrate`, `bulk-permissions`, `bulk-enable` | View Feature Flag Configurations |
+| `feature_flag_config_write` | `migrate`, `bulk-enable` | Edit Feature Flag Configurations |
+| `feature_flag_environment_config_read` | `migrate`, `bulk-enable` | View Feature Flag Environment settings |
+| `teams_read` | `migrate`, `bulk-permissions` | View Teams for team-based access controls |
+| `restriction_policies_read` | `bulk-permissions` | View restriction policies |
+| `restriction_policies_write` | `bulk-permissions` | Edit restriction policies |
 
-To set these permissions, go to **Organization Settings → Application Keys**, select your key, and enable the scopes listed above. The feature flag scopes are under the **Feature Flags** section; `teams_read` is under **Teams**. The restriction-policy scopes are only required when using `bulk-permissions`.
+To set these permissions, go to **Organization Settings → Application Keys**, select your key, and enable the scopes for the command. The feature flag scopes are under **Feature Flags**, `teams_read` is under **Teams**, and restriction-policy scopes are only used by `bulk-permissions`.
 
 ### Examples
 
@@ -296,6 +299,23 @@ The interactive flow lets you:
 Additions grant the selected teams the explicit `editor` relation. Removals delete the selected teams from every explicit relation while preserving unrelated principals and bindings. When team tag syncing is enabled, additions add matching team tags and removals remove them while preserving unrelated tags. Team tags are metadata for migration visibility and do not control permission access; explicit Datadog permissions remain the source of access control after migration. Repeating either operation is an idempotent no-op when the requested state already exists.
 
 Every confirmed update writes a `bulk-permissions-export-<timestamp>.xlsx` report in the current directory. The report distinguishes changed permissions, idempotent no-ops, and failures for each selected flag/team pair. When team-tag syncing is enabled, a separate **Tag Sync** sheet records its per-flag results and errors without changing the permission outcomes.
+
+---
+
+## Bulk Environment Enablement
+
+Enable migrated flags across one or more Datadog environments with:
+
+```bash
+npx @datadog/dd-flag-migration bulk-enable
+
+# When running from this repository:
+yarn bulk-enable
+```
+
+First select one or more Datadog environments, then select the migrated flags to enable. The flag picker supports filtering by flag key or tag; press **Tab** for advanced filters scoped to the selected environments. Select **needs-enabling** to hide flags that are already enabled in every selected environment. Flags whose status cannot be confirmed remain visible under **needs-enabling** so they are not silently omitted. Production environments are clearly marked and require an explicit confirmation.
+
+Updates run one at a time and use the shared Datadog rate-limit and retry handling. A failure for one flag/environment pair does not stop the remaining updates. Every confirmed update writes a `bulk-enable-export-<timestamp>.xlsx` report in the current directory. The report distinguishes newly enabled pairs, already-enabled pairs, approval requests, failures, and successful writes whose prior status could not be read.
 
 ---
 
