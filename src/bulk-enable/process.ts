@@ -51,12 +51,18 @@ export async function processBulkEnablePairs(
 	let index = 0;
 
 	for (const flag of flags) {
-		let currentStatuses = new Map<string, 'ENABLED' | 'DISABLED'>();
+		// The list endpoint normally includes these statuses, so reuse that
+		// snapshot instead of issuing one detail request per selected flag.
+		// Older or partial API responses fall back to the detail endpoint.
+		let currentStatuses =
+			flag.environmentStatuses ?? new Map<string, 'ENABLED' | 'DISABLED'>();
 		let statusLookupError: string | undefined;
-		try {
-			currentStatuses = await operations.fetchStatuses(flag);
-		} catch (error) {
-			statusLookupError = formatAxiosError(error);
+		if (flag.environmentStatuses === undefined) {
+			try {
+				currentStatuses = await operations.fetchStatuses(flag);
+			} catch (error) {
+				statusLookupError = formatAxiosError(error);
+			}
 		}
 
 		for (const environment of environments) {

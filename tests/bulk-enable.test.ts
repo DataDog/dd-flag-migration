@@ -143,6 +143,33 @@ describe('bulk enable processing', () => {
 		expect(results[3].error).toBe('Error: pair failed');
 	});
 
+	it('uses list statuses and only fetches fallback statuses when absent', async () => {
+		const cachedFlag: DatadogFlagEntry = {
+			...flags[0],
+			environmentStatuses: new Map([['env-1', 'ENABLED']]),
+		};
+		const fallbackFlag = flags[1];
+		const fetchedFlagIds: string[] = [];
+
+		const results = await processBulkEnablePairs(
+			[cachedFlag, fallbackFlag],
+			[environments[0]],
+			{
+				fetchStatuses: async (flag) => {
+					fetchedFlagIds.push(flag.id);
+					return new Map([['env-1', 'ENABLED']]);
+				},
+				enable: async () => 'enabled',
+			},
+		);
+
+		expect(fetchedFlagIds).toEqual(['flag-2']);
+		expect(results.map((result) => result.status)).toEqual([
+			'Already enabled',
+			'Already enabled',
+		]);
+	});
+
 	it('reports lookup uncertainty on successful, approval, and failed writes', async () => {
 		const uncertainEnvironments: DatadogEnvironment[] = [
 			...environments,

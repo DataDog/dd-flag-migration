@@ -10,11 +10,9 @@ import { confirm } from './components/Confirm.js';
 import { filterableCheckbox } from './components/FilterableCheckbox.js';
 import { HEADER_SUBTITLES, Header } from './components/Header.js';
 import { PromptCancelledError, renderStatic } from './components/mount.js';
-import { PermissionsError } from './components/PermissionsError.js';
 import { spinner } from './components/Spinner.js';
 import {
 	enableFeatureFlagEnvironmentWithOutcome,
-	fetchCurrentUserPermissions,
 	fetchDatadogEnvironments,
 	fetchFeatureFlagEnvironmentStatuses,
 } from './datadog/api.js';
@@ -25,6 +23,7 @@ import {
 } from './helpers/bulk-flags.js';
 import { requireEnvVars } from './helpers/env.js';
 import { formatAxiosError } from './helpers/format-axios-error.js';
+import { checkRequiredPermissions } from './helpers/permissions.js';
 import { promptForDatadogSite } from './helpers/prompt-for-datadog-site.js';
 
 // Only read permissions are checked upfront — write permissions cannot be
@@ -33,21 +32,6 @@ const REQUIRED_PERMISSIONS = [
 	'feature_flag_config_read',
 	'feature_flag_environment_config_read',
 ] as const;
-
-async function checkRequiredPermissions(
-	apiKey: string,
-	appKey: string,
-	site: string,
-): Promise<void> {
-	const actual = await fetchCurrentUserPermissions(apiKey, appKey, site);
-	const missing = REQUIRED_PERMISSIONS.filter(
-		(permission) => !actual.includes(permission),
-	);
-	if (missing.length > 0) {
-		await renderStatic(<PermissionsError missing={missing} />);
-		process.exit(1);
-	}
-}
 
 async function selectEnvironments(
 	environments: DatadogEnvironment[],
@@ -82,7 +66,7 @@ async function main(): Promise<void> {
 	process.stdout.write('\x1Bc');
 	await renderStatic(<Header subtitle={HEADER_SUBTITLES.bulkEnable} />);
 	const site = await promptForDatadogSite();
-	await checkRequiredPermissions(apiKey, appKey, site);
+	await checkRequiredPermissions(apiKey, appKey, site, REQUIRED_PERMISSIONS);
 
 	const loading = spinner(
 		'Fetching migrated flags and Datadog environments…',
