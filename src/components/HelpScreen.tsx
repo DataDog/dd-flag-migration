@@ -152,7 +152,7 @@ export function HelpScreen(): JSX.Element {
 			render: () => (
 				<Text>
 					{
-						'  --env-map <source,target>        Map a source env to a Datadog env (repeatable; ≥1)'
+						'  --env-map <source,target>        Map source to DD env(s) (repeat source for 1:N; ≥1)'
 					}
 				</Text>
 			),

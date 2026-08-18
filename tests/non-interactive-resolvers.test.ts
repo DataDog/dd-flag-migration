@@ -31,7 +31,36 @@ describe('resolveLDEnvMap', () => {
 			ddEnvs,
 		);
 		expect(selectedEnvKeys).toEqual(['production']);
-		expect(envMapping.get('production')?.id).toBe('dd1');
+		expect(envMapping.get('production')?.map((env) => env.id)).toEqual(['dd1']);
+	});
+
+	it('maps one LD environment to multiple Datadog environments', () => {
+		const { envMapping, selectedEnvKeys } = resolveLDEnvMap(
+			[
+				['production', 'Production'],
+				['production', 'QA'],
+			],
+			ldEnvs,
+			ddEnvs,
+		);
+		expect(selectedEnvKeys).toEqual(['production']);
+		expect(envMapping.get('production')?.map((env) => env.id)).toEqual([
+			'dd1',
+			'dd2',
+		]);
+	});
+
+	it('rejects mapping different LD environments to the same Datadog environment', () => {
+		expect(() =>
+			resolveLDEnvMap(
+				[
+					['production', 'Production'],
+					['staging', 'Production'],
+				],
+				ldEnvs,
+				ddEnvs,
+			),
+		).toThrow(/cannot be mapped from both LaunchDarkly environments/);
 	});
 
 	it('falls back to matching LD env by name', () => {
@@ -41,7 +70,7 @@ describe('resolveLDEnvMap', () => {
 			ddEnvs,
 		);
 		expect(selectedEnvKeys).toEqual(['staging']);
-		expect(envMapping.get('staging')?.id).toBe('dd2');
+		expect(envMapping.get('staging')?.map((env) => env.id)).toEqual(['dd2']);
 	});
 
 	it('throws for unknown LD env', () => {
@@ -201,7 +230,33 @@ describe('resolveEppoEnvMap', () => {
 			ddEnvs,
 		);
 		expect(selectedEnvs.map((e) => e.id)).toEqual([2]);
-		expect(envMapping.get(2)?.id).toBe('dd2');
+		expect(envMapping.get(2)?.map((env) => env.id)).toEqual(['dd2']);
+	});
+
+	it('maps one Eppo environment to multiple Datadog environments', () => {
+		const { envMapping, selectedEnvs } = resolveEppoEnvMap(
+			[
+				['Production', 'Production'],
+				['Production', 'QA'],
+			],
+			eppoEnvs,
+			ddEnvs,
+		);
+		expect(selectedEnvs.map((e) => e.id)).toEqual([1]);
+		expect(envMapping.get(1)?.map((env) => env.id)).toEqual(['dd1', 'dd2']);
+	});
+
+	it('rejects mapping different Eppo environments to the same Datadog environment', () => {
+		expect(() =>
+			resolveEppoEnvMap(
+				[
+					['Production', 'Production'],
+					['Staging', 'Production'],
+				],
+				eppoEnvs,
+				ddEnvs,
+			),
+		).toThrow(/cannot be mapped from both Eppo environments/);
 	});
 
 	it('throws for unknown Eppo env', () => {

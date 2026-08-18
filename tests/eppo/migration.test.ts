@@ -655,6 +655,37 @@ describe('buildAllocations', () => {
 		expect(allocations[1].environment_id).toBe('dd-prod');
 	});
 
+	it('builds allocations in every Datadog environment mapped from one Eppo environment', () => {
+		const flag = makeFlag({
+			id: 1,
+			key: 'one-to-many',
+			variations: [
+				{ id: 100, name: 'On', variant_key: 'on' },
+				{ id: 200, name: 'Off', variant_key: 'off' },
+			],
+			environments: [
+				{ id: 10, name: 'Production', active: true, is_production: true },
+			],
+			allocations: [
+				makeAllocation({
+					id: 1,
+					environment_id: 10,
+					variation_weight: [{ variation_id: 100, weight: 100 }],
+				}),
+			],
+		});
+
+		const allocations = buildAllocations(
+			flag,
+			new Map([[10, [ddDev, ddProd]]]),
+		);
+
+		expect(allocations.map((allocation) => allocation.environment_id)).toEqual([
+			'dd-dev',
+			'dd-prod',
+		]);
+	});
+
 	it('skips allocations with zero total weight', () => {
 		const flag = makeFlag({
 			id: 1,
@@ -881,6 +912,22 @@ describe('getEnvsToEnable', () => {
 		expect(result[0].id).toBe('dd-dev');
 	});
 
+	it('returns every Datadog environment mapped from an active Eppo environment', () => {
+		const flag = makeFlag({
+			id: 1,
+			key: 'test',
+			environments: [
+				{ id: 10, name: 'Production', active: true, is_production: true },
+			],
+		});
+
+		expect(
+			getEnvsToEnable(flag, new Map([[10, [ddDev, ddProd]]])).map(
+				(env) => env.id,
+			),
+		).toEqual(['dd-dev', 'dd-prod']);
+	});
+
 	it('returns empty when flag is inactive everywhere', () => {
 		const flag = makeFlag({
 			id: 1,
@@ -1040,6 +1087,31 @@ describe('buildDefaultVariantKeyPerEnv', () => {
 
 		expect(buildDefaultVariantKeyPerEnv(flag, mapping)).toEqual(
 			new Map([['dd-prod', 'same-1']]),
+		);
+	});
+
+	it('sets the default variant in every Datadog environment mapped from one Eppo environment', () => {
+		const flag = makeFlag({
+			id: 1,
+			key: 'test',
+			variations: [{ id: 100, name: 'on', variant_key: 'on' }],
+			allocations: [
+				makeAllocation({
+					id: 1,
+					environment_id: 10,
+					is_default: true,
+					variation_weight: [{ variation_id: 100, weight: 1 }],
+				}),
+			],
+		});
+
+		expect(
+			buildDefaultVariantKeyPerEnv(flag, new Map([[10, [ddDev, ddProd]]])),
+		).toEqual(
+			new Map([
+				['dd-dev', 'on'],
+				['dd-prod', 'on'],
+			]),
 		);
 	});
 

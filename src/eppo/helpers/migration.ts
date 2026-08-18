@@ -1,10 +1,12 @@
-import type {
-	DatadogAllocationForFlagCreation,
-	DatadogCondition,
-	DatadogCreateFlagRequest,
-	DatadogEnvironment,
-	DatadogTargetingRule,
-	SourceVariant,
+import {
+	type DatadogAllocationForFlagCreation,
+	type DatadogCondition,
+	type DatadogCreateFlagRequest,
+	type DatadogEnvironment,
+	type DatadogTargetingRule,
+	type EnvironmentMappingInput,
+	mappedDatadogEnvironments,
+	type SourceVariant,
 } from '../../datadog/types.js';
 import type { EppoAllocation, EppoFlag } from '../types.js';
 
@@ -254,12 +256,12 @@ function isPureDefaultAllocation(alloc: EppoAllocation): boolean {
  */
 export function buildDefaultVariantKeyPerEnv(
 	flag: EppoFlag,
-	mapping: Map<number, DatadogEnvironment>,
+	mapping: EnvironmentMappingInput<number>,
 ): Map<string, string> {
 	const variationIdToKey = buildVariationIdToKey(flag);
 
 	const result = new Map<string, string>();
-	for (const [eppoEnvId, ddEnv] of mapping) {
+	for (const [eppoEnvId, mappedEnvironments] of mapping) {
 		const defaultAlloc = (flag.allocations ?? []).find(
 			(a) => a.environment_id === eppoEnvId && isPureDefaultAllocation(a),
 		);
@@ -271,7 +273,9 @@ export function buildDefaultVariantKeyPerEnv(
 		if (nonZeroWeights.length !== 1) continue;
 		const key = variationIdToKey.get(nonZeroWeights[0].variation_id);
 		if (key === undefined) continue;
-		result.set(ddEnv.id, key);
+		for (const ddEnv of mappedDatadogEnvironments(mappedEnvironments)) {
+			result.set(ddEnv.id, key);
+		}
 	}
 	return result;
 }
@@ -282,7 +286,7 @@ export function buildDefaultVariantKeyPerEnv(
 // default_variant_key on the allocations-sync endpoint instead.
 export function buildAllocations(
 	flag: EppoFlag,
-	mapping: Map<number, DatadogEnvironment>,
+	mapping: EnvironmentMappingInput<number>,
 	fingerprintLookup?: Map<string, string>,
 	savedFilterLookup?: Map<number, string>,
 	defaultVariantKeyPerEnv?: Map<string, string>,
@@ -298,7 +302,7 @@ export function buildAllocations(
 	);
 	const allocations: DatadogAllocationForFlagCreation[] = [];
 
-	for (const [eppoEnvId, ddEnv] of mapping) {
+	for (const [eppoEnvId, mappedEnvironments] of mapping) {
 		const envAllocs = eppoAllocations.filter(
 			(a) => a.environment_id === eppoEnvId,
 		);
@@ -308,51 +312,53 @@ export function buildAllocations(
 			continue;
 		}
 
-		for (const eppoAlloc of envAllocs) {
-			if (
-				defaultVariantKeyPerEnv?.has(ddEnv.id) &&
-				isPureDefaultAllocation(eppoAlloc)
-			)
-				continue;
+		for (const ddEnv of mappedDatadogEnvironments(mappedEnvironments)) {
+			for (const eppoAlloc of envAllocs) {
+				if (
+					defaultVariantKeyPerEnv?.has(ddEnv.id) &&
+					isPureDefaultAllocation(eppoAlloc)
+				)
+					continue;
 
-			// A zero-exposure allocation is a pure passthrough in Eppo — no users are
-			// ever served from it. Datadog has no passthrough concept, so skip it.
-			if (eppoAlloc.percent_exposure === 0) continue;
+				// A zero-exposure allocation is a pure passthrough in Eppo — no users are
+				// ever served from it. Datadog has no passthrough concept, so skip it.
+				if (eppoAlloc.percent_exposure === 0) continue;
 
-			// Map variant weights: Eppo variation_id → DD variant_key
-			const rawWeights = eppoAlloc.variation_weight ?? [];
-			const totalWeight = rawWeights.reduce((sum, w) => sum + w.weight, 0);
+				// Map variant weights: Eppo variation_id → DD variant_key
+				const rawWeights = eppoAlloc.variation_weight ?? [];
+				const totalWeight = rawWeights.reduce((sum, w) => sum + w.weight, 0);
 
-			const variantWeights = rawWeights
-				.filter((w) => variationIdToKey.has(w.variation_id))
-				.map((w) => ({
-					variant_key: variationIdToKey.get(w.variation_id) ?? '',
-					value: totalWeight > 0 ? (w.weight / totalWeight) * 100 : 0,
-				}));
+				const variantWeights = rawWeights
+					.filter((w) => variationIdToKey.has(w.variation_id))
+					.map((w) => ({
+						variant_key: variationIdToKey.get(w.variation_id) ?? '',
+						value: totalWeight > 0 ? (w.weight / totalWeight) * 100 : 0,
+					}));
 
-			if (variantWeights.length === 0) continue;
+				if (variantWeights.length === 0) continue;
 
-			// Map targeting rules
-			const targetingRules = buildTargetingRules(
-				eppoAlloc,
-				fingerprintLookup,
-				savedFilterLookup,
-			);
+				// Map targeting rules
+				const targetingRules = buildTargetingRules(
+					eppoAlloc,
+					fingerprintLookup,
+					savedFilterLookup,
+				);
 
-			const allocationKey =
-				eppoAlloc.key ||
-				`${flag.key}-${ddEnv.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${eppoAlloc.id}`;
+				const allocationKey =
+					eppoAlloc.key ||
+					`${flag.key}-${ddEnv.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${eppoAlloc.id}`;
 
-			allocations.push({
-				environment_id: ddEnv.id,
-				name: eppoAlloc.name || ddEnv.name,
-				key: allocationKey,
-				type: 'FEATURE_GATE',
-				variant_weights: variantWeights,
-				...(targetingRules.length > 0
-					? { targeting_rules: targetingRules }
-					: {}),
-			});
+				allocations.push({
+					environment_id: ddEnv.id,
+					name: eppoAlloc.name || ddEnv.name,
+					key: allocationKey,
+					type: 'FEATURE_GATE',
+					variant_weights: variantWeights,
+					...(targetingRules.length > 0
+						? { targeting_rules: targetingRules }
+						: {}),
+				});
+			}
 		}
 	}
 
@@ -362,14 +368,16 @@ export function buildAllocations(
 // Determine which DD environments should be enabled for a flag
 export function getEnvsToEnable(
 	flag: EppoFlag,
-	mapping: Map<number, DatadogEnvironment>,
+	mapping: EnvironmentMappingInput<number>,
 ): DatadogEnvironment[] {
 	const activeEnvIds = new Set(
 		(flag.environments ?? []).filter((e) => e.active).map((e) => e.id),
 	);
 	const envsToEnable: DatadogEnvironment[] = [];
-	for (const [eppoEnvId, ddEnv] of mapping) {
-		if (activeEnvIds.has(eppoEnvId)) envsToEnable.push(ddEnv);
+	for (const [eppoEnvId, mappedEnvironments] of mapping) {
+		if (activeEnvIds.has(eppoEnvId)) {
+			envsToEnable.push(...mappedDatadogEnvironments(mappedEnvironments));
+		}
 	}
 	return envsToEnable;
 }

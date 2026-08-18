@@ -36,6 +36,7 @@ import {
 import type {
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,
+	EnvironmentMapping,
 	MigrationEnvironmentMapping,
 } from '../datadog/types.js';
 import { CONFIG_DIR } from '../helpers/config.js';
@@ -108,14 +109,28 @@ function flagLabel(flag: EppoFlag, inDatadog: boolean): string {
 async function linkEnvironments(
 	eppoEnvs: EppoFlagEnvironment[],
 	ddEnvs: DatadogEnvironment[],
-	previousMapping: Map<number, DatadogEnvironment>,
-): Promise<Map<number, DatadogEnvironment> | null> {
-	const mapping = new Map<number, DatadogEnvironment>(previousMapping);
+	previousMapping: EnvironmentMapping<number>,
+): Promise<EnvironmentMapping<number> | null> {
+	const selectedIds = new Set(eppoEnvs.map((env) => env.id));
+	const mapping = new Map(
+		[...previousMapping].filter(([id]) => selectedIds.has(id)),
+	);
 	let i = 0;
+	let requiresSelection = false;
 
 	while (i < eppoEnvs.length) {
 		const eppoEnv = eppoEnvs[i];
-		const prevChoice = mapping.get(eppoEnv.id);
+		const previousIds = new Set(
+			(mapping.get(eppoEnv.id) ?? []).map((env) => env.id),
+		);
+		const assignedElsewhere = new Set(
+			[...mapping]
+				.filter(([id]) => id !== eppoEnv.id)
+				.flatMap(([, environments]) => environments.map((env) => env.id)),
+		);
+		const availableEnvironments = ddEnvs.filter(
+			(env) => !assignedElsewhere.has(env.id),
+		);
 
 		clearScreen();
 		await printHeader();
@@ -129,26 +144,31 @@ async function linkEnvironments(
 				(eppoEnv.is_production ? `  ${chalk.bgRed.white(' Prod ')}` : ''),
 		);
 		console.log();
+		if (requiresSelection) {
+			console.log(
+				chalk.yellow(
+					'  Please select at least one matching Datadog environment.\n',
+				),
+			);
+		}
 
-		type LinkChoice = DatadogEnvironment | null;
-
-		const result = await select<LinkChoice>({
-			message: 'Select the matching Datadog environment:',
-			choices: [
-				{ name: chalk.dim('← Back'), value: null, short: 'Back' },
-				...ddEnvs.map((env) => ({
-					name: ddEnvLabel(env),
-					value: env as LinkChoice,
-					short: env.name,
-				})),
-			],
-			default: prevChoice,
+		const result = await filterableCheckbox<DatadogEnvironment>({
+			message: 'Select matching Datadog environments:',
+			choices: availableEnvironments.map((env) => ({
+				name: ddEnvLabel(env),
+				value: env,
+				checked: previousIds.has(env.id),
+			})),
 		});
 
 		if (result === null) {
+			requiresSelection = false;
 			if (i === 0) return null; // back to Eppo env selection
 			i--;
+		} else if (result.length === 0) {
+			requiresSelection = true;
 		} else {
+			requiresSelection = false;
 			mapping.set(eppoEnv.id, result);
 			i++;
 		}
@@ -285,7 +305,7 @@ async function confirmMigration(
 	eppoApiKey: string,
 	ddApiKey: string,
 	ddAppKey: string,
-	envMapping: Map<number, DatadogEnvironment>,
+	envMapping: EnvironmentMapping<number>,
 	datadogKeys: Map<string, string>,
 	provider: string,
 	site: string,
@@ -420,17 +440,19 @@ async function confirmMigration(
 	let runner: MigrationRunnerHandle | undefined;
 
 	const environmentMapping: MigrationEnvironmentMapping[] = [];
-	for (const [eppoEnvId, ddEnv] of envMapping) {
+	for (const [eppoEnvId, ddEnvs] of envMapping) {
 		const eppoEnv = flags
 			.flatMap((f) => f.environments ?? [])
 			.find((e) => e.id === eppoEnvId);
-		environmentMapping.push({
-			sourceEnvId: eppoEnvId,
-			sourceEnvName: eppoEnv?.name ?? String(eppoEnvId),
-			datadogEnvId: ddEnv.id,
-			datadogEnvName: ddEnv.name,
-			datadogDdEnvNames: ddEnv.queries,
-		});
+		for (const ddEnv of ddEnvs) {
+			environmentMapping.push({
+				sourceEnvId: eppoEnvId,
+				sourceEnvName: eppoEnv?.name ?? String(eppoEnvId),
+				datadogEnvId: ddEnv.id,
+				datadogEnvName: ddEnv.name,
+				datadogDdEnvNames: ddEnv.queries,
+			});
+		}
 	}
 
 	const sigintHandler = () => {
@@ -1158,7 +1180,7 @@ export async function runEppoMigration(
 	const eppoEnvironments = extractEnvironments(flags);
 
 	let prevSelectedEnvs: EppoFlagEnvironment[] = [];
-	let prevEnvMapping = new Map<number, DatadogEnvironment>();
+	let prevEnvMapping: EnvironmentMapping<number> = new Map();
 	let prevSelectedFlags: EppoFlag[] = [];
 
 	// eslint-disable-next-line no-constant-condition
@@ -1249,12 +1271,13 @@ export function resolveEppoEnvMap(
 	eppoEnvs: EppoFlagEnvironment[],
 	datadogEnvs: DatadogEnvironment[],
 ): {
-	envMapping: Map<number, DatadogEnvironment>;
+	envMapping: EnvironmentMapping<number>;
 	selectedEnvs: EppoFlagEnvironment[];
 } {
-	const envMapping = new Map<number, DatadogEnvironment>();
+	const envMapping: EnvironmentMapping<number> = new Map();
 	const selectedEnvs: EppoFlagEnvironment[] = [];
 	const ddByName = new Map(datadogEnvs.map((e) => [e.name, e]));
+	const sourceByDatadogEnvironment = new Map<string, number>();
 	for (const [src, dst] of pairs) {
 		const eppoEnv = eppoEnvs.find((e) => e.name === src);
 		if (!eppoEnv) {
@@ -1270,8 +1293,24 @@ export function resolveEppoEnvMap(
 				`Datadog environment not found: "${dst}". Available: ${available}`,
 			);
 		}
-		envMapping.set(eppoEnv.id, ddEnv);
-		selectedEnvs.push(eppoEnv);
+		const existingSource = sourceByDatadogEnvironment.get(ddEnv.id);
+		if (existingSource !== undefined && existingSource !== eppoEnv.id) {
+			const existingEnvironment = eppoEnvs.find(
+				(env) => env.id === existingSource,
+			);
+			throw new Error(
+				`Datadog environment "${ddEnv.name}" cannot be mapped from both Eppo environments "${existingEnvironment?.name ?? existingSource}" and "${eppoEnv.name}"`,
+			);
+		}
+		sourceByDatadogEnvironment.set(ddEnv.id, eppoEnv.id);
+		const mappedEnvironments = envMapping.get(eppoEnv.id) ?? [];
+		if (!mappedEnvironments.some((env) => env.id === ddEnv.id)) {
+			mappedEnvironments.push(ddEnv);
+		}
+		envMapping.set(eppoEnv.id, mappedEnvironments);
+		if (!selectedEnvs.some((env) => env.id === eppoEnv.id)) {
+			selectedEnvs.push(eppoEnv);
+		}
 	}
 	return { envMapping, selectedEnvs };
 }
@@ -1347,7 +1386,7 @@ async function runEppoMigrationNonInteractive(
 
 	const eppoEnvironments = extractEnvironments(flags);
 
-	let envMapping: Map<number, DatadogEnvironment>;
+	let envMapping: EnvironmentMapping<number>;
 	let selectedFlags: EppoFlag[];
 	try {
 		({ envMapping } = resolveEppoEnvMap(
