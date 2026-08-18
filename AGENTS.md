@@ -2,6 +2,13 @@
 
 Guidance for future changes to dd-flag-migration.
 
+## Committing and Opening PRs
+
+Use [Conventional Commits](https://www.conventionalcommits.org/) for every commit message and PR title. Prefix the summary with a type followed by a colon and a space, e.g. `feat: `, `fix: `, `chore: `, `docs: `, `refactor: `, `test: `, `ci: `, `build: `, `perf: `.
+
+- Commit messages: `feat: add Eppo audience sync to re-migration path`
+- PR titles: same prefix on the PR title, e.g. `fix: preserve variant UUID on source-side rename`
+
 ## Re-migration sync contract
 
 Customers typically run their source platform (LaunchDarkly or Eppo) and Datadog in parallel for weeks-to-months while migrating the code that evaluates flags. During this dual-run window the **source platform is the source of truth** — customers continue to edit flags there. The migration tool's job on re-migration is to make Datadog match.
