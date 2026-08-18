@@ -313,7 +313,7 @@ npx @datadog/dd-flag-migration bulk-enable
 yarn bulk-enable
 ```
 
-The interactive flow uses the same migrated-flag selection as `bulk-permissions`, including filtering by flag key or tag. After selecting flags, select one or more Datadog environments and confirm the update. Production environments are clearly marked and require an explicit confirmation.
+First select one or more Datadog environments, then select the migrated flags to enable. The flag picker supports filtering by flag key or tag; press **Tab** for advanced filters scoped to the selected environments. Select **needs-enabling** to hide flags that are already enabled in every selected environment. Flags whose status cannot be confirmed remain visible under **needs-enabling** so they are not silently omitted. Production environments are clearly marked and require an explicit confirmation.
 
 Updates run one at a time and use the shared Datadog rate-limit and retry handling. A failure for one flag/environment pair does not stop the remaining updates. Every confirmed update writes a `bulk-enable-export-<timestamp>.xlsx` report in the current directory. The report distinguishes newly enabled pairs, already-enabled pairs, approval requests, failures, and successful writes whose prior status could not be read.
 

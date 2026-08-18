@@ -3,8 +3,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, jest } from '@jest/globals';
 import ExcelJS from 'exceljs';
+import {
+	BULK_ENABLE_FILTER_CATEGORIES,
+	ENABLED_IN_ALL_FILTER_ID,
+	flagEnablementCategories,
+	NEEDS_ENABLING_FILTER_ID,
+} from '../src/bulk-enable/filtering.js';
 import { processBulkEnablePairs } from '../src/bulk-enable/process.js';
 import { exportBulkEnableChangesToXlsx } from '../src/bulk-enable/xlsx.js';
+import { itemMatchesFilters } from '../src/components/filter-matching.js';
 import type {
 	DatadogEnvironment,
 	DatadogFlagEntry,
@@ -29,6 +36,67 @@ const environments: DatadogEnvironment[] = [
 	{ id: 'env-1', name: 'Development', is_production: false, queries: [] },
 	{ id: 'env-2', name: 'Production', is_production: true, queries: [] },
 ];
+
+describe('bulk enable filtering', () => {
+	it('separates flags needing work from flags enabled in every selected environment', () => {
+		const needsEnabling: DatadogFlagEntry = {
+			...flags[0],
+			environmentStatuses: new Map([
+				['env-1', 'ENABLED'],
+				['env-2', 'DISABLED'],
+			]),
+		};
+		const enabledInAll: DatadogFlagEntry = {
+			...flags[1],
+			environmentStatuses: new Map([
+				['env-1', 'ENABLED'],
+				['env-2', 'ENABLED'],
+				['unselected-env', 'DISABLED'],
+			]),
+		};
+
+		const needsCategories = flagEnablementCategories(
+			needsEnabling,
+			environments,
+		);
+		const enabledCategories = flagEnablementCategories(
+			enabledInAll,
+			environments,
+		);
+
+		expect(needsCategories).toEqual([NEEDS_ENABLING_FILTER_ID]);
+		expect(enabledCategories).toEqual([ENABLED_IN_ALL_FILTER_ID]);
+		expect(
+			itemMatchesFilters(
+				{ migrated: true, categories: needsCategories },
+				new Set([NEEDS_ENABLING_FILTER_ID]),
+				BULK_ENABLE_FILTER_CATEGORIES,
+			),
+		).toBe(true);
+		expect(
+			itemMatchesFilters(
+				{ migrated: true, categories: enabledCategories },
+				new Set([NEEDS_ENABLING_FILTER_ID]),
+				BULK_ENABLE_FILTER_CATEGORIES,
+			),
+		).toBe(false);
+	});
+
+	it('keeps flags with missing status data in needs-enabling', () => {
+		expect(flagEnablementCategories(flags[0], environments)).toEqual([
+			NEEDS_ENABLING_FILTER_ID,
+		]);
+		expect(
+			flagEnablementCategories(
+				{
+					...flags[0],
+					environmentStatuses: new Map([['env-1', 'ENABLED']]),
+				},
+				environments,
+			),
+		).toEqual([NEEDS_ENABLING_FILTER_ID]);
+	});
+});
 
 describe('bulk enable processing', () => {
 	it('processes pairs sequentially, skips enabled pairs, and continues after failures', async () => {

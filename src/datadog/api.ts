@@ -11,6 +11,7 @@ import type {
 	DatadogCreatedFlag,
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,
+	DatadogEnvironmentStatus,
 	DatadogFlagEntry,
 	DatadogTeam,
 	DatadogVariantDetail,
@@ -208,6 +209,10 @@ type JsonApiFlag = {
 		name: string;
 		tags?: string[];
 		migration_metadata?: MigrationMetadata;
+		feature_flag_environments?: Array<{
+			environment_id: string;
+			status: DatadogEnvironmentStatus;
+		}>;
 	};
 };
 
@@ -287,11 +292,22 @@ export async function fetchDatadogFlags(
 		);
 		const data = response.data.data ?? [];
 		for (const f of data) {
+			const flagEnvironments = f.attributes.feature_flag_environments;
 			allFlags.push({
 				id: f.id,
 				key: f.attributes.key,
 				...(f.attributes.tags !== undefined ? { tags: f.attributes.tags } : {}),
 				migration_metadata: f.attributes.migration_metadata,
+				...(flagEnvironments !== undefined
+					? {
+							environmentStatuses: new Map(
+								flagEnvironments.map(
+									(environment) =>
+										[environment.environment_id, environment.status] as const,
+								),
+							),
+						}
+					: {}),
 			});
 		}
 		const nextOffset = nextFeatureFlagOffset(

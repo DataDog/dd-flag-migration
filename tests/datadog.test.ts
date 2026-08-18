@@ -299,6 +299,10 @@ describe('fetchDatadogFlags', () => {
 							project_key: 'proj-1',
 							flag_key: 'flag-a',
 						},
+						feature_flag_environments: [
+							{ environment_id: 'env-enabled', status: 'ENABLED' },
+							{ environment_id: 'env-disabled', status: 'DISABLED' },
+						],
 					},
 				},
 				{
@@ -316,6 +320,10 @@ describe('fetchDatadogFlags', () => {
 				key: 'flag-a',
 				tags: ['project:health-100'],
 				migration_metadata: { project_key: 'proj-1', flag_key: 'flag-a' },
+				environmentStatuses: new Map([
+					['env-enabled', 'ENABLED'],
+					['env-disabled', 'DISABLED'],
+				]),
 			},
 			{
 				id: 'uuid-2',

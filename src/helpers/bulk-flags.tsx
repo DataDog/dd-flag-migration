@@ -1,5 +1,6 @@
 import chalk from 'chalk';
 import { filterableCheckbox } from '../components/FilterableCheckbox.js';
+import type { FilterCategory } from '../components/filter-matching.js';
 import { fetchDatadogFlags, fetchFlagTags } from '../datadog/api.js';
 import type { DatadogFlagEntry } from '../datadog/types.js';
 
@@ -23,8 +24,14 @@ export async function loadMigratedFlagsWithTags(
 	return flags.sort((a, b) => a.key.localeCompare(b.key));
 }
 
+export interface MigratedFlagSelectionOptions {
+	filterCategories?: FilterCategory[];
+	categoriesForFlag?: (flag: DatadogFlagEntry) => string[];
+}
+
 export async function selectMigratedFlags(
 	flags: DatadogFlagEntry[],
+	options: MigratedFlagSelectionOptions = {},
 ): Promise<DatadogFlagEntry[] | null> {
 	const pageSize = Math.max(5, (process.stdout.rows ?? 24) - 9);
 	return filterableCheckbox<DatadogFlagEntry>({
@@ -37,8 +44,10 @@ export async function selectMigratedFlags(
 					(tags.length > 0 ? chalk.gray(`  (${tags.join(', ')})`) : ''),
 				value: flag,
 				searchTerms: [flag.key, ...tags],
+				categories: options.categoriesForFlag?.(flag),
 			};
 		}),
 		pageSize,
+		filterCategories: options.filterCategories,
 	});
 }

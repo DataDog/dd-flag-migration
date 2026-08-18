@@ -1,5 +1,9 @@
 #!/usr/bin/env node
 import chalk from 'chalk';
+import {
+	BULK_ENABLE_FILTER_CATEGORIES,
+	flagEnablementCategories,
+} from './bulk-enable/filtering.js';
 import { processBulkEnablePairs } from './bulk-enable/process.js';
 import { exportBulkEnableChangesToXlsx } from './bulk-enable/xlsx.js';
 import { confirm } from './components/Confirm.js';
@@ -107,19 +111,23 @@ async function main(): Promise<void> {
 		return;
 	}
 
-	const selectedFlags = await selectMigratedFlags(flags);
-	if (selectedFlags === null) throw new PromptCancelledError();
-	if (selectedFlags.length === 0) {
-		console.log(chalk.yellow('\nNo flags selected — nothing to enable.'));
-		return;
-	}
-
 	const selectedEnvironments = await selectEnvironments(environments);
 	if (selectedEnvironments === null) throw new PromptCancelledError();
 	if (selectedEnvironments.length === 0) {
 		console.log(
 			chalk.yellow('\nNo environments selected — nothing to enable.'),
 		);
+		return;
+	}
+
+	const selectedFlags = await selectMigratedFlags(flags, {
+		filterCategories: BULK_ENABLE_FILTER_CATEGORIES,
+		categoriesForFlag: (flag) =>
+			flagEnablementCategories(flag, selectedEnvironments),
+	});
+	if (selectedFlags === null) throw new PromptCancelledError();
+	if (selectedFlags.length === 0) {
+		console.log(chalk.yellow('\nNo flags selected — nothing to enable.'));
 		return;
 	}
 

@@ -244,6 +244,44 @@ describe('FilterableCheckboxView', () => {
 		await tick();
 		expect(done).toHaveBeenCalledWith(['a', 'b']);
 	});
+
+	it('opens advanced filters with Tab and applies a category filter', async () => {
+		const done = jest.fn<(v: string[]) => void>();
+		const cancel = jest.fn();
+		const { stdin, lastFrame } = render(
+			<FilterableCheckboxView<string>
+				message="Pick"
+				choices={[
+					{ name: 'needs work', value: 'needs', categories: ['needs'] },
+					{ name: 'already done', value: 'done', categories: ['done'] },
+				]}
+				filterCategories={[
+					{ id: 'needs', label: 'needs', description: 'Needs work.' },
+					{ id: 'done', label: 'done', description: 'Already done.' },
+				]}
+				onDone={done}
+				onCancel={cancel}
+			/>,
+		);
+		await ready();
+		stdin.write('\t');
+		await tick();
+		expect(stripAnsi(lastFrame() ?? '')).toContain('Filter flags by category');
+
+		stdin.write(' ');
+		await tick();
+		stdin.write('\r');
+		await tick();
+		const filteredFrame = stripAnsi(lastFrame() ?? '');
+		expect(filteredFrame).toContain('needs work');
+		expect(filteredFrame).not.toContain('already done');
+
+		stdin.write('\x01');
+		await tick();
+		stdin.write('\r');
+		await tick();
+		expect(done).toHaveBeenCalledWith(['needs']);
+	});
 });
 
 describe('FilterableSelectView', () => {
