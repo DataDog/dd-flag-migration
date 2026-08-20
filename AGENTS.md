@@ -2,6 +2,24 @@
 
 Guidance for future changes to dd-flag-migration.
 
+## API specifications
+
+Use these specifications as the source of truth when working on the API integrations:
+
+- [Datadog Feature Flag API](https://github.com/DataDog/datadog-api-spec/blob/master/spec/v2/feature_flags.yaml)
+- [LaunchDarkly API](https://app.launchdarkly.com/api/v2/openapi.json)
+- [Eppo API](https://eppo.cloud/api/docs-json)
+
+## API authentication
+
+Never commit API keys or tokens. DD_SITE is fine to store locally for convenience, but otherwise do not save credentials.
+
+Use the following for authentication when building new scripts that require API integrations:
+
+- **Datadog:** Set `DD_API_KEY`, `DD_APP_KEY`, and `DD_SITE` (the Datadog site host, such as `datadoghq.com` or `us5.datadoghq.com`). Requests send the keys as the `dd-api-key` and `dd-application-key` headers. `scripts/get-datadog-flag.sh` also accepts the site explicitly with `--site`. If the Datadog site is not available from the environment, command arguments, or saved configuration, ask the user for it before making API requests; do not assume a default site.
+- **LaunchDarkly:** Set `LAUNCHDARKLY_API_KEY`. The scripts send it directly in the `Authorization` header to `https://app.launchdarkly.com`.
+- **Eppo:** `yarn migrate` requires `EPPO_API_KEY` when Eppo is selected as the source provider (alongside the Datadog keys). The migration client sends it in the `x-eppo-token` header to `https://eppo.cloud`. The standalone `scripts/eppo-raw.sh` helper currently reads `eppoApiKey` from `$HOME/.dd-flag-migration/config.json` and uses the same header.
+
 ## Committing and Opening PRs
 
 Use [Conventional Commits](https://www.conventionalcommits.org/) for every commit message and PR title. Prefix the summary with a type followed by a colon and a space, e.g. `feat: `, `fix: `, `chore: `, `docs: `, `refactor: `, `test: `, `ci: `, `build: `, `perf: `.
