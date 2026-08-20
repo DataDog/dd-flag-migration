@@ -471,7 +471,7 @@ function flagLabel(
 		case 'same_project':
 		case 'manual':
 			indicator = chalk.green('✓');
-			badge = `  ${chalk.bgGreen.black(' In Datadog — will sync targeting ')}`;
+			badge = `  ${chalk.bgGreen.black(' In Datadog ')}`;
 			break;
 		case 'cross_project':
 			if (conflictResolution?.action === 'prefix') {
@@ -756,9 +756,8 @@ export async function selectFlags(
 	);
 	if (inDatadogCount > 0) {
 		console.log(
-			chalk.gray(
-				`  ${inDatadogCount} flag(s) already exist in Datadog (will sync targeting for new environments) `,
-			) + chalk.green('✓'),
+			chalk.gray(`  ${inDatadogCount} flag(s) already exist in Datadog `) +
+				chalk.green('✓'),
 		);
 	}
 	if (prefixedCount > 0) {

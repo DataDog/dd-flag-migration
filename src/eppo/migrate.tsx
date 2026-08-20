@@ -98,9 +98,7 @@ function flagLabel(flag: EppoFlag, inDatadog: boolean): string {
 	const indicator = inDatadog ? chalk.green('✓') : ' ';
 	const name = flag.name;
 	const key = chalk.gray(`(${flag.key})`);
-	const badge = inDatadog
-		? `  ${chalk.bgGreen.black(' In Datadog — will sync targeting ')}`
-		: '';
+	const badge = inDatadog ? `  ${chalk.bgGreen.black(' In Datadog ')}` : '';
 	return `${indicator}  ${name}  ${key}${badge}`;
 }
 
@@ -242,9 +240,8 @@ export async function selectFlags(
 	);
 	if (inDatadogCount > 0) {
 		console.log(
-			chalk.gray(
-				`  ${inDatadogCount} flag(s) already exist in Datadog (will sync targeting for new environments) `,
-			) + chalk.green('✓'),
+			chalk.gray(`  ${inDatadogCount} flag(s) already exist in Datadog `) +
+				chalk.green('✓'),
 		);
 	}
 	console.log();
