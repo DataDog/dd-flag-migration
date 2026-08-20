@@ -13,13 +13,16 @@ export async function promptForDatadogSite(
 		return datadogSiteArg;
 	}
 
-	const stored = getDatadogSite();
-	if (stored) {
-		const useStored = await confirm({
-			message: `Use your saved Datadog site (${stored})?`,
-			default: true,
-		});
-		if (useStored) return stored;
+	const envSite = process.env.DD_SITE?.trim();
+	if (!envSite) {
+		const stored = getDatadogSite();
+		if (stored) {
+			const useStored = await confirm({
+				message: `Use your saved Datadog site (${stored})?`,
+				default: true,
+			});
+			if (useStored) return stored;
+		}
 	}
 
 	console.log(
@@ -27,7 +30,10 @@ export async function promptForDatadogSite(
 	);
 	const site = await input({
 		message: 'Which Datadog site does your org use?',
-		default: 'datadoghq.com',
+		default: envSite ?? 'datadoghq.com',
+		hint: envSite
+			? 'Pre-filled from DD_SITE environment variable; press Enter to accept this value.'
+			: undefined,
 		validate: (value) =>
 			value.trim().length > 0 ? true : 'Site cannot be empty',
 	});

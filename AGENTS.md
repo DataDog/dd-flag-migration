@@ -16,7 +16,7 @@ Never commit API keys or tokens. DD_SITE is fine to store locally for convenienc
 
 Use the following for authentication when building new scripts that require API integrations:
 
-- **Datadog:** Set `DD_API_KEY`, `DD_APP_KEY`, and `DD_SITE` (the Datadog site host, such as `datadoghq.com` or `us5.datadoghq.com`). Requests send the keys as the `dd-api-key` and `dd-application-key` headers. `scripts/get-datadog-flag.sh` also accepts the site explicitly with `--site`. If the Datadog site is not available from the environment, command arguments, or saved configuration, ask the user for it before making API requests; do not assume a default site.
+- **Datadog:** Set `DD_API_KEY`, `DD_APP_KEY`, and `DD_SITE` (the Datadog site host, such as `datadoghq.com` or `us5.datadoghq.com`). Requests send the keys as the `dd-api-key` and `dd-application-key` headers. `scripts/get-datadog-flag.sh` requires `DD_SITE`. For the CLI, an explicit `--datadog-site` takes precedence over `DD_SITE`; interactive prompts may also use the saved site preference when neither is provided.
 - **LaunchDarkly:** Set `LAUNCHDARKLY_API_KEY`. The scripts send it directly in the `Authorization` header to `https://app.launchdarkly.com`.
 - **Eppo:** `yarn migrate` requires `EPPO_API_KEY` when Eppo is selected as the source provider (alongside the Datadog keys). The migration client sends it in the `x-eppo-token` header to `https://eppo.cloud`. The standalone `scripts/eppo-raw.sh` helper currently reads `eppoApiKey` from `$HOME/.dd-flag-migration/config.json` and uses the same header.
 

@@ -102,7 +102,7 @@ export function HelpScreen(): JSX.Element {
 			render: () => (
 				<Text>
 					{
-						'  --datadog-site=<site>        Set the Datadog site non-interactively'
+						'  --datadog-site=<site>        Set the Datadog site (overrides DD_SITE)'
 					}
 				</Text>
 			),
@@ -231,7 +231,7 @@ export function HelpScreen(): JSX.Element {
 			render: () => (
 				<Text>
 					{
-						'  --datadog-site=<site>        Set the Datadog site non-interactively'
+						'  --datadog-site=<site>        Set the Datadog site (overrides DD_SITE)'
 					}
 				</Text>
 			),

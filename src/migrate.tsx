@@ -112,9 +112,9 @@ async function main(): Promise<void> {
 			} else {
 				requireEnvVars(['LAUNCHDARKLY_API_KEY']);
 			}
-			// Already validated upstream.
-			// biome-ignore lint/style/noNonNullAssertion: validated in parseMigrateArgs
-			const ddSite = args.datadogSite!;
+			// An explicit CLI value takes precedence; DD_SITE keeps automated jobs
+			// from needing to duplicate their standard Datadog configuration.
+			const ddSite = args.datadogSite ?? requireEnvVars(['DD_SITE']).DD_SITE;
 			await checkRequiredPermissions(ddApiKey, ddAppKey, ddSite);
 
 			if (ni.provider === 'launchdarkly') {

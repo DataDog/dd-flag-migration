@@ -161,11 +161,6 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 				'--project is required in non-interactive mode for LaunchDarkly',
 			);
 		}
-		if (!datadogSite) {
-			throw new ArgParseError(
-				'--datadog-site is required in non-interactive mode',
-			);
-		}
 		return {
 			dryRun,
 			datadogSite,

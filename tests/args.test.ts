@@ -141,15 +141,14 @@ describe('parseMigrateArgs', () => {
 		expect(args.nonInteractive?.projectKey).toBeUndefined();
 	});
 
-	it('requires --datadog-site in non-interactive mode', () => {
-		expect(() =>
-			parseMigrateArgs([
-				'--interactive=false',
-				'--provider=eppo',
-				'--env-map=p,p',
-				'--feature-flag=x',
-			]),
-		).toThrow(/--datadog-site is required/);
+	it('allows DD_SITE to provide the site in non-interactive mode', () => {
+		const args = parseMigrateArgs([
+			'--interactive=false',
+			'--provider=eppo',
+			'--env-map=p,p',
+			'--feature-flag=x',
+		]);
+		expect(args.datadogSite).toBeUndefined();
 	});
 
 	it('rejects malformed --env-map (missing comma)', () => {
