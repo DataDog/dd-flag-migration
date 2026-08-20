@@ -2,6 +2,10 @@
 
 Guidance for future changes to dd-flag-migration.
 
+## Customer-facing terminology
+
+Use the term "targeting filters" or "targeting" instead of "allocations" in customer-facing text.
+
 ## API specifications
 
 Use these specifications as the source of truth when working on the API integrations:
