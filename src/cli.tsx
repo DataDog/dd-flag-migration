@@ -27,6 +27,9 @@ if (subcommand === '--version' || subcommand === '-V') {
 } else if (subcommand === 'migrate') {
 	process.argv.splice(2, 1);
 	await import('./migrate.js');
+} else if (subcommand === 'sync-tags') {
+	process.argv.splice(2, 1);
+	await import('./sync-tags.js');
 } else if (subcommand === 'evaluate') {
 	process.argv.splice(2, 1);
 	await import('./evaluate.js');

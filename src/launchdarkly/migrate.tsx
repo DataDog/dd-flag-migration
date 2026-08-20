@@ -501,7 +501,9 @@ function flagLabel(
 
 // ─── Prompt Steps ────────────────────────────────────────────────────────────
 
-async function selectProject(projects: LDProject[]): Promise<LDProject | null> {
+export async function selectProject(
+	projects: LDProject[],
+): Promise<LDProject | null> {
 	console.log();
 	console.log(
 		chalk.bold(
@@ -722,7 +724,7 @@ export function flagCategories(
 	return ['inactive'];
 }
 
-async function selectFlags(
+export async function selectFlags(
 	flags: LDFlag[],
 	datadogFlags: DatadogFlagEntry[],
 	projectKey: string,

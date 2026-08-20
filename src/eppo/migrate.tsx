@@ -84,7 +84,7 @@ function envLabel(env: EppoFlagEnvironment, flagCount: number): string {
 	return `${env.name}${prodBadge}  ${chalk.gray(`(${flagCount} flags)`)}`;
 }
 
-function datadogIdForEppoFlag(
+export function datadogIdForEppoFlag(
 	flag: EppoFlag,
 	datadogKeys: Map<string, string>,
 ): string | undefined {
@@ -215,7 +215,7 @@ async function selectEnvironments(
 	});
 }
 
-async function selectFlags(
+export async function selectFlags(
 	flags: EppoFlag[],
 	datadogKeys: Map<string, string>,
 	selectedEnvs: EppoFlagEnvironment[],

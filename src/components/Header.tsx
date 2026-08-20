@@ -78,6 +78,7 @@ export const Header = ({ subtitle }: HeaderProps): JSX.Element => {
 // Subtitle constants, padded to the interior width (42 chars).
 export const HEADER_SUBTITLES = {
 	migrate: '            Migrate to Datadog            ',
+	migrateTags: '           Sync Tags to Datadog           ',
 	eppo: '              Eppo → Datadog              ',
 	launchdarkly: '          LaunchDarkly → Datadog          ',
 	evaluate: '           Evaluate Migration             ',

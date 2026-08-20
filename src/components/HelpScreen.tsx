@@ -49,6 +49,16 @@ export function HelpScreen(): JSX.Element {
 			),
 		},
 		{
+			id: 'migrate-tags-command',
+			render: () => (
+				<Text>
+					{'  '}
+					<Text color="cyan">sync-tags</Text>
+					{'   Sync tags from Eppo or LaunchDarkly onto migrated Datadog flags'}
+				</Text>
+			),
+		},
+		{
 			id: 'evaluate-command',
 			render: () => (
 				<Text>
@@ -189,6 +199,95 @@ export function HelpScreen(): JSX.Element {
 		},
 		{ id: 'space-required', render: () => <Text> </Text> },
 		{
+			id: 'migrate-tags-title',
+			render: () => (
+				<Text>
+					<Text bold>Options for</Text> <Text color="cyan">sync-tags</Text>:
+				</Text>
+			),
+		},
+		{
+			id: 'mt-dry-run',
+			render: () => (
+				<Text>
+					{
+						'  --dry-run                    Preview tag changes without writing to Datadog'
+					}
+				</Text>
+			),
+		},
+		{
+			id: 'mt-site',
+			render: () => (
+				<Text>
+					{
+						'  --datadog-site=<site>        Set the Datadog site non-interactively'
+					}
+				</Text>
+			),
+		},
+		{
+			id: 'mt-interactive',
+			render: () => (
+				<Text>
+					{
+						'  --interactive=<bool>         Set to false to run without prompts (default: true)'
+					}
+				</Text>
+			),
+		},
+		{
+			id: 'mt-tag-mode',
+			render: () => (
+				<Text>
+					{
+						'  --tag-mode <additive|replace>  Tag sync strategy (default: additive)'
+					}
+				</Text>
+			),
+		},
+		{ id: 'space-mt', render: () => <Text> </Text> },
+		{
+			id: 'mt-required-title',
+			render: () => (
+				<Text>
+					<Text bold>Required when</Text>{' '}
+					<Text color="cyan">--interactive=false</Text>:
+				</Text>
+			),
+		},
+		{
+			id: 'mt-provider',
+			render: () => (
+				<Text>
+					{
+						'  --provider <Eppo|LaunchDarkly>   Source feature flag provider (case-insensitive)'
+					}
+				</Text>
+			),
+		},
+		{
+			id: 'mt-feature-flag',
+			render: () => (
+				<Text>
+					{
+						'  --feature-flag <key>             Flag key to sync tags for (repeatable; ≥1)'
+					}
+				</Text>
+			),
+		},
+		{
+			id: 'mt-project',
+			render: () => (
+				<Text>
+					{
+						'  --project <key>                  LaunchDarkly project key (LaunchDarkly only)'
+					}
+				</Text>
+			),
+		},
+		{ id: 'space-mt-required', render: () => <Text> </Text> },
+		{
 			id: 'evaluate-title',
 			render: () => (
 				<Text>
@@ -328,6 +427,47 @@ export function HelpScreen(): JSX.Element {
 					{'  '}
 					<Text color="gray">$</Text> dd-flag-migration bulk-permissions
 				</Text>
+			),
+		},
+		{
+			id: 'example-migrate-tags',
+			render: () => (
+				<Text>
+					{'  '}
+					<Text color="gray">$</Text> dd-flag-migration sync-tags
+				</Text>
+			),
+		},
+		{
+			id: 'example-migrate-tags-replace',
+			render: () => (
+				<Text>
+					{'  '}
+					<Text color="gray">$</Text>{' '}
+					{'dd-flag-migration sync-tags --interactive=false \\'}
+				</Text>
+			),
+		},
+		{
+			id: 'example-migrate-tags-2',
+			render: () => (
+				<Text>
+					{'      --provider LaunchDarkly --project my-ld-project \\'}
+				</Text>
+			),
+		},
+		{
+			id: 'example-migrate-tags-3',
+			render: () => (
+				<Text>
+					{'      --datadog-site datadoghq.com --tag-mode replace \\'}
+				</Text>
+			),
+		},
+		{
+			id: 'example-migrate-tags-4',
+			render: () => (
+				<Text>{'      --feature-flag flag-one --feature-flag flag-two'}</Text>
 			),
 		},
 		{
