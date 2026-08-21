@@ -401,7 +401,6 @@ Some LaunchDarkly and Eppo features have no direct equivalent in Datadog. The to
 
 | Feature | Provider | Reason |
 |---|---|---|
-| Dependent flags (prerequisites) | LaunchDarkly | Datadog does not enforce flag prerequisites. Flags that depend on another flag being in a specific state are skipped. |
 | Date targeting (`before` / `after` operators) | LaunchDarkly | Date-based targeting conditions have no equivalent in Datadog targeting filters. Flags that use these operators are skipped. |
 | Archived flags | LaunchDarkly | Archived flags are excluded from the migration entirely. |
 | `BANDIT` and `LAYER` flag types | Eppo | These flag types are not yet supported and are skipped. |
@@ -410,6 +409,7 @@ Some LaunchDarkly and Eppo features have no direct equivalent in Datadog. The to
 
 | Feature | Provider | How it's handled |
 |---|---|---|
+| Dependent flags (prerequisites) | LaunchDarkly | Datadog does not enforce flag prerequisites. Flags that depend on another flag being in a specific state are migrated with a warning, since the prerequisite relationship is not preserved. |
 | SEMVER targeting on server-side flags | LaunchDarkly | SEMVER comparisons are a client-SDK feature in Datadog. Flags that use SEMVER targeting are automatically migrated with the **CLIENT** distribution channel, regardless of how they were originally configured. A warning is recorded in the migration results. |
 | JSON variants that are top-level arrays | LaunchDarkly, Eppo | Datadog requires JSON variant values to be objects. Array-valued variants are automatically wrapped: `[...]` becomes `{ "value": [...] }`. A warning is recorded in the migration results. |
 
