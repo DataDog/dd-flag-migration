@@ -1,4 +1,3 @@
-import chalk from 'chalk';
 import { Box, Text, useApp, useInput } from 'ink';
 import { useState } from 'react';
 import { mount, PromptCancelledError } from './mount.js';
@@ -6,6 +5,7 @@ import { mount, PromptCancelledError } from './mount.js';
 export type InputOptions = {
 	message: string;
 	default?: string;
+	hint?: string;
 	validate?: (value: string) => true | string | Promise<true | string>;
 };
 
@@ -82,21 +82,24 @@ export function InputView(props: InputProps): JSX.Element {
 		);
 	}
 
-	const shown =
-		value.length > 0
-			? value
-			: props.default !== undefined
-				? chalk.dim(props.default)
-				: chalk.dim('');
+	// Show defaults as an explicit value rather than dim placeholder text. Enter
+	// already accepts the default when no characters have been entered.
+	const showingDefault = value.length === 0 && props.default !== undefined;
+	const shown = value.length > 0 ? value : (props.default ?? '');
 
 	return (
 		<Box flexDirection="column">
 			<Box>
 				<Text color="green">? </Text>
 				<Text>{props.message} </Text>
-				<Text>{shown}</Text>
+				<Text color={showingDefault ? 'cyan' : undefined}>{shown}</Text>
 				{validating ? <Text color="gray"> (validating…)</Text> : null}
 			</Box>
+			{props.hint ? (
+				<Box>
+					<Text color="gray">{props.hint}</Text>
+				</Box>
+			) : null}
 			{error ? (
 				<Box>
 					<Text color="red">{`> ${error}`}</Text>

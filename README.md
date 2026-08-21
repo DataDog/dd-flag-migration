@@ -40,6 +40,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Credentials are read from environment variables. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running `migrate`, `evaluate`, `bulk-permissions`, or `bulk-enable`. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1.
 
+`DD_SITE` is optional for interactive commands and pre-fills the Datadog site prompt when set. For non-interactive `migrate` runs, use either `DD_SITE` or `--datadog-site`; the explicit CLI option takes precedence. The standalone `scripts/get-datadog-flag.sh` script requires `DD_SITE` and does not accept a site argument.
+
 ### Required for `migrate`
 
 | Variable | Required when | Where to find it |
@@ -157,7 +159,7 @@ The tool will walk you through:
 4. **Confirm and migrate** — flags are created in Datadog and enabled in the mapped environments. A progress bar tracks migration status in real time
 
 API keys are read from environment variables (see [Credentials](#credentials-youll-need)).
-Pass `--datadog-site=<site>` to set the Datadog site without a prompt. For fully scripted runs, see [Non-interactive mode](#non-interactive-mode) below.
+Set `DD_SITE` to pre-fill the Datadog site prompt, or pass `--datadog-site=<site>` to provide an explicit site without a prompt. For fully scripted runs, see [Non-interactive mode](#non-interactive-mode) below.
 
 When the migration completes, a record is saved to `~/.dd-flag-migration/migration-<timestamp>.json`. In interactive mode you'll be prompted to export results to an `.xlsx` file; in non-interactive mode pass `--export=true` to generate one.
 
@@ -197,7 +199,7 @@ The tool translates LaunchDarkly targeting rules, individual user targets, perce
 
 ### Non-interactive mode
 
-Pass `--interactive=false` to run the migration entirely from CLI arguments, with no prompts. This is useful for scripted or CI environments.
+Pass `--interactive=false` to run the migration entirely from CLI arguments, with no prompts. This is useful for scripted or CI environments. Set `DD_SITE` in the job environment or pass `--datadog-site`; you do not need to provide both.
 
 Non-interactive migrations write a JSON result document to stdout. Status messages, progress output, and export messages are written to stderr so stdout can be piped into tools such as `jq`.
 
@@ -206,7 +208,7 @@ Non-interactive migrations write a JSON result document to stdout. Status messag
 | Flag | Description |
 |---|---|
 | `--provider <Eppo\|LaunchDarkly>` | Source provider (case-insensitive) |
-| `--datadog-site <site>` | Datadog site (e.g. `datadoghq.com`) |
+| `--datadog-site <site>` | Datadog site (e.g. `datadoghq.com`); optional when `DD_SITE` is set |
 | `--env-map <source,target>` | Map a source environment to a Datadog environment. Repeat the option—including the same source—to map one source environment to multiple Datadog environments |
 | `--feature-flag <key>` | Flag key to migrate. Repeat for each flag. For LaunchDarkly, use `<source-key>,<datadog-key>` to rename the Datadog flag |
 | `--project <key>` | LaunchDarkly project key *(LaunchDarkly only)* |

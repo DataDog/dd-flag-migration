@@ -143,10 +143,10 @@ describe('InputView', () => {
 		expect(stripAnsi(lastFrame() ?? '')).toContain('Cannot be empty');
 	});
 
-	it('uses default when submitted empty', async () => {
+	it('renders and accepts the default value', async () => {
 		const done = jest.fn<(v: string) => void>();
 		const cancel = jest.fn();
-		const { stdin } = render(
+		const { stdin, lastFrame } = render(
 			<InputView
 				message="Enter"
 				default="foo"
@@ -155,9 +155,27 @@ describe('InputView', () => {
 			/>,
 		);
 		await ready();
+		expect(stripAnsi(lastFrame() ?? '')).toContain('foo');
 		stdin.write('\r');
 		await tick();
 		expect(done).toHaveBeenCalledWith('foo');
+	});
+
+	it('renders helper text', async () => {
+		const done = jest.fn<(v: string) => void>();
+		const cancel = jest.fn();
+		const { lastFrame } = render(
+			<InputView
+				message="Enter"
+				hint="Pre-filled from DD_SITE environment variable; press Enter to accept this value."
+				onDone={done}
+				onCancel={cancel}
+			/>,
+		);
+		await ready();
+		expect(stripAnsi(lastFrame() ?? '')).toContain(
+			'Pre-filled from DD_SITE environment variable; press Enter to accept this value.',
+		);
 	});
 });
 

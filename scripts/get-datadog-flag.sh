@@ -3,9 +3,9 @@
 # Fetches a single feature flag from the Datadog API by key or ID.
 #
 # Usage:
-#   DD_API_KEY=<key> DD_APP_KEY=<key> ./scripts/get-datadog-flag.sh --key=<flag-key>
-#   DD_API_KEY=<key> DD_APP_KEY=<key> ./scripts/get-datadog-flag.sh --id=<flag-id>
-#   DD_API_KEY=<key> DD_APP_KEY=<key> ./scripts/get-datadog-flag.sh --site=us5.datadoghq.com --key=<flag-key>
+#   DD_SITE=datadoghq.com DD_API_KEY=<key> DD_APP_KEY=<key> ./scripts/get-datadog-flag.sh --key=<flag-key>
+#   DD_SITE=datadoghq.com DD_API_KEY=<key> DD_APP_KEY=<key> ./scripts/get-datadog-flag.sh --id=<flag-id>
+#   DD_SITE=us5.datadoghq.com DD_API_KEY=<key> DD_APP_KEY=<key> ./scripts/get-datadog-flag.sh --key=<flag-key>
 
 set -euo pipefail
 
@@ -18,17 +18,16 @@ Fetch a single feature flag from the Datadog API.
 Options:
   --key=<flag-key>   Look up a flag by its key
   --id=<flag-id>     Look up a flag by its UUID
-  --site=<host>      Datadog site host (default: app.datadoghq.com)
-                     e.g. --site=us5.datadoghq.com
   -h, --help         Show this help message
 
 Environment variables:
+  DD_SITE            Datadog site host (required), e.g. us5.datadoghq.com
   DD_API_KEY         Datadog API key (required)
   DD_APP_KEY         Datadog application key (required)
 EOF
 }
 
-SITE="app.datadoghq.com"
+SITE="${DD_SITE:-}"
 FLAG_ID=""
 FLAG_KEY=""
 
@@ -39,7 +38,6 @@ fi
 
 for arg in "$@"; do
     case "$arg" in
-        --site=*) SITE="${arg#--site=}" ;;
         --id=*)   FLAG_ID="${arg#--id=}" ;;
         --key=*)  FLAG_KEY="${arg#--key=}" ;;
         -h|--help) usage; exit 0 ;;
@@ -50,6 +48,11 @@ done
 if [[ -z "$FLAG_ID" && -z "$FLAG_KEY" ]]; then
     echo "Error: either --key or --id is required." >&2
     usage
+    exit 1
+fi
+
+if [[ -z "$SITE" ]]; then
+    echo "Error: DD_SITE environment variable is not set." >&2
     exit 1
 fi
 
@@ -71,7 +74,7 @@ DD_HEADERS=(
 
 if [[ -n "$FLAG_KEY" ]]; then
     response=$(curl -sL "${DD_HEADERS[@]}" \
-        "https://${SITE}/api/v2/feature-flags?key=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$FLAG_KEY")")
+        "https://api.${SITE}/api/v2/feature-flags?key=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$FLAG_KEY")")
 
     FLAG_ID=$(echo "$response" | jq -r --arg key "$FLAG_KEY" '
         .data[] | select(.attributes.key == $key) | .id
@@ -84,5 +87,5 @@ if [[ -n "$FLAG_KEY" ]]; then
 fi
 
 curl -sL "${DD_HEADERS[@]}" \
-    "https://${SITE}/api/v2/feature-flags/${FLAG_ID}" \
+    "https://api.${SITE}/api/v2/feature-flags/${FLAG_ID}" \
     | jq .

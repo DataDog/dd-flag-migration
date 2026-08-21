@@ -3,6 +3,7 @@ import chalk from 'chalk';
 export type EnvVarName =
 	| 'DD_API_KEY'
 	| 'DD_APP_KEY'
+	| 'DD_SITE'
 	| 'DD_CLIENT_TOKEN'
 	| 'EPPO_API_KEY'
 	| 'EPPO_SDK_KEY'
