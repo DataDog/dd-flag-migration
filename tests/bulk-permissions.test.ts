@@ -229,24 +229,6 @@ describe('buildRestrictionPolicyBindingsForTeamRelation', () => {
 			},
 		]);
 	});
-
-	it('moves selected teams to viewer', () => {
-		expect(
-			buildRestrictionPolicyBindingsForTeamRelation(
-				['selected'],
-				'viewer',
-				'user-1',
-				'org-1',
-				[{ principals: ['team:selected'], relation: 'contributor' }],
-			),
-		).toEqual([
-			{
-				principals: ['org:org-1', 'team:selected'],
-				relation: 'viewer',
-			},
-			{ principals: ['user:user-1'], relation: 'editor' },
-		]);
-	});
 });
 
 describe('buildRestrictionPolicyBindingsForTeamRemoval', () => {
@@ -285,7 +267,7 @@ describe('updateRestrictionPolicyTeams', () => {
 					attributes: {
 						bindings: [
 							{ principals: ['team:existing'], relation: 'editor' },
-							{ principals: ['team:new'], relation: 'viewer' },
+							{ principals: ['team:new'], relation: 'contributor' },
 						],
 					},
 				},
@@ -339,7 +321,7 @@ describe('updateRestrictionPolicyTeams', () => {
 			.reply(200, {
 				data: {
 					attributes: {
-						bindings: [{ principals: ['team:selected'], relation: 'viewer' }],
+						bindings: [{ principals: ['team:selected'], relation: 'editor' }],
 					},
 				},
 			});
