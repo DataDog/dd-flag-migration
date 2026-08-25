@@ -22,7 +22,7 @@ import {
 import type {
 	DatadogFlagEntry,
 	DatadogTeam,
-	RestrictionPolicyRelation,
+	RestrictionPolicyTeamRelation,
 } from './datadog/types.js';
 import {
 	loadMigratedFlagsWithTags,
@@ -47,7 +47,6 @@ const OPERATIONS = [
 const RESTRICTION_POLICY_RELATIONS = [
 	{ name: 'Editor', value: 'editor' },
 	{ name: 'Contributor', value: 'contributor' },
-	{ name: 'Viewer', value: 'viewer' },
 ] as const;
 
 async function selectTeams(
@@ -73,7 +72,7 @@ function resultForTeam(
 	team: DatadogTeam,
 	operation: PermissionOperation,
 	changed: boolean,
-	relation?: RestrictionPolicyRelation,
+	relation?: RestrictionPolicyTeamRelation,
 	error?: string,
 ): PermissionChangeResult {
 	return {
@@ -170,10 +169,13 @@ async function main(): Promise<void> {
 			message: 'Do you want to set a custom permission policy?',
 			default: false,
 		}));
-	const teamsByRelation = new Map<RestrictionPolicyRelation, DatadogTeam[]>();
+	const teamsByRelation = new Map<
+		RestrictionPolicyTeamRelation,
+		DatadogTeam[]
+	>();
 	for (const team of selectedTeams) {
 		const relation = useCustomPermissionPolicies
-			? await select<RestrictionPolicyRelation>({
+			? await select<RestrictionPolicyTeamRelation>({
 					message: `Select the permission policy for ${team.name} (${team.handle}):`,
 					choices: RESTRICTION_POLICY_RELATIONS.map((item) => ({
 						name: item.name,
@@ -329,6 +331,9 @@ async function main(): Promise<void> {
 				: []),
 		];
 		progress.warn(`Bulk update finished with ${failures.join(' and ')}`);
+		console.log(
+			chalk.yellow('  Check the spreadsheet below for full details.'),
+		);
 	} else {
 		progress.succeed(
 			`Permission update complete: ${changedCount} changed, ${unchangedCount} unchanged${syncTeamTags ? `; team tags synced on ${tagUpdatedFlagCount} flag(s)` : ''}`,

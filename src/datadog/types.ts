@@ -204,7 +204,7 @@ export type DDRestrictionBinding = {
 
 export type RestrictionPolicyTeamAction = 'add' | 'remove';
 
-export type RestrictionPolicyRelation = 'editor' | 'contributor' | 'viewer';
+export type RestrictionPolicyTeamRelation = 'editor' | 'contributor';
 
 export interface RestrictionPolicyTeamUpdateResult {
 	changedTeamIds: string[];

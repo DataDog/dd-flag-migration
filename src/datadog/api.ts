@@ -18,8 +18,8 @@ import type {
 	DDRestrictionBinding,
 	MigrationMetadata,
 	PendingVariantDelete,
-	RestrictionPolicyRelation,
 	RestrictionPolicyTeamAction,
+	RestrictionPolicyTeamRelation,
 	RestrictionPolicyTeamUpdateResult,
 	SavedFilterMigrationMetadata,
 	SavedFilterSummary,
@@ -1009,7 +1009,7 @@ export function buildRestrictionPolicyBindings(
 
 export function buildRestrictionPolicyBindingsForTeamRelation(
 	teamIds: string[],
-	relation: RestrictionPolicyRelation,
+	relation: RestrictionPolicyTeamRelation,
 	userId: string,
 	orgId: string,
 	existingBindings: DDRestrictionBinding[],
@@ -1086,7 +1086,7 @@ export async function updateRestrictionPolicyTeams(
 	flagId: string,
 	teamIds: string[],
 	action: RestrictionPolicyTeamAction,
-	relation: RestrictionPolicyRelation,
+	relation: RestrictionPolicyTeamRelation,
 	userId: string,
 	orgId: string,
 	site = 'datadoghq.com',
