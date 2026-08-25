@@ -18,6 +18,7 @@ import type {
 	DDRestrictionBinding,
 	MigrationMetadata,
 	PendingVariantDelete,
+	RestrictionPolicyRelation,
 	RestrictionPolicyTeamAction,
 	RestrictionPolicyTeamUpdateResult,
 	SavedFilterMigrationMetadata,
@@ -1006,6 +1007,45 @@ export function buildRestrictionPolicyBindings(
 	];
 }
 
+export function buildRestrictionPolicyBindingsForTeamRelation(
+	teamIds: string[],
+	relation: RestrictionPolicyRelation,
+	userId: string,
+	orgId: string,
+	existingBindings: DDRestrictionBinding[],
+): DDRestrictionBinding[] {
+	if (relation === 'editor') {
+		return buildRestrictionPolicyBindings(
+			teamIds,
+			userId,
+			orgId,
+			existingBindings,
+		);
+	}
+
+	const teamPrincipals = teamIds.map((id) => `team:${id}`);
+	const bindingsWithoutSelectedTeams =
+		buildRestrictionPolicyBindingsForTeamRemoval(
+			teamIds,
+			buildRestrictionPolicyBindings([], userId, orgId, existingBindings),
+		);
+	const targetBinding = bindingsWithoutSelectedTeams.find(
+		(binding) => binding.relation === relation,
+	);
+
+	if (targetBinding) {
+		targetBinding.principals = [
+			...new Set([...targetBinding.principals, ...teamPrincipals]),
+		];
+		return bindingsWithoutSelectedTeams;
+	}
+
+	return [
+		...bindingsWithoutSelectedTeams,
+		{ principals: teamPrincipals, relation },
+	];
+}
+
 /** Remove selected team principals from every explicit relation. */
 export function buildRestrictionPolicyBindingsForTeamRemoval(
 	teamIds: string[],
@@ -1025,8 +1065,8 @@ export function buildRestrictionPolicyBindingsForTeamRemoval(
 /**
  * Add or remove explicit team access on a flag restriction policy.
  *
- * Additions grant the editor relation and preserve the authenticated user as
- * an editor plus the org as a viewer. Removals delete the selected team
+ * Additions grant the requested relation and preserve the authenticated user
+ * as an editor plus the org as a viewer. Removals delete the selected team
  * principals from every explicit relation. If the requested end state already
  * exists, no write is sent.
  */
@@ -1046,6 +1086,7 @@ export async function updateRestrictionPolicyTeams(
 	flagId: string,
 	teamIds: string[],
 	action: RestrictionPolicyTeamAction,
+	relation: RestrictionPolicyRelation,
 	userId: string,
 	orgId: string,
 	site = 'datadoghq.com',
@@ -1072,7 +1113,7 @@ export async function updateRestrictionPolicyTeams(
 
 	const changedTeamIds = uniqueTeamIds.filter((teamId) =>
 		action === 'add'
-			? relationByTeamId.get(teamId) !== 'editor'
+			? relationByTeamId.get(teamId) !== relation
 			: relationByTeamId.has(teamId),
 	);
 	const changedTeamIdSet = new Set(changedTeamIds);
@@ -1085,8 +1126,9 @@ export async function updateRestrictionPolicyTeams(
 
 	const updatedBindings =
 		action === 'add'
-			? buildRestrictionPolicyBindings(
+			? buildRestrictionPolicyBindingsForTeamRelation(
 					uniqueTeamIds,
+					relation,
 					userId,
 					orgId,
 					existingBindings,
