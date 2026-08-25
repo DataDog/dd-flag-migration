@@ -19,7 +19,11 @@ import {
 	RestrictionPolicyTeamUpdateError,
 	updateRestrictionPolicyTeams,
 } from './datadog/api.js';
-import type { DatadogFlagEntry, DatadogTeam } from './datadog/types.js';
+import type {
+	DatadogFlagEntry,
+	DatadogTeam,
+	RestrictionPolicyRelation,
+} from './datadog/types.js';
 import {
 	loadMigratedFlagsWithTags,
 	selectMigratedFlags,
@@ -38,6 +42,12 @@ const REQUIRED_PERMISSIONS = [
 const OPERATIONS = [
 	{ name: 'Add teams to flags', value: 'add' },
 	{ name: 'Remove teams from flags', value: 'remove' },
+] as const;
+
+const RESTRICTION_POLICY_RELATIONS = [
+	{ name: 'Editor', value: 'editor' },
+	{ name: 'Contributor', value: 'contributor' },
+	{ name: 'Viewer', value: 'viewer' },
 ] as const;
 
 async function selectTeams(
@@ -63,6 +73,7 @@ function resultForTeam(
 	team: DatadogTeam,
 	operation: PermissionOperation,
 	changed: boolean,
+	relation?: RestrictionPolicyRelation,
 	error?: string,
 ): PermissionChangeResult {
 	return {
@@ -73,6 +84,7 @@ function resultForTeam(
 		teamName: team.name,
 		teamHandle: team.handle,
 		operation,
+		...(relation ? { relation } : {}),
 		status: error
 			? 'Failed'
 			: operation === 'add'
@@ -152,14 +164,43 @@ async function main(): Promise<void> {
 		return;
 	}
 
+	const useCustomPermissionPolicies =
+		operation === 'add' &&
+		(await confirm({
+			message: 'Do you want to set a custom permission policy?',
+			default: false,
+		}));
+	const teamsByRelation = new Map<RestrictionPolicyRelation, DatadogTeam[]>();
+	for (const team of selectedTeams) {
+		const relation = useCustomPermissionPolicies
+			? await select<RestrictionPolicyRelation>({
+					message: `Select the permission policy for ${team.name} (${team.handle}):`,
+					choices: RESTRICTION_POLICY_RELATIONS.map((item) => ({
+						name: item.name,
+						value: item.value,
+					})),
+					default: 'editor',
+				})
+			: 'editor';
+		const relationTeams = teamsByRelation.get(relation) ?? [];
+		relationTeams.push(team);
+		teamsByRelation.set(relation, relationTeams);
+	}
+
 	const syncTeamTags = await confirm({
 		message: `${operation === 'add' ? 'Add' : 'Remove'} matching team:<handle> tags too?`,
 		default: true,
 	});
 
 	const pairCount = selectedFlags.length * selectedTeams.length;
+	const permissionDescription =
+		operation === 'add'
+			? ` as ${[...teamsByRelation.entries()]
+					.map(([relation, teams]) => `${teams.length} ${relation}(s)`)
+					.join(', ')}`
+			: '';
 	const shouldContinue = await confirm({
-		message: `${operation === 'add' ? 'Add' : 'Remove'} ${selectedTeams.length} team(s) ${operation === 'add' ? 'to' : 'from'} ${selectedFlags.length} flag(s) (${pairCount} flag/team change(s))${syncTeamTags ? ' and sync team tags' : ''}?`,
+		message: `${operation === 'add' ? 'Add' : 'Remove'} ${selectedTeams.length} team(s) ${operation === 'add' ? 'to' : 'from'} ${selectedFlags.length} flag(s)${permissionDescription} (${pairCount} flag/team change(s))${syncTeamTags ? ' and sync team tags' : ''}?`,
 		default: operation === 'add',
 	});
 	if (!shouldContinue) {
@@ -175,71 +216,92 @@ async function main(): Promise<void> {
 	for (let index = 0; index < selectedFlags.length; index++) {
 		const flag = selectedFlags[index];
 		progress.text = `${operation === 'add' ? 'Adding' : 'Removing'} teams${syncTeamTags ? ' and syncing tags' : ''} for ${flag.key} (${index + 1}/${selectedFlags.length})…`;
-		try {
-			const update = await updateRestrictionPolicyTeams(
-				apiKey,
-				appKey,
-				flag.id,
-				selectedTeams.map((team) => team.id),
-				operation,
-				userId,
-				orgId,
-				site,
-			);
-			const changedIds = new Set(update.changedTeamIds);
-			const permissionResults = selectedTeams.map((team) =>
-				resultForTeam(flag, team, operation, changedIds.has(team.id)),
-			);
-			results.push(...permissionResults);
-
-			if (syncTeamTags) {
-				try {
-					const tagUpdate = await syncFlagTeamTags(
-						apiKey,
-						appKey,
-						flag.id,
-						flag.tags ?? [],
-						selectedTeams,
-						operation,
-						site,
+		const permissionResults: PermissionChangeResult[] = [];
+		let permissionUpdateFailed = false;
+		for (const [relation, relationTeams] of teamsByRelation) {
+			const reportedRelation = operation === 'add' ? relation : undefined;
+			try {
+				const update = await updateRestrictionPolicyTeams(
+					apiKey,
+					appKey,
+					flag.id,
+					relationTeams.map((team) => team.id),
+					operation,
+					relation,
+					userId,
+					orgId,
+					site,
+				);
+				const changedIds = new Set(update.changedTeamIds);
+				permissionResults.push(
+					...relationTeams.map((team) =>
+						resultForTeam(
+							flag,
+							team,
+							operation,
+							changedIds.has(team.id),
+							reportedRelation,
+						),
+					),
+				);
+			} catch (error) {
+				permissionUpdateFailed = true;
+				const failedUpdate =
+					error instanceof RestrictionPolicyTeamUpdateError ? error : undefined;
+				const unchangedIds = new Set(
+					failedUpdate?.updateResult.unchangedTeamIds ?? [],
+				);
+				const message = formatAxiosError(failedUpdate?.originalError ?? error);
+				for (const team of relationTeams) {
+					const teamError = unchangedIds.has(team.id) ? undefined : message;
+					permissionResults.push(
+						resultForTeam(
+							flag,
+							team,
+							operation,
+							false,
+							reportedRelation,
+							teamError,
+						),
 					);
-					flag.tags = tagUpdate.tags;
-					for (const result of permissionResults) {
-						result.flagTags = tagUpdate.tags;
-					}
-					const changed = tagUpdate.changedTeamIds.length > 0;
-					if (changed) tagUpdatedFlagCount++;
-					tagSyncResults.push({
-						flagId: flag.id,
-						flagKey: flag.key,
-						targetedTags: targetedTeamTags,
-						operation,
-						status: changed ? 'Updated' : 'Already synced',
-					});
-				} catch (error) {
-					tagSyncResults.push({
-						flagId: flag.id,
-						flagKey: flag.key,
-						targetedTags: targetedTeamTags,
-						operation,
-						status: 'Failed',
-						error: formatAxiosError(error),
-					});
 				}
 			}
-		} catch (error) {
-			const failedUpdate =
-				error instanceof RestrictionPolicyTeamUpdateError ? error : undefined;
-			const unchangedIds = new Set(
-				failedUpdate?.updateResult.unchangedTeamIds ?? [],
-			);
-			const message = formatAxiosError(failedUpdate?.originalError ?? error);
-			for (const team of selectedTeams) {
-				results.push(
-					unchangedIds.has(team.id)
-						? resultForTeam(flag, team, operation, false)
-						: resultForTeam(flag, team, operation, false, message),
+		}
+		results.push(...permissionResults);
+
+		if (syncTeamTags && !permissionUpdateFailed) {
+			try {
+				const tagUpdate = await syncFlagTeamTags(
+					apiKey,
+					appKey,
+					flag.id,
+					flag.tags ?? [],
+					selectedTeams,
+					operation,
+					site,
 				);
+				flag.tags = tagUpdate.tags;
+				for (const result of permissionResults) {
+					result.flagTags = tagUpdate.tags;
+				}
+				const changed = tagUpdate.changedTeamIds.length > 0;
+				if (changed) tagUpdatedFlagCount++;
+				tagSyncResults.push({
+					flagId: flag.id,
+					flagKey: flag.key,
+					targetedTags: targetedTeamTags,
+					operation,
+					status: changed ? 'Updated' : 'Already synced',
+				});
+			} catch (error) {
+				tagSyncResults.push({
+					flagId: flag.id,
+					flagKey: flag.key,
+					targetedTags: targetedTeamTags,
+					operation,
+					status: 'Failed',
+					error: formatAxiosError(error),
+				});
 			}
 		}
 	}

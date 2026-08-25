@@ -18,6 +18,7 @@ import {
 import { exportBulkPermissionChangesToXlsx } from '../src/bulk-permissions/xlsx.js';
 import { choiceMatchesTextFilter } from '../src/components/FilterableCheckbox.js';
 import {
+	buildRestrictionPolicyBindingsForTeamRelation,
 	buildRestrictionPolicyBindingsForTeamRemoval,
 	ddClient,
 	RestrictionPolicyTeamUpdateError,
@@ -78,6 +79,7 @@ describe('bulk permission spreadsheet export', () => {
 						teamName: 'Team Name',
 						teamHandle: 'team-handle',
 						operation: 'add',
+						relation: 'contributor',
 						status: 'Added',
 					},
 				],
@@ -102,7 +104,8 @@ describe('bulk permission spreadsheet export', () => {
 			const worksheet = workbook.getWorksheet('Permission Changes');
 			expect(worksheet?.getCell('A5').value).toBe('flag-key');
 			expect(worksheet?.getCell('C5').value).toBe('project:health-100');
-			expect(worksheet?.getCell('H5').value).toBe('Added');
+			expect(worksheet?.getCell('H5').value).toBe('contributor');
+			expect(worksheet?.getCell('I5').value).toBe('Added');
 			const tagSyncWorksheet = workbook.getWorksheet('Tag Sync');
 			expect(tagSyncWorksheet?.getCell('A5').value).toBe('flag-key');
 			expect(tagSyncWorksheet?.getCell('C5').value).toBe('team:team-handle');
@@ -195,6 +198,57 @@ describe('team tag syncing', () => {
 	});
 });
 
+describe('buildRestrictionPolicyBindingsForTeamRelation', () => {
+	it('moves selected teams to contributor while preserving safe access', () => {
+		expect(
+			buildRestrictionPolicyBindingsForTeamRelation(
+				['selected'],
+				'contributor',
+				'user-1',
+				'org-1',
+				[
+					{
+						principals: ['team:selected', 'team:existing-editor'],
+						relation: 'editor',
+					},
+					{
+						principals: ['team:existing-contributor'],
+						relation: 'contributor',
+					},
+				],
+			),
+		).toEqual([
+			{
+				principals: ['team:existing-contributor', 'team:selected'],
+				relation: 'contributor',
+			},
+			{ principals: ['org:org-1'], relation: 'viewer' },
+			{
+				principals: ['team:existing-editor', 'user:user-1'],
+				relation: 'editor',
+			},
+		]);
+	});
+
+	it('moves selected teams to viewer', () => {
+		expect(
+			buildRestrictionPolicyBindingsForTeamRelation(
+				['selected'],
+				'viewer',
+				'user-1',
+				'org-1',
+				[{ principals: ['team:selected'], relation: 'contributor' }],
+			),
+		).toEqual([
+			{
+				principals: ['org:org-1', 'team:selected'],
+				relation: 'viewer',
+			},
+			{ principals: ['user:user-1'], relation: 'editor' },
+		]);
+	});
+});
+
 describe('buildRestrictionPolicyBindingsForTeamRemoval', () => {
 	it('removes selected teams from every relation and drops empty bindings', () => {
 		expect(
@@ -252,6 +306,7 @@ describe('updateRestrictionPolicyTeams', () => {
 				'flag-1',
 				['existing', 'new'],
 				'add',
+				'editor',
 				'user-1',
 				'org-1',
 				SITE,
@@ -278,6 +333,56 @@ describe('updateRestrictionPolicyTeams', () => {
 		expect(mock.history.post).toHaveLength(1);
 	});
 
+	it('moves teams to the selected custom relation', async () => {
+		mock
+			.onGet(`${BASE}/api/v2/restriction_policy/feature-flag:flag-custom`)
+			.reply(200, {
+				data: {
+					attributes: {
+						bindings: [{ principals: ['team:selected'], relation: 'viewer' }],
+					},
+				},
+			});
+
+		let postBody:
+			| {
+					data: {
+						attributes: {
+							bindings: Array<{ principals: string[]; relation: string }>;
+						};
+					};
+			  }
+			| undefined;
+		mock
+			.onPost(`${BASE}/api/v2/restriction_policy/feature-flag:flag-custom`)
+			.reply((config) => {
+				postBody = JSON.parse(config.data as string);
+				return [200, {}];
+			});
+
+		await expect(
+			updateRestrictionPolicyTeams(
+				API_KEY,
+				APP_KEY,
+				'flag-custom',
+				['selected'],
+				'add',
+				'contributor',
+				'user-1',
+				'org-1',
+				SITE,
+			),
+		).resolves.toEqual({
+			changedTeamIds: ['selected'],
+			unchangedTeamIds: [],
+		});
+		expect(
+			postBody?.data.attributes.bindings.find(
+				(binding) => binding.relation === 'contributor',
+			)?.principals,
+		).toContain('team:selected');
+	});
+
 	it('does not write when every selected team is already an editor', async () => {
 		mock
 			.onGet(`${BASE}/api/v2/restriction_policy/feature-flag:flag-2`)
@@ -296,6 +401,7 @@ describe('updateRestrictionPolicyTeams', () => {
 				'flag-2',
 				['existing'],
 				'add',
+				'editor',
 				'user-1',
 				'org-1',
 				SITE,
@@ -327,6 +433,7 @@ describe('updateRestrictionPolicyTeams', () => {
 			'flag-failed',
 			['existing', 'new'],
 			'add',
+			'editor',
 			'user-1',
 			'org-1',
 			SITE,
@@ -374,6 +481,7 @@ describe('updateRestrictionPolicyTeams', () => {
 				'flag-3',
 				['remove', 'absent'],
 				'remove',
+				'editor',
 				'',
 				'',
 				SITE,

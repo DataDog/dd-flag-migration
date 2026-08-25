@@ -1,3 +1,5 @@
+import type { RestrictionPolicyRelation } from '../datadog/types.js';
+
 export type PermissionOperation = 'add' | 'remove';
 
 export type PermissionChangeStatus =
@@ -15,6 +17,7 @@ export interface PermissionChangeResult {
 	teamName: string;
 	teamHandle: string;
 	operation: PermissionOperation;
+	relation?: RestrictionPolicyRelation;
 	status: PermissionChangeStatus;
 	error?: string;
 }

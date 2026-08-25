@@ -90,6 +90,7 @@ export async function exportBulkPermissionChangesToXlsx(
 		'Team Handle',
 		'Team ID',
 		'Operation',
+		'Permission Policy',
 		'Result',
 		'Error',
 	];
@@ -102,6 +103,7 @@ export async function exportBulkPermissionChangesToXlsx(
 		{ width: 24 },
 		{ width: 38 },
 		{ width: 12 },
+		{ width: 20 },
 		{ width: 18 },
 		{ width: 60 },
 	];
@@ -132,6 +134,7 @@ export async function exportBulkPermissionChangesToXlsx(
 			result.teamHandle,
 			result.teamId,
 			result.operation === 'add' ? 'Add' : 'Remove',
+			result.relation ?? '',
 			result.status,
 			result.error ?? '',
 		]);
