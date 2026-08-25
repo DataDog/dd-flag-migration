@@ -9,6 +9,7 @@
 	"scripts": {
 		"setup": "yarn install && yarn allow-scripts",
 		"migrate": "tsx src/cli.tsx migrate",
+		"sync-tags": "tsx src/cli.tsx sync-tags",
 		"help": "tsx src/cli.tsx --help",
 		"evaluate": "tsx src/cli.tsx evaluate",
 		"bulk-permissions": "tsx src/cli.tsx bulk-permissions",

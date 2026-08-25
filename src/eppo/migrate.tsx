@@ -84,7 +84,7 @@ function envLabel(env: EppoFlagEnvironment, flagCount: number): string {
 	return `${env.name}${prodBadge}  ${chalk.gray(`(${flagCount} flags)`)}`;
 }
 
-function datadogIdForEppoFlag(
+export function datadogIdForEppoFlag(
 	flag: EppoFlag,
 	datadogKeys: Map<string, string>,
 ): string | undefined {
@@ -98,9 +98,7 @@ function flagLabel(flag: EppoFlag, inDatadog: boolean): string {
 	const indicator = inDatadog ? chalk.green('✓') : ' ';
 	const name = flag.name;
 	const key = chalk.gray(`(${flag.key})`);
-	const badge = inDatadog
-		? `  ${chalk.bgGreen.black(' In Datadog — will sync targeting ')}`
-		: '';
+	const badge = inDatadog ? `  ${chalk.bgGreen.black(' In Datadog ')}` : '';
 	return `${indicator}  ${name}  ${key}${badge}`;
 }
 
@@ -215,7 +213,7 @@ async function selectEnvironments(
 	});
 }
 
-async function selectFlags(
+export async function selectFlags(
 	flags: EppoFlag[],
 	datadogKeys: Map<string, string>,
 	selectedEnvs: EppoFlagEnvironment[],
@@ -242,9 +240,8 @@ async function selectFlags(
 	);
 	if (inDatadogCount > 0) {
 		console.log(
-			chalk.gray(
-				`  ${inDatadogCount} flag(s) already exist in Datadog (will sync targeting for new environments) `,
-			) + chalk.green('✓'),
+			chalk.gray(`  ${inDatadogCount} flag(s) already exist in Datadog `) +
+				chalk.green('✓'),
 		);
 	}
 	console.log();

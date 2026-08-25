@@ -471,7 +471,7 @@ function flagLabel(
 		case 'same_project':
 		case 'manual':
 			indicator = chalk.green('✓');
-			badge = `  ${chalk.bgGreen.black(' In Datadog — will sync targeting ')}`;
+			badge = `  ${chalk.bgGreen.black(' In Datadog ')}`;
 			break;
 		case 'cross_project':
 			if (conflictResolution?.action === 'prefix') {
@@ -501,7 +501,9 @@ function flagLabel(
 
 // ─── Prompt Steps ────────────────────────────────────────────────────────────
 
-async function selectProject(projects: LDProject[]): Promise<LDProject | null> {
+export async function selectProject(
+	projects: LDProject[],
+): Promise<LDProject | null> {
 	console.log();
 	console.log(
 		chalk.bold(
@@ -722,7 +724,7 @@ export function flagCategories(
 	return ['inactive'];
 }
 
-async function selectFlags(
+export async function selectFlags(
 	flags: LDFlag[],
 	datadogFlags: DatadogFlagEntry[],
 	projectKey: string,
@@ -754,9 +756,8 @@ async function selectFlags(
 	);
 	if (inDatadogCount > 0) {
 		console.log(
-			chalk.gray(
-				`  ${inDatadogCount} flag(s) already exist in Datadog (will sync targeting for new environments) `,
-			) + chalk.green('✓'),
+			chalk.gray(`  ${inDatadogCount} flag(s) already exist in Datadog `) +
+				chalk.green('✓'),
 		);
 	}
 	if (prefixedCount > 0) {
