@@ -62,12 +62,14 @@ describe('structured static views', () => {
 		expect(output).toContain('Feature Flag Migration Tool');
 		expect(output).toContain('migrate');
 		expect(output).toContain('evaluate');
+		expect(output).toContain('get-assignments');
 		expect(output).toContain('bulk-permissions');
 		expect(output).toContain('bulk-enable');
 		expect(output).toContain('--dry-run');
 		expect(output).toContain('--provider');
 		expect(output).toContain('--env-map');
 		expect(output).toContain('--feature-flag');
+		expect(output).toContain('--subject-json');
 	});
 
 	it('renders missing permissions', () => {

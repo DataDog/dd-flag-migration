@@ -2,7 +2,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { getInstance as getEppoInstance } from '@eppo/node-server-sdk';
-import axios from 'axios';
 import chalk from 'chalk';
 import { confirm } from './components/Confirm.js';
 import { EvaluationSummary } from './components/EvaluationSummary.js';
@@ -17,7 +16,8 @@ import {
 } from './components/ResultsTable.js';
 import { select } from './components/Select.js';
 import { spinner as createSpinner } from './components/Spinner.js';
-import { ddClient } from './datadog/api.js';
+import { fetchDatadogEnvironments } from './datadog/api.js';
+import { fetchPrecomputedAssignmentFlags } from './datadog/precomputed-assignments.js';
 import type {
 	MigrationEnvironmentMapping,
 	MigrationMetadata,
@@ -299,43 +299,6 @@ async function pickCsvFile(csvPathArg: string | undefined): Promise<string> {
 
 // ─── Datadog Environment Selection ───────────────────────────────────────────
 
-type ApiEnvironment = { id: string; queries: string[] };
-
-async function fetchEnvironmentsFromApi(
-	apiKey: string,
-	appKey: string,
-	site: string,
-): Promise<ApiEnvironment[]> {
-	const baseUrl = `https://api.${site}`;
-	try {
-		const resp = await ddClient.get<{
-			data: Array<{ id: string; attributes: { queries: string[] } }>;
-		}>(`${baseUrl}/api/v2/feature-flags/environments`, {
-			headers: { 'DD-API-KEY': apiKey, 'DD-APPLICATION-KEY': appKey },
-		});
-		return resp.data.data.map((item) => ({
-			id: item.id,
-			queries: item.attributes.queries ?? [],
-		}));
-	} catch (err) {
-		if (axios.isAxiosError(err) && err.response?.status === 403) {
-			throw new Error(
-				'Datadog API returned 403 Forbidden when fetching feature flag environments.\n' +
-					'  Please check that:\n' +
-					'  • Your Datadog API key and Application key are valid\n' +
-					'  • Your Application key has permission to read feature flags',
-			);
-		}
-		if (axios.isAxiosError(err) && err.response?.status === 401) {
-			throw new Error(
-				'Datadog API returned 401 Unauthorized.\n' +
-					'  Your API key or Application key is invalid.',
-			);
-		}
-		throw err;
-	}
-}
-
 async function selectDDEnvironment(
 	environmentMapping: MigrationEnvironmentMapping[],
 	apiKey: string,
@@ -388,7 +351,7 @@ async function selectDDEnvironment(
 	}
 
 	// Fetch the live environment from the API to get its dd_env queries
-	const apiEnvs = await fetchEnvironmentsFromApi(apiKey, appKey, site);
+	const apiEnvs = await fetchDatadogEnvironments(apiKey, appKey, site);
 	const matched = apiEnvs.find((e) => e.id === chosen.datadogEnvId);
 
 	if (!matched || matched.queries.length === 0) {
@@ -406,10 +369,6 @@ async function selectDDEnvironment(
 }
 
 // ─── Datadog Flag Fetching ───────────────────────────────────────────────────
-
-function buildEndpointHost(site: string): string {
-	return `preview.ff-cdn.${site}`;
-}
 
 const DD_FETCH_CONCURRENCY = 10;
 
@@ -432,54 +391,6 @@ async function mapWithConcurrency<T, R>(
 	);
 	await Promise.all(workers);
 	return results;
-}
-
-async function fetchDDFlags(
-	clientToken: string,
-	site: string,
-	env: string,
-	subjectId: string,
-	subjectAttributes: SubjectAttributes = {},
-): Promise<Record<string, DDFlagValue>> {
-	const host = buildEndpointHost(site);
-	const url = `https://${host}/precompute-assignments?dd_env=${encodeURIComponent(env)}`;
-	try {
-		// Intentionally uses plain axios — precompute-assignments accepts dd-client-token
-		// (not a management API key), so it belongs to a different rate-limit bucket
-		// and is not routed through ddClient.
-		const resp = await axios.post(
-			url,
-			{
-				data: {
-					type: 'precompute-assignments-request',
-					attributes: {
-						env: { dd_env: env },
-						sdk: { name: 'migration', version: 'dev' },
-						subject: {
-							targeting_key: subjectId,
-							targeting_attributes: subjectAttributes,
-						},
-					},
-				},
-			},
-			{
-				headers: {
-					'Content-Type': 'application/vnd.api+json',
-					'dd-client-token': clientToken,
-				},
-			},
-		);
-		return (resp.data?.data?.attributes?.flags ?? {}) as Record<
-			string,
-			DDFlagValue
-		>;
-	} catch (err) {
-		if (axios.isAxiosError(err) && err.response) {
-			const detail = JSON.stringify(err.response.data);
-			throw new Error(`HTTP ${err.response.status} from ${url}\n  ${detail}`);
-		}
-		throw err;
-	}
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
@@ -715,13 +626,15 @@ async function main(): Promise<void> {
 				DD_FETCH_CONCURRENCY,
 				async ([key, ctx]) => ({
 					key,
-					result: await fetchDDFlags(
-						ddClientToken,
-						ddSite,
+					result: await fetchPrecomputedAssignmentFlags({
+						clientToken: ddClientToken,
+						site: ddSite,
 						ddEnv,
-						ctx.subjectId.trim(),
-						ctx.attributes,
-					),
+						subject: {
+							targeting_key: ctx.subjectId.trim(),
+							targeting_attributes: ctx.attributes,
+						},
+					}),
 				}),
 			),
 		]);

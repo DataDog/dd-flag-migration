@@ -69,6 +69,16 @@ export function HelpScreen(): JSX.Element {
 			),
 		},
 		{
+			id: 'get-assignments-command',
+			render: () => (
+				<Text>
+					{'  '}
+					<Text color="cyan">get-assignments</Text>
+					{'   Fetch precomputed Datadog flag assignments for a subject'}
+				</Text>
+			),
+		},
+		{
 			id: 'bulk-permissions-command',
 			render: () => (
 				<Text>
@@ -356,6 +366,66 @@ export function HelpScreen(): JSX.Element {
 			),
 		},
 		{ id: 'space-evaluate', render: () => <Text> </Text> },
+		{
+			id: 'get-assignments-title',
+			render: () => (
+				<Text>
+					<Text bold>Options for</Text>{' '}
+					<Text color="cyan">get-assignments</Text>:
+				</Text>
+			),
+		},
+		{
+			id: 'ga-interactive',
+			render: () => (
+				<Text>
+					{
+						'  --interactive=<bool>         Set to false to run without prompts (default: true)'
+					}
+				</Text>
+			),
+		},
+		{
+			id: 'ga-dd-env',
+			render: () => (
+				<Text>
+					{
+						'  --dd-env=<query>             DD_ENV query (required when interactive=false)'
+					}
+				</Text>
+			),
+		},
+		{
+			id: 'ga-subject',
+			render: () => (
+				<Text>
+					{
+						'  --subject-json=<json>        Complete subject JSON (default: built-in test subject)'
+					}
+				</Text>
+			),
+		},
+		{
+			id: 'ga-site',
+			render: () => (
+				<Text>
+					{
+						'  --datadog-site=<site>        Set the Datadog site (overrides DD_SITE)'
+					}
+				</Text>
+			),
+		},
+		{
+			id: 'ga-output',
+			render: () => (
+				<Text>
+					{
+						'  Responses are saved to get-assignments/<retrieved-timestamp>.json'
+					}
+				</Text>
+			),
+		},
+		{ id: 'space-get-assignments', render: () => <Text> </Text> },
 		{ id: 'examples-title', render: () => <Text bold>Examples:</Text> },
 		{
 			id: 'example-migrate',
@@ -417,6 +487,15 @@ export function HelpScreen(): JSX.Element {
 				<Text>
 					{'  '}
 					<Text color="gray">$</Text> dd-flag-migration evaluate
+				</Text>
+			),
+		},
+		{
+			id: 'example-get-assignments',
+			render: () => (
+				<Text>
+					{'  '}
+					<Text color="gray">$</Text> dd-flag-migration get-assignments
 				</Text>
 			),
 		},

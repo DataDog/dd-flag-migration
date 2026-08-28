@@ -1,3 +1,6 @@
+import { parsePrecomputedAssignmentsSubject } from './datadog/precomputed-assignments.js';
+import type { PrecomputedAssignmentsSubject } from './datadog/types.js';
+
 export type ProviderValue = 'eppo' | 'launchdarkly';
 
 export type TagMode = 'additive' | 'replace';
@@ -32,6 +35,21 @@ export interface MigrateTagsArgs {
 	tagMode: TagMode | undefined;
 	nonInteractive?: MigrateTagsNonInteractiveArgs;
 }
+
+interface GetAssignmentsBaseArgs {
+	datadogSite: string | undefined;
+	subject: PrecomputedAssignmentsSubject | undefined;
+}
+
+export type GetAssignmentsArgs =
+	| (GetAssignmentsBaseArgs & {
+			interactive: true;
+			ddEnv: string | undefined;
+	  })
+	| (GetAssignmentsBaseArgs & {
+			interactive: false;
+			ddEnv: string;
+	  });
 
 export class ArgParseError extends Error {}
 
@@ -338,4 +356,72 @@ export function parseMigrateTagsArgs(argv: string[]): MigrateTagsArgs {
 		interactive: true,
 		tagMode,
 	};
+}
+
+const GET_ASSIGNMENTS_FLAGS: FlagDef[] = [
+	{ name: '--datadog-site', takesValue: true },
+	{ name: '--interactive', takesValue: true },
+	{ name: '--dd-env', takesValue: true },
+	{ name: '--subject-json', takesValue: true },
+];
+
+export function parseGetAssignmentsArgs(argv: string[]): GetAssignmentsArgs {
+	let interactive: boolean | undefined;
+	let datadogSite: string | undefined;
+	let ddEnv: string | undefined;
+	let subject: PrecomputedAssignmentsSubject | undefined;
+
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		const eq = arg.indexOf('=');
+		const name = arg.startsWith('--') && eq !== -1 ? arg.slice(0, eq) : arg;
+		const valueFromEquals =
+			arg.startsWith('--') && eq !== -1 ? arg.slice(eq + 1) : undefined;
+		const def = GET_ASSIGNMENTS_FLAGS.find((flag) => flag.name === name);
+		if (!def) throw new ArgParseError(`Unknown option: ${arg}`);
+
+		let value: string | undefined;
+		if (valueFromEquals !== undefined) {
+			value = valueFromEquals;
+		} else {
+			if (i + 1 >= argv.length) {
+				throw new ArgParseError(`${name} requires a value`);
+			}
+			value = argv[++i];
+		}
+		if (value.trim().length === 0) {
+			throw new ArgParseError(`${name} value must not be empty`);
+		}
+
+		switch (name) {
+			case '--interactive':
+				interactive = parseBool(value, name);
+				break;
+			case '--datadog-site':
+				datadogSite = value.trim();
+				break;
+			case '--dd-env':
+				ddEnv = value.trim();
+				break;
+			case '--subject-json':
+				try {
+					subject = parsePrecomputedAssignmentsSubject(value);
+				} catch (error) {
+					throw new ArgParseError(
+						`--subject-json ${error instanceof Error ? error.message : String(error)}`,
+					);
+				}
+				break;
+		}
+	}
+
+	const isInteractive = interactive ?? true;
+	if (!isInteractive) {
+		if (!ddEnv) {
+			throw new ArgParseError('--dd-env is required in non-interactive mode');
+		}
+		return { interactive: false, datadogSite, ddEnv, subject };
+	}
+
+	return { interactive: true, datadogSite, ddEnv, subject };
 }

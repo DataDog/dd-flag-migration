@@ -26,6 +26,38 @@ export interface DatadogEnvironment {
 	queries: string[];
 }
 
+export type TargetingAttributeValue = string | number | boolean | null;
+
+export interface PrecomputedAssignmentsSubject {
+	targeting_key: string;
+	targeting_attributes: Record<string, TargetingAttributeValue>;
+}
+
+export interface PrecomputedAssignment {
+	variationValue: unknown;
+	variationType: string;
+	variationKey?: string;
+	allocationKey?: string;
+	reason?: string;
+	doLog?: boolean;
+	serialId?: number;
+	extraLogging?: Record<string, unknown>;
+}
+
+export interface PrecomputedAssignmentsResponse {
+	data: {
+		id: string;
+		type: 'precomputed-assignments';
+		attributes: {
+			createdAt: string;
+			environment: { name: string };
+			flags: Record<string, PrecomputedAssignment>;
+			format: string;
+			obfuscated: boolean;
+		};
+	};
+}
+
 export type EnvironmentMapping<SourceEnvironmentId extends string | number> =
 	Map<SourceEnvironmentId, DatadogEnvironment[]>;
 

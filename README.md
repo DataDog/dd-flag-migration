@@ -23,6 +23,9 @@ npx @datadog/dd-flag-migration migrate
 # evaluate migrated flags
 npx @datadog/dd-flag-migration evaluate
 
+# fetch precomputed assignments for a subject
+npx @datadog/dd-flag-migration get-assignments
+
 # manage team permissions after migration
 npx @datadog/dd-flag-migration bulk-permissions
 
@@ -41,7 +44,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Credentials you'll need
 
-Credentials are read from environment variables. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running `migrate`, `evaluate`, `bulk-permissions`, `bulk-enable`, or `sync-tags`. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1.
+Credentials are read from environment variables. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running `migrate`, `evaluate`, `get-assignments`, `bulk-permissions`, `bulk-enable`, or `sync-tags`. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1.
 
 `DD_SITE` is optional for interactive commands and pre-fills the Datadog site prompt when set. For non-interactive `migrate` runs, use either `DD_SITE` or `--datadog-site`; the explicit CLI option takes precedence. The standalone `scripts/get-datadog-flag.sh` script requires `DD_SITE` and does not accept a site argument.
 
@@ -66,6 +69,14 @@ Your LaunchDarkly access token needs **Reader** role permissions (or a custom ro
 | `EPPO_SDK_KEY` | migration was from Eppo | Eppo → SDK Keys (server SDK key, one per environment) |
 | `LAUNCHDARKLY_API_KEY` | migration was from LaunchDarkly *(preferred)* | LaunchDarkly → Account settings → Authorization → Access tokens |
 
+### Required for `get-assignments`
+
+| Variable | Required when | Where to find it |
+|---|---|---|
+| `DD_CLIENT_TOKEN` | always | Datadog → Organization Settings → Client Tokens |
+| `DD_API_KEY` | interactive mode | Datadog → Organization Settings → API Keys |
+| `DD_APP_KEY` | interactive mode | Datadog → Organization Settings → Application Keys |
+
 ### Required for `bulk-permissions`, `bulk-enable`, and `sync-tags`
 
 | Variable | Required when | Where to find it |
@@ -84,7 +95,7 @@ Enable the scopes required for the command you are running:
 | `feature_flag_approvals_override` | Optional for `bulk-enable` | Bypasses Feature Flag approval requirements. Without it, approval-protected changes are submitted as approval requests and reported as such. |
 | `feature_flag_config_read` | `migrate`, `bulk-permissions`, `bulk-enable`, `sync-tags` | View Feature Flag Configurations |
 | `feature_flag_config_write` | `migrate`, `bulk-enable`, `sync-tags` | Edit Feature Flag Configurations |
-| `feature_flag_environment_config_read` | `migrate`, `bulk-enable`, `sync-tags` | View Feature Flag Environment settings |
+| `feature_flag_environment_config_read` | `migrate`, interactive `get-assignments`, `bulk-enable`, `sync-tags` | View Feature Flag Environment settings |
 | `teams_read` | `migrate`, `bulk-permissions`, `sync-tags` | View Teams for team-based access controls |
 | `restriction_policies_read` | `bulk-permissions` | View restriction policies |
 | `restriction_policies_write` | `bulk-permissions` | Edit restriction policies |
@@ -449,6 +460,44 @@ npx @datadog/dd-flag-migration evaluate \
   --flag-environment=production \
   --datadog-site=datadoghq.com
 ```
+
+---
+
+## Step 3 — Get precomputed assignments
+
+Fetch the values Datadog assigns to a subject after migration:
+
+```bash
+npx @datadog/dd-flag-migration get-assignments
+```
+
+Interactive mode fetches the org's Feature Flag environments, prompts for an environment and `DD_ENV` query, and offers this default subject:
+
+```json
+{
+  "targeting_key": "test_subject",
+  "targeting_attributes": {
+    "attr1": "value1",
+    "companyId": "1"
+  }
+}
+```
+
+You can select the custom-subject option to enter a complete subject JSON object instead. Targeting attribute values must be strings, numbers, booleans, or `null`.
+
+For standalone use, provide the `DD_ENV` query directly:
+
+```bash
+npx @datadog/dd-flag-migration get-assignments \
+  --interactive=false \
+  --dd-env=prod \
+  --datadog-site=us5.datadoghq.com \
+  --subject-json='{"targeting_key":"user-123","targeting_attributes":{"companyId":"1"}}'
+```
+
+`--subject-json` is optional and uses the same default subject when omitted. In standalone mode, `--datadog-site` takes precedence over `DD_SITE`.
+
+Each run saves the full response to `get-assignments/<retrieved-timestamp>.json` in the current repository. The output directory is ignored by Git because assignment responses can contain sensitive flag data. The terminal reports the HTTP status, request duration, response size, assignment count, environment, subject, and saved filepath.
 
 ---
 
