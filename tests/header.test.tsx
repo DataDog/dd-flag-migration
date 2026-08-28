@@ -18,4 +18,11 @@ describe('Header', () => {
 		const { lastFrame } = render(<Header subtitle={HEADER_SUBTITLES.eppo} />);
 		expect(lastFrame() ?? '').toContain('Eppo → Datadog');
 	});
+
+	it('renders the get assignments subtitle', () => {
+		const { lastFrame } = render(
+			<Header subtitle={HEADER_SUBTITLES.getAssignments} />,
+		);
+		expect(lastFrame() ?? '').toContain('Get Precomputed Assignments');
+	});
 });

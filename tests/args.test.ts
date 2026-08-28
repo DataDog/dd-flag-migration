@@ -1,5 +1,9 @@
 import { describe, expect, it } from '@jest/globals';
-import { ArgParseError, parseMigrateArgs } from '../src/args.js';
+import {
+	ArgParseError,
+	parseGetAssignmentsArgs,
+	parseMigrateArgs,
+} from '../src/args.js';
 
 describe('parseMigrateArgs', () => {
 	it('defaults to interactive mode', () => {
@@ -229,6 +233,58 @@ describe('parseMigrateArgs', () => {
 	it('rejects --interactive=maybe', () => {
 		expect(() => parseMigrateArgs(['--interactive=maybe'])).toThrow(
 			/expects a boolean/,
+		);
+	});
+});
+
+describe('parseGetAssignmentsArgs', () => {
+	it('defaults to interactive mode and the built-in subject', () => {
+		expect(parseGetAssignmentsArgs([])).toEqual({
+			interactive: true,
+			datadogSite: undefined,
+			ddEnv: undefined,
+			subject: undefined,
+		});
+	});
+
+	it('parses a complete standalone invocation', () => {
+		expect(
+			parseGetAssignmentsArgs([
+				'--interactive=false',
+				'--dd-env=prod-us-east-1',
+				'--datadog-site',
+				'us5.datadoghq.com',
+				'--subject-json',
+				'{"targeting_key":"user-123","targeting_attributes":{"companyId":"1","admin":true}}',
+			]),
+		).toEqual({
+			interactive: false,
+			datadogSite: 'us5.datadoghq.com',
+			ddEnv: 'prod-us-east-1',
+			subject: {
+				targeting_key: 'user-123',
+				targeting_attributes: { companyId: '1', admin: true },
+			},
+		});
+	});
+
+	it('requires --dd-env in standalone mode', () => {
+		expect(() => parseGetAssignmentsArgs(['--interactive=false'])).toThrow(
+			/--dd-env is required/,
+		);
+	});
+
+	it('rejects invalid subject JSON', () => {
+		expect(() =>
+			parseGetAssignmentsArgs([
+				'--subject-json={"targeting_key":"test","targeting_attributes":[]}',
+			]),
+		).toThrow(/targeting_attributes must be a JSON object/);
+	});
+
+	it('rejects unknown options', () => {
+		expect(() => parseGetAssignmentsArgs(['--environment=prod'])).toThrow(
+			/Unknown option/,
 		);
 	});
 });

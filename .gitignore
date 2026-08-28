@@ -5,6 +5,8 @@ coverage/
 *.js.map
 *.xlsx
 dry-run*.json
+/edge-test/
+/get-assignments/
 CLAUDE.md
 plans/
 .DS_Store

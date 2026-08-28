@@ -12,6 +12,7 @@
 		"sync-tags": "tsx src/cli.tsx sync-tags",
 		"help": "tsx src/cli.tsx --help",
 		"evaluate": "tsx src/cli.tsx evaluate",
+		"get-assignments": "tsx src/cli.tsx get-assignments",
 		"bulk-permissions": "tsx src/cli.tsx bulk-permissions",
 		"bulk-enable": "tsx src/cli.tsx bulk-enable",
 		"build": "tsc -p tsconfig.build.json",

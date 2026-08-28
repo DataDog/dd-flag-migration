@@ -33,6 +33,9 @@ if (subcommand === '--version' || subcommand === '-V') {
 } else if (subcommand === 'evaluate') {
 	process.argv.splice(2, 1);
 	await import('./evaluate.js');
+} else if (subcommand === 'get-assignments') {
+	process.argv.splice(2, 1);
+	await import('./get-assignments.js');
 } else if (subcommand === 'bulk-permissions') {
 	process.argv.splice(2, 1);
 	await import('./bulk-permissions.js');
