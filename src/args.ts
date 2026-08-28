@@ -33,6 +33,11 @@ export interface MigrateTagsArgs {
 	nonInteractive?: MigrateTagsNonInteractiveArgs;
 }
 
+export interface AuditOrphansArgs {
+	datadogSite: string | undefined;
+	projectKey: string;
+}
+
 export class ArgParseError extends Error {}
 
 function parseBool(raw: string, flag: string): boolean {
@@ -65,6 +70,48 @@ function normalizeTagMode(raw: string): TagMode {
 interface FlagDef {
 	name: string;
 	takesValue: boolean;
+}
+
+const AUDIT_ORPHANS_FLAGS: FlagDef[] = [
+	{ name: '--datadog-site', takesValue: true },
+	{ name: '--project', takesValue: true },
+];
+
+export function parseAuditOrphansArgs(argv: string[]): AuditOrphansArgs {
+	let datadogSite: string | undefined;
+	let projectKey: string | undefined;
+
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		const eq = arg.indexOf('=');
+		const name = arg.startsWith('--') && eq !== -1 ? arg.slice(0, eq) : arg;
+		const valueFromEquals =
+			arg.startsWith('--') && eq !== -1 ? arg.slice(eq + 1) : undefined;
+		const def = AUDIT_ORPHANS_FLAGS.find((flag) => flag.name === name);
+		if (!def) throw new ArgParseError(`Unknown option: ${arg}`);
+
+		let value: string;
+		if (valueFromEquals !== undefined) {
+			value = valueFromEquals;
+		} else {
+			if (i + 1 >= argv.length) {
+				throw new ArgParseError(`${name} requires a value`);
+			}
+			value = argv[++i];
+		}
+		if (value.trim().length === 0) {
+			throw new ArgParseError(`${name} value must not be empty`);
+		}
+
+		if (name === '--datadog-site') datadogSite = value.trim();
+		if (name === '--project') projectKey = value.trim();
+	}
+
+	if (!projectKey) {
+		throw new ArgParseError('--project is required');
+	}
+
+	return { datadogSite, projectKey };
 }
 
 const FLAGS: FlagDef[] = [

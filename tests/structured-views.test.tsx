@@ -62,6 +62,7 @@ describe('structured static views', () => {
 		expect(output).toContain('Feature Flag Migration Tool');
 		expect(output).toContain('migrate');
 		expect(output).toContain('evaluate');
+		expect(output).toContain('audit-orphans');
 		expect(output).toContain('bulk-permissions');
 		expect(output).toContain('bulk-enable');
 		expect(output).toContain('--dry-run');
