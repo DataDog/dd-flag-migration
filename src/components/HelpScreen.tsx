@@ -69,6 +69,16 @@ export function HelpScreen(): JSX.Element {
 			),
 		},
 		{
+			id: 'audit-orphans-command',
+			render: () => (
+				<Text>
+					{'  '}
+					<Text color="cyan">audit-orphans</Text>
+					{'   Export flag keys exclusive to Datadog or LaunchDarkly'}
+				</Text>
+			),
+		},
+		{
 			id: 'bulk-permissions-command',
 			render: () => (
 				<Text>
@@ -356,6 +366,35 @@ export function HelpScreen(): JSX.Element {
 			),
 		},
 		{ id: 'space-evaluate', render: () => <Text> </Text> },
+		{
+			id: 'audit-orphans-title',
+			render: () => (
+				<Text>
+					<Text bold>Options for</Text> <Text color="cyan">audit-orphans</Text>:
+				</Text>
+			),
+		},
+		{
+			id: 'audit-project',
+			render: () => (
+				<Text>
+					{
+						'  --project=<key>               LaunchDarkly project key (required)'
+					}
+				</Text>
+			),
+		},
+		{
+			id: 'audit-site',
+			render: () => (
+				<Text>
+					{
+						'  --datadog-site=<site>        Set the Datadog site (overrides DD_SITE)'
+					}
+				</Text>
+			),
+		},
+		{ id: 'space-audit-orphans', render: () => <Text> </Text> },
 		{ id: 'examples-title', render: () => <Text bold>Examples:</Text> },
 		{
 			id: 'example-migrate',
@@ -417,6 +456,16 @@ export function HelpScreen(): JSX.Element {
 				<Text>
 					{'  '}
 					<Text color="gray">$</Text> dd-flag-migration evaluate
+				</Text>
+			),
+		},
+		{
+			id: 'example-audit-orphans',
+			render: () => (
+				<Text>
+					{'  '}
+					<Text color="gray">$</Text>{' '}
+					{'dd-flag-migration audit-orphans --project=my-ld-project'}
 				</Text>
 			),
 		},
