@@ -10,6 +10,7 @@
 		"setup": "yarn install && yarn allow-scripts",
 		"migrate": "tsx src/cli.tsx migrate",
 		"sync-tags": "tsx src/cli.tsx sync-tags",
+		"sync-distribution-channel": "tsx src/cli.tsx sync-distribution-channel",
 		"help": "tsx src/cli.tsx --help",
 		"evaluate": "tsx src/cli.tsx evaluate",
 		"bulk-permissions": "tsx src/cli.tsx bulk-permissions",

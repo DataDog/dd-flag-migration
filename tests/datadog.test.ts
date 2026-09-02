@@ -29,6 +29,7 @@ import {
 	syncAllocationsForEnvironment,
 	syncVariants,
 	syncVariantsCreatesAndUpdates,
+	updateFlagDistributionChannel,
 	updateFlagTags,
 	updateVariant,
 } from '../src/datadog/api.js';
@@ -295,6 +296,7 @@ describe('fetchDatadogFlags', () => {
 						key: 'flag-a',
 						name: 'Flag A',
 						tags: ['project:health-100'],
+						distribution_channel: 'ALL',
 						migration_metadata: {
 							project_key: 'proj-1',
 							flag_key: 'flag-a',
@@ -319,6 +321,7 @@ describe('fetchDatadogFlags', () => {
 				id: 'uuid-1',
 				key: 'flag-a',
 				tags: ['project:health-100'],
+				distributionChannel: 'ALL',
 				migration_metadata: { project_key: 'proj-1', flag_key: 'flag-a' },
 				environmentStatuses: new Map([
 					['env-enabled', 'ENABLED'],
@@ -472,6 +475,36 @@ describe('fetchDatadogFlags', () => {
 
 		const result = await fetchDatadogFlags(API_KEY, APP_KEY, SITE);
 		expect(result).toHaveLength(limit - 1);
+	});
+});
+
+describe('updateFlagDistributionChannel', () => {
+	let mock: AxiosMockAdapter;
+
+	beforeEach(() => {
+		mock = new AxiosMockAdapter(ddClient as never);
+	});
+
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('updates the flag-level distribution channel', async () => {
+		mock.onPut(`${BASE}/api/v2/feature-flags/flag-1`).reply((config) => {
+			expect(config.headers?.['dd-api-key']).toBe(API_KEY);
+			expect(config.headers?.['dd-application-key']).toBe(APP_KEY);
+			expect(JSON.parse(config.data as string)).toEqual({
+				data: {
+					type: 'feature-flags',
+					attributes: { distribution_channel: 'SERVER' },
+				},
+			});
+			return [200, {}];
+		});
+
+		await expect(
+			updateFlagDistributionChannel(API_KEY, APP_KEY, 'flag-1', 'SERVER', SITE),
+		).resolves.toBeUndefined();
 	});
 });
 

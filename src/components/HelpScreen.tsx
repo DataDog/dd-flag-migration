@@ -59,6 +59,16 @@ export function HelpScreen(): JSX.Element {
 			),
 		},
 		{
+			id: 'distribution-channel-command',
+			render: () => (
+				<Text>
+					{'  '}
+					<Text color="cyan">sync-distribution-channel</Text>
+					{'   Set the channel on selected LaunchDarkly-matched flags'}
+				</Text>
+			),
+		},
+		{
 			id: 'evaluate-command',
 			render: () => (
 				<Text>
@@ -288,6 +298,36 @@ export function HelpScreen(): JSX.Element {
 		},
 		{ id: 'space-mt-required', render: () => <Text> </Text> },
 		{
+			id: 'distribution-channel-title',
+			render: () => (
+				<Text>
+					<Text bold>Options for</Text>{' '}
+					<Text color="cyan">sync-distribution-channel</Text>:
+				</Text>
+			),
+		},
+		{
+			id: 'dc-dry-run',
+			render: () => (
+				<Text>
+					{
+						'  --dry-run                    Preview channel changes without writing to Datadog'
+					}
+				</Text>
+			),
+		},
+		{
+			id: 'dc-site',
+			render: () => (
+				<Text>
+					{
+						'  --datadog-site=<site>        Set the Datadog site (overrides DD_SITE)'
+					}
+				</Text>
+			),
+		},
+		{ id: 'space-dc', render: () => <Text> </Text> },
+		{
 			id: 'evaluate-title',
 			render: () => (
 				<Text>
@@ -476,6 +516,16 @@ export function HelpScreen(): JSX.Element {
 				<Text>
 					{'  '}
 					<Text color="gray">$</Text> dd-flag-migration bulk-enable
+				</Text>
+			),
+		},
+		{
+			id: 'example-distribution-channel',
+			render: () => (
+				<Text>
+					{'  '}
+					<Text color="gray">$</Text> dd-flag-migration
+					sync-distribution-channel
 				</Text>
 			),
 		},

@@ -33,6 +33,11 @@ export interface MigrateTagsArgs {
 	nonInteractive?: MigrateTagsNonInteractiveArgs;
 }
 
+export interface SyncDistributionChannelArgs {
+	dryRun: boolean;
+	datadogSite: string | undefined;
+}
+
 export class ArgParseError extends Error {}
 
 function parseBool(raw: string, flag: string): boolean {
@@ -338,4 +343,56 @@ export function parseMigrateTagsArgs(argv: string[]): MigrateTagsArgs {
 		interactive: true,
 		tagMode,
 	};
+}
+
+const DISTRIBUTION_CHANNEL_FLAGS: FlagDef[] = [
+	{ name: '--dry-run', takesValue: false },
+	{ name: '--datadog-site', takesValue: true },
+];
+
+/** Parse the interactive distribution-channel sync command options. */
+export function parseSyncDistributionChannelArgs(
+	argv: string[],
+): SyncDistributionChannelArgs {
+	let dryRun = false;
+	let datadogSite: string | undefined;
+
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		const eq = arg.indexOf('=');
+		const name = arg.startsWith('--') && eq !== -1 ? arg.slice(0, eq) : arg;
+		const valueFromEquals =
+			arg.startsWith('--') && eq !== -1 ? arg.slice(eq + 1) : undefined;
+		const def = DISTRIBUTION_CHANNEL_FLAGS.find((flag) => flag.name === name);
+		if (!def) throw new ArgParseError(`Unknown option: ${arg}`);
+
+		let value: string | undefined;
+		if (def.takesValue) {
+			if (valueFromEquals !== undefined) {
+				value = valueFromEquals;
+			} else {
+				if (i + 1 >= argv.length) {
+					throw new ArgParseError(`${name} requires a value`);
+				}
+				value = argv[i + 1];
+				i++;
+			}
+			if (value.trim().length === 0) {
+				throw new ArgParseError(`${name} value must not be empty`);
+			}
+		} else if (valueFromEquals !== undefined) {
+			throw new ArgParseError(`${name} does not take a value`);
+		}
+
+		switch (name) {
+			case '--dry-run':
+				dryRun = true;
+				break;
+			case '--datadog-site':
+				datadogSite = (value as string).trim();
+				break;
+		}
+	}
+
+	return { dryRun, datadogSite };
 }
