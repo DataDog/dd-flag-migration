@@ -31,6 +31,9 @@ npx @datadog/dd-flag-migration bulk-enable
 
 # sync tags from your source provider onto migrated flags
 npx @datadog/dd-flag-migration sync-tags
+
+# inventory LaunchDarkly dependent flags and prerequisites
+npx @datadog/dd-flag-migration dependent-flags
 ```
 
 ### Contributing / running from source
@@ -41,7 +44,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Credentials you'll need
 
-Credentials are read from environment variables. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running `migrate`, `evaluate`, `bulk-permissions`, `bulk-enable`, or `sync-tags`. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1.
+Credentials are read from environment variables. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running `migrate`, `evaluate`, `bulk-permissions`, `bulk-enable`, `sync-tags`, or `dependent-flags`. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1.
 
 `DD_SITE` is optional for interactive commands and pre-fills the Datadog site prompt when set. For non-interactive `migrate` runs, use either `DD_SITE` or `--datadog-site`; the explicit CLI option takes precedence. The standalone `scripts/get-datadog-flag.sh` script requires `DD_SITE` and does not accept a site argument.
 
@@ -74,6 +77,8 @@ Your LaunchDarkly access token needs **Reader** role permissions (or a custom ro
 | `DD_APP_KEY` | always | Datadog → Organization Settings → Application Keys |
 
 `sync-tags` also needs the source provider's credentials (`EPPO_API_KEY` or `LAUNCHDARKLY_API_KEY`) depending on the provider you select — the same variables used by `migrate`.
+
+`dependent-flags` requires `DD_API_KEY`, `DD_APP_KEY`, and `LAUNCHDARKLY_API_KEY`. The Datadog keys identify the destination organization shown in the report; the LaunchDarkly token needs Reader access to every project selected for the scan.
 
 ### Datadog Application Key permissions
 
@@ -407,6 +412,34 @@ To preview tag changes without writing to Datadog:
 ```bash
 npx @datadog/dd-flag-migration sync-tags --dry-run
 ```
+
+---
+
+## LaunchDarkly Dependent Flag Report
+
+Inventory LaunchDarkly flags that depend on prerequisite flags:
+
+```bash
+npx @datadog/dd-flag-migration dependent-flags
+
+# When running from this repository:
+yarn dependent-flags
+```
+
+The interactive flow presents a searchable project list with nothing preselected. After you choose one or more projects, the command scans every non-archived environment and exports one row for each dependent flag, prerequisite flag, and environment combination.
+
+The timestamped `dependent-flags-export-<timestamp>.xlsx` workbook is written to the current directory. It includes the required variation index, name, and value; the dependent flag's LaunchDarkly maintainer; and the Datadog organization resolved from the configured keys. **Code Update** and **Verified in DD** are intentionally blank tracking columns. Red rows indicate a prerequisite flag or required variation that could not be resolved.
+
+For automation, pass `--interactive=false`, at least one repeatable `--project <key>`, and either `--datadog-site <site>` or `DD_SITE`. Progress is written to stderr and stdout contains JSON with the export path and report counts:
+
+```bash
+npx @datadog/dd-flag-migration dependent-flags --interactive=false \
+  --datadog-site datadoghq.com \
+  --project mobile \
+  --project web
+```
+
+One `DD_API_KEY`/`DD_APP_KEY` pair identifies one destination Datadog organization. Run the report separately with each organization's credentials when the same LaunchDarkly projects are being migrated to multiple Datadog organizations.
 
 ---
 

@@ -6,11 +6,13 @@ import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import AxiosMockAdapter from 'axios-mock-adapter';
 import {
 	createLDClient,
+	fetchAllProjectEnvironments,
 	fetchCustomRoles,
 	fetchFlag,
 	fetchFlagStatuses,
 	fetchFlags,
 	fetchFlagsByKey,
+	fetchFlagsForEnvironment,
 	fetchProjectEnvironments,
 	fetchProjects,
 	fetchTeamsWithRoles,
@@ -185,6 +187,33 @@ describe('fetchProjectEnvironments', () => {
 		const envs = await fetchProjectEnvironments(API_KEY, 'empty-project');
 		expect(envs).toEqual([]);
 	});
+
+	it('paginates through all project environments', async () => {
+		const makeEnvironments = (start: number, count: number) =>
+			Array.from({ length: count }, (_, index) => ({
+				key: `env-${start + index}`,
+				name: `Environment ${start + index}`,
+				color: 'abcdef',
+			}));
+		mock
+			.onGet(
+				'https://app.launchdarkly.com/api/v2/projects/big-project/environments',
+			)
+			.replyOnce(200, {
+				items: makeEnvironments(0, 100),
+				totalCount: 101,
+			})
+			.onGet(
+				'https://app.launchdarkly.com/api/v2/projects/big-project/environments',
+			)
+			.replyOnce(200, {
+				items: makeEnvironments(100, 1),
+				totalCount: 101,
+			});
+
+		const envs = await fetchAllProjectEnvironments(API_KEY, 'big-project');
+		expect(envs).toHaveLength(101);
+	});
 });
 
 // ─── fetchFlags ──────────────────────────────────────────────────────────────
@@ -240,6 +269,61 @@ describe('fetchFlags', () => {
 
 		const flags = await fetchFlags(API_KEY, 'empty-project');
 		expect(flags).toEqual([]);
+	});
+});
+
+// ─── fetchFlagsForEnvironment ───────────────────────────────────────────────
+
+describe('fetchFlagsForEnvironment', () => {
+	let mock: AxiosMockAdapter;
+
+	beforeEach(() => {
+		mock = new AxiosMockAdapter(ldClient as never);
+	});
+
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('requests full environment configuration including prerequisites', async () => {
+		mock
+			.onGet('https://app.launchdarkly.com/api/v2/flags/my-project', {
+				params: {
+					env: 'production',
+					summary: 0,
+					limit: 100,
+					offset: 0,
+				},
+			})
+			.reply(200, { items: [booleanFlagFull], totalCount: 1 });
+
+		const flags = await fetchFlagsForEnvironment(
+			API_KEY,
+			'my-project',
+			'production',
+		);
+		expect(flags).toEqual([booleanFlagFull]);
+	});
+
+	it('continues on a full page when totalCount is omitted', async () => {
+		const firstPage = Array.from({ length: 100 }, (_, index) => ({
+			...booleanFlagFull,
+			key: `flag-${index}`,
+		}));
+		mock
+			.onGet('https://app.launchdarkly.com/api/v2/flags/my-project')
+			.replyOnce(200, { items: firstPage })
+			.onGet('https://app.launchdarkly.com/api/v2/flags/my-project')
+			.replyOnce(200, {
+				items: [{ ...booleanFlagFull, key: 'flag-100' }],
+			});
+
+		const flags = await fetchFlagsForEnvironment(
+			API_KEY,
+			'my-project',
+			'production',
+		);
+		expect(flags).toHaveLength(101);
 	});
 });
 

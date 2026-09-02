@@ -88,6 +88,16 @@ export function HelpScreen(): JSX.Element {
 				</Text>
 			),
 		},
+		{
+			id: 'dependent-flags-command',
+			render: () => (
+				<Text>
+					{'  '}
+					<Text color="cyan">dependent-flags</Text>
+					{'   Export LaunchDarkly prerequisite relationships to Excel'}
+				</Text>
+			),
+		},
 		{ id: 'space-commands', render: () => <Text> </Text> },
 		{
 			id: 'migrate-title',
@@ -356,6 +366,46 @@ export function HelpScreen(): JSX.Element {
 			),
 		},
 		{ id: 'space-evaluate', render: () => <Text> </Text> },
+		{
+			id: 'dependent-flags-title',
+			render: () => (
+				<Text>
+					<Text bold>Options for</Text>{' '}
+					<Text color="cyan">dependent-flags</Text>:
+				</Text>
+			),
+		},
+		{
+			id: 'df-site',
+			render: () => (
+				<Text>
+					{
+						'  --datadog-site=<site>        Set the Datadog site (overrides DD_SITE)'
+					}
+				</Text>
+			),
+		},
+		{
+			id: 'df-interactive',
+			render: () => (
+				<Text>
+					{
+						'  --interactive=<bool>         Set to false to run without prompts (default: true)'
+					}
+				</Text>
+			),
+		},
+		{
+			id: 'df-project',
+			render: () => (
+				<Text>
+					{
+						'  --project <key>              Project to scan in non-interactive mode (repeatable; ≥1)'
+					}
+				</Text>
+			),
+		},
+		{ id: 'space-dependent-flags', render: () => <Text> </Text> },
 		{ id: 'examples-title', render: () => <Text bold>Examples:</Text> },
 		{
 			id: 'example-migrate',
@@ -476,6 +526,15 @@ export function HelpScreen(): JSX.Element {
 				<Text>
 					{'  '}
 					<Text color="gray">$</Text> dd-flag-migration bulk-enable
+				</Text>
+			),
+		},
+		{
+			id: 'example-dependent-flags',
+			render: () => (
+				<Text>
+					{'  '}
+					<Text color="gray">$</Text> dd-flag-migration dependent-flags
 				</Text>
 			),
 		},

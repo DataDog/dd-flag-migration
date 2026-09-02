@@ -916,6 +916,39 @@ export async function fetchCurrentUserIdentity(
 	return { userId, orgId };
 }
 
+/** Resolve the Datadog organization associated with the configured keys. */
+export async function fetchCurrentOrganizationName(
+	apiKey: string,
+	appKey: string,
+	site = 'datadoghq.com',
+): Promise<string> {
+	const baseUrl = `https://api.${site}`;
+	const response = await ddClient.get<{
+		data: {
+			relationships: { org: { data: { id: string } } };
+		};
+		included?: Array<{
+			id: string;
+			type: string;
+			attributes?: { name?: string };
+		}>;
+	}>(`${baseUrl}/api/v2/current_user`, {
+		headers: ddHeaders(apiKey, appKey),
+	});
+
+	const orgId = response.data.data.relationships.org.data.id;
+	const org = response.data.included?.find(
+		(resource) => resource.type === 'orgs' && resource.id === orgId,
+	);
+	const name = org?.attributes?.name?.trim();
+	if (!name) {
+		throw new Error(
+			'Could not determine the Datadog organization name from /api/v2/current_user',
+		);
+	}
+	return name;
+}
+
 /**
  * Fetch the current restriction policy bindings for a feature flag.
  * Returns empty array when no policy exists (404).

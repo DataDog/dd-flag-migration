@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### CLI
+
+- Feat: add a LaunchDarkly dependent-flag inventory command with Excel export
+
 ## [1.3.0] — 2026-07-27
 
 ### Migration — LaunchDarkly

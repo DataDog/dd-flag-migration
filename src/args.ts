@@ -33,6 +33,12 @@ export interface MigrateTagsArgs {
 	nonInteractive?: MigrateTagsNonInteractiveArgs;
 }
 
+export interface DependentFlagsArgs {
+	datadogSite: string | undefined;
+	interactive: boolean;
+	projectKeys: string[];
+}
+
 export class ArgParseError extends Error {}
 
 function parseBool(raw: string, flag: string): boolean {
@@ -337,5 +343,65 @@ export function parseMigrateTagsArgs(argv: string[]): MigrateTagsArgs {
 		datadogSite,
 		interactive: true,
 		tagMode,
+	};
+}
+
+const DEPENDENT_FLAGS = new Set([
+	'--datadog-site',
+	'--interactive',
+	'--project',
+]);
+
+/** Parse arguments for the read-only dependent-flags report command. */
+export function parseDependentFlagsArgs(argv: string[]): DependentFlagsArgs {
+	let datadogSite: string | undefined;
+	let interactive: boolean | undefined;
+	const projectKeys: string[] = [];
+
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		const eq = arg.indexOf('=');
+		const name = arg.startsWith('--') && eq !== -1 ? arg.slice(0, eq) : arg;
+		const valueFromEquals =
+			arg.startsWith('--') && eq !== -1 ? arg.slice(eq + 1) : undefined;
+		if (!DEPENDENT_FLAGS.has(name)) {
+			throw new ArgParseError(`Unknown option: ${arg}`);
+		}
+
+		let value = valueFromEquals;
+		if (value === undefined) {
+			if (i + 1 >= argv.length) {
+				throw new ArgParseError(`${name} requires a value`);
+			}
+			value = argv[++i];
+		}
+		if (value.trim().length === 0) {
+			throw new ArgParseError(`${name} value must not be empty`);
+		}
+
+		switch (name) {
+			case '--datadog-site':
+				datadogSite = value.trim();
+				break;
+			case '--interactive':
+				interactive = parseBool(value, name);
+				break;
+			case '--project':
+				projectKeys.push(value.trim());
+				break;
+		}
+	}
+
+	const isInteractive = interactive ?? true;
+	if (!isInteractive && projectKeys.length === 0) {
+		throw new ArgParseError(
+			'at least one --project is required in non-interactive mode',
+		);
+	}
+
+	return {
+		datadogSite,
+		interactive: isInteractive,
+		projectKeys: [...new Set(projectKeys)],
 	};
 }

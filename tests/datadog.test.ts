@@ -17,6 +17,7 @@ import {
 	deleteVariant,
 	enableFeatureFlagEnvironment,
 	enableFeatureFlagEnvironmentWithOutcome,
+	fetchCurrentOrganizationName,
 	fetchCurrentUserIdentity,
 	fetchCurrentUserPermissions,
 	fetchDatadogEnvironments,
@@ -1278,6 +1279,54 @@ describe('fetchCurrentUserIdentity', () => {
 		await expect(
 			fetchCurrentUserIdentity(API_KEY, APP_KEY, SITE),
 		).rejects.toThrow('Could not determine Datadog user and org IDs');
+	});
+});
+
+describe('fetchCurrentOrganizationName', () => {
+	let mock: AxiosMockAdapter;
+
+	beforeEach(() => {
+		mock = new AxiosMockAdapter(ddClient as never);
+	});
+
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('returns the related organization name', async () => {
+		mock.onGet(`${BASE}/api/v2/current_user`).reply(200, {
+			data: {
+				relationships: {
+					org: { data: { id: 'org-uuid', type: 'orgs' } },
+				},
+			},
+			included: [
+				{
+					id: 'org-uuid',
+					type: 'orgs',
+					attributes: { name: 'Example Datadog Org' },
+				},
+			],
+		});
+
+		await expect(
+			fetchCurrentOrganizationName(API_KEY, APP_KEY, SITE),
+		).resolves.toBe('Example Datadog Org');
+	});
+
+	it('throws when the organization is not included', async () => {
+		mock.onGet(`${BASE}/api/v2/current_user`).reply(200, {
+			data: {
+				relationships: {
+					org: { data: { id: 'org-uuid', type: 'orgs' } },
+				},
+			},
+			included: [],
+		});
+
+		await expect(
+			fetchCurrentOrganizationName(API_KEY, APP_KEY, SITE),
+		).rejects.toThrow('Could not determine the Datadog organization name');
 	});
 });
 
