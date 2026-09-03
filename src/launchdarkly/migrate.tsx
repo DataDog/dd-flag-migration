@@ -70,6 +70,7 @@ import {
 import { LDMigrationSummary } from './components/LDMigrationSummary.js';
 import {
 	buildAllocations,
+	buildDefaultVariantKeyPerEnv,
 	buildFlagTags,
 	buildVariants,
 	findProjectEditorRoleKeys,
@@ -79,6 +80,7 @@ import {
 	hasSemverConditions,
 	mapFlagType,
 	remapAllocationKeys,
+	resolveDefaultVariantKey,
 	shouldSkipFlag,
 } from './helpers/migration.js';
 import {
@@ -89,6 +91,8 @@ import {
 import type { LDEnvironment, LDFlag, LDMigrationFile } from './types.js';
 
 // ─── UI Helpers ──────────────────────────────────────────────────────────────
+
+const LAUNCHDARKLY_DISTRIBUTION_CHANNEL = 'CLIENT';
 
 function clearScreen(): void {
 	process.stdout.write('\x1Bc');
@@ -1442,11 +1446,16 @@ async function executeMigration(
 					jsonArrayWrappedKeys.push(flag.key);
 				}
 
+				const defaultVariantKeyPerEnv = buildDefaultVariantKeyPerEnv(
+					flag,
+					envMapping,
+				);
 				const allocationsResult = buildAllocations(
 					flag,
 					envMapping,
 					savedFilterLookup,
 					segmentConstantLookup,
+					defaultVariantKeyPerEnv,
 				);
 				if (!Array.isArray(allocationsResult)) {
 					doSkip(
@@ -1535,6 +1544,10 @@ async function executeMigration(
 				// resolution. This ensures sync re-runs can match existing
 				// allocations by key (preserving UUIDs).
 				allocations = remapAllocationKeys(allocations, flag.key, resolvedDdKey);
+				const hasSemverTargeting = hasSemverConditions(
+					allocations,
+					semverSavedFilterIds,
+				);
 
 				const allRuleCount = allocations.reduce(
 					(sum, a) => sum + (a.targeting_rules?.length ?? 0),
@@ -1626,18 +1639,18 @@ async function executeMigration(
 									},
 								},
 							});
-							if (hasSemverConditions(allocations, semverSavedFilterIds)) {
-								dryRunRequests.push({
-									method: 'PUT',
-									path: `/api/v2/feature-flags/${existingFlagId}`,
-									body: {
-										data: {
-											type: 'feature-flags',
-											attributes: { distribution_channel: 'CLIENT' },
+							dryRunRequests.push({
+								method: 'PUT',
+								path: `/api/v2/feature-flags/${existingFlagId}`,
+								body: {
+									data: {
+										type: 'feature-flags',
+										attributes: {
+											distribution_channel: LAUNCHDARKLY_DISTRIBUTION_CHANNEL,
 										},
 									},
-								});
-							}
+								},
+							});
 						} else {
 							if (!isBooleanFlag) {
 								const result = await syncVariantsCreatesAndUpdates(
@@ -1657,14 +1670,14 @@ async function executeMigration(
 								syncTags,
 								ddSite,
 							);
-							if (hasSemverConditions(allocations, semverSavedFilterIds)) {
-								await updateFlagDistributionChannel(
-									ddApiKey,
-									ddAppKey,
-									existingFlagId,
-									'CLIENT',
-									ddSite,
-								);
+							await updateFlagDistributionChannel(
+								ddApiKey,
+								ddAppKey,
+								existingFlagId,
+								LAUNCHDARKLY_DISTRIBUTION_CHANNEL,
+								ddSite,
+							);
+							if (hasSemverTargeting) {
 								semverForcedClientKeys.push(flag.key);
 							}
 						}
@@ -1692,6 +1705,7 @@ async function executeMigration(
 							path: string;
 							body: unknown;
 						}> = [];
+						let sourceKeyToDatadogKey = new Map<string, string>();
 						let variantCountsDry = { added: 0, updated: 0, deleted: 0 };
 						if (!isBooleanFlag) {
 							const { variants: existingVariantsDry } = await fetchFlagDetail(
@@ -1700,13 +1714,17 @@ async function executeMigration(
 								existingFlagId,
 								ddSite,
 							);
-							const { createUpdateRequests, deleteRequests } =
-								buildVariantSyncDryRunRequests(
-									existingFlagId,
-									variants,
-									existingVariantsDry,
-									'launchdarkly',
-								);
+							const {
+								createUpdateRequests,
+								deleteRequests,
+								sourceKeyToDatadogKey: sourceKeyMap,
+							} = buildVariantSyncDryRunRequests(
+								existingFlagId,
+								variants,
+								existingVariantsDry,
+								'launchdarkly',
+							);
+							sourceKeyToDatadogKey = sourceKeyMap;
 							// Variant creates+updates precede allocation PUTs.
 							for (const r of createUpdateRequests) dryRunRequests.push(r);
 							variantCountsDry = {
@@ -1718,18 +1736,18 @@ async function executeMigration(
 							};
 							deleteRequestsDry = deleteRequests;
 						}
-						if (hasSemverConditions(allocations, semverSavedFilterIds)) {
-							dryRunRequests.push({
-								method: 'PUT',
-								path: `/api/v2/feature-flags/${existingFlagId}`,
-								body: {
-									data: {
-										type: 'feature-flags',
-										attributes: { distribution_channel: 'CLIENT' },
+						dryRunRequests.push({
+							method: 'PUT',
+							path: `/api/v2/feature-flags/${existingFlagId}`,
+							body: {
+								data: {
+									type: 'feature-flags',
+									attributes: {
+										distribution_channel: LAUNCHDARKLY_DISTRIBUTION_CHANNEL,
 									},
 								},
-							});
-						}
+							},
+						});
 						let syncFilterCount = 0;
 						let syncRuleCount = 0;
 						for (const ddEnv of envsToEnable) {
@@ -1739,9 +1757,20 @@ async function executeMigration(
 								(sum, r) => sum + (r.targeting_rules?.length ?? 0),
 								0,
 							);
+							const sourceDefaultVariantKey = defaultVariantKeyPerEnv.get(
+								ddEnv.id,
+							);
+							const defaultVariantKey = resolveDefaultVariantKey(
+								sourceDefaultVariantKey,
+								sourceKeyToDatadogKey,
+							);
 							dryRunRequests.push({
 								method: 'PUT',
-								path: `/api/v2/feature-flags/${existingFlagId}/environments/${ddEnv.id}/allocations`,
+								path:
+									`/api/v2/feature-flags/${existingFlagId}/environments/${ddEnv.id}/allocations` +
+									(defaultVariantKey !== undefined
+										? `?default_variant_key=${defaultVariantKey}`
+										: ''),
 								body: syncReqs,
 							});
 							dryRunRequests.push({
@@ -1814,20 +1843,27 @@ async function executeMigration(
 										ddSite,
 									);
 							const variantCounts = variantSyncResult.counts;
-							if (hasSemverConditions(allocations, semverSavedFilterIds)) {
-								await updateFlagDistributionChannel(
-									ddApiKey,
-									ddAppKey,
-									existingFlagId,
-									'CLIENT',
-									ddSite,
-								);
+							await updateFlagDistributionChannel(
+								ddApiKey,
+								ddAppKey,
+								existingFlagId,
+								LAUNCHDARKLY_DISTRIBUTION_CHANNEL,
+								ddSite,
+							);
+							if (hasSemverTargeting) {
 								semverForcedClientKeys.push(flag.key);
 							}
 							let syncedAllocCount = 0;
 							let syncedRuleCount = 0;
 							for (const ddEnv of envsToEnable) {
 								const syncReqs = toSyncRequests(allocations, ddEnv.id);
+								const sourceDefaultVariantKey = defaultVariantKeyPerEnv.get(
+									ddEnv.id,
+								);
+								const defaultVariantKey = resolveDefaultVariantKey(
+									sourceDefaultVariantKey,
+									variantSyncResult.sourceKeyToDatadogKey,
+								);
 								await syncAllocationsForEnvironment(
 									ddApiKey,
 									ddAppKey,
@@ -1835,7 +1871,7 @@ async function executeMigration(
 									ddEnv.id,
 									syncReqs,
 									ddSite,
-									undefined,
+									defaultVariantKey,
 									variantSyncResult.variantKeyToId,
 								);
 								syncedAllocCount += syncReqs.length;
@@ -1925,9 +1961,7 @@ async function executeMigration(
 							...(appliedPrefix ? { key_prefix: appliedPrefix } : {}),
 						},
 						...(tags.length > 0 ? { tags } : {}),
-						...(hasSemverConditions(allocations, semverSavedFilterIds)
-							? { distribution_channel: 'CLIENT' }
-							: {}),
+						distribution_channel: LAUNCHDARKLY_DISTRIBUTION_CHANNEL,
 					};
 
 					if (dryRun) {
@@ -1937,6 +1971,14 @@ async function executeMigration(
 							body: { data: { type: 'feature-flags', attributes: request } },
 						});
 						for (const ddEnv of envsToEnable) {
+							const defaultVariantKey = defaultVariantKeyPerEnv.get(ddEnv.id);
+							if (defaultVariantKey !== undefined) {
+								dryRunRequests.push({
+									method: 'PUT',
+									path: `/api/v2/feature-flags/<uuid-for-${ddKey}>/environments/${ddEnv.id}/allocations?default_variant_key=${defaultVariantKey}`,
+									body: toSyncRequests(allocations, ddEnv.id),
+								});
+							}
 							dryRunRequests.push({
 								method: 'POST',
 								path: `/api/v2/feature-flags/<uuid-for-${ddKey}>/environments/${ddEnv.id}/enable`,
@@ -1973,7 +2015,21 @@ async function executeMigration(
 								request,
 								ddSite,
 							);
-							if (hasSemverConditions(allocations, semverSavedFilterIds)) {
+							for (const ddEnv of envsToEnable) {
+								const defaultVariantKey = defaultVariantKeyPerEnv.get(ddEnv.id);
+								if (defaultVariantKey !== undefined) {
+									await syncAllocationsForEnvironment(
+										ddApiKey,
+										ddAppKey,
+										createdFlag.id,
+										ddEnv.id,
+										toSyncRequests(allocations, ddEnv.id),
+										ddSite,
+										defaultVariantKey,
+									);
+								}
+							}
+							if (hasSemverTargeting) {
 								semverForcedClientKeys.push(flag.key);
 							}
 

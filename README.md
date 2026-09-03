@@ -545,7 +545,9 @@ For each selected flag, the tool:
 - Converts individual user targets into targeting filters with `ONE_OF` conditions on the `key` attribute
 - Translates each targeting rule's clauses into Datadog targeting rule conditions, mapping operators like `in`, `contains`, `startsWith`, `endsWith`, `matches`, and semver comparisons to their Datadog equivalents; replaces `segmentMatch` clauses with the saved filter IDs created in the segment phase
 - Converts percentage rollouts from LaunchDarkly's 100,000-weight scale to Datadog's 0-100 scale
-- Creates a fallthrough (default) targeting filter for the environment
+- Maps a single-variation fallthrough to the environment's Datadog default
+  variant; retains split or progressive fallthroughs as catch-all targeting
+  filters
 - For flags that already exist in Datadog, syncs targeting for newly mapped environments instead of re-creating the flag
 - Enables the flag in Datadog environments where it was enabled (`on: true`) in LaunchDarkly
 

@@ -10,6 +10,7 @@ import {
 } from '../../src/launchdarkly/api.js';
 import {
 	buildAllocations,
+	buildDefaultVariantKeyPerEnv,
 	buildFlagTags,
 	buildTargetingRules,
 	buildVariants,
@@ -19,6 +20,7 @@ import {
 	hasSemverConditions,
 	mapFlagType,
 	mapOperator,
+	resolveDefaultVariantKey,
 	resolveSegmentMatch,
 	shouldSkipFlag,
 } from '../../src/launchdarkly/helpers/migration.js';
@@ -682,7 +684,163 @@ describe('buildTargetingRules', () => {
 
 // ─── buildAllocations ─────────────────────────────────────────────────────────
 
+describe('buildDefaultVariantKeyPerEnv', () => {
+	const environment = {
+		on: true,
+		archived: false,
+		targets: [],
+		contextTargets: [],
+		rules: [],
+		fallthrough: { variation: 1 },
+		offVariation: 0,
+		prerequisites: [],
+		_environmentName: 'Production',
+	};
+
+	it('maps a direct fallthrough variation to every mapped Datadog environment', () => {
+		const flag = makeFlag({
+			key: 'direct-default',
+			environments: { production: environment },
+		});
+
+		expect(
+			buildDefaultVariantKeyPerEnv(
+				flag,
+				new Map([['production', [ddDev, ddProd]]]),
+			),
+		).toEqual(
+			new Map([
+				['dd-dev', 'false'],
+				['dd-prod', 'false'],
+			]),
+		);
+	});
+
+	it('maps a rollout with one variation at 100%', () => {
+		const flag = makeFlag({
+			key: 'rollout-default',
+			environments: {
+				production: {
+					...environment,
+					fallthrough: {
+						rollout: {
+							variations: [
+								{ variation: 0, weight: 0 },
+								{ variation: 1, weight: 100_000 },
+							],
+						},
+					},
+				},
+			},
+		});
+
+		expect(
+			buildDefaultVariantKeyPerEnv(flag, new Map([['production', ddProd]])),
+		).toEqual(new Map([['dd-prod', 'false']]));
+	});
+
+	it('does not map split, progressive, or unresolvable fallthroughs', () => {
+		const splitFlag = makeFlag({
+			key: 'split-default',
+			environments: {
+				production: {
+					...environment,
+					fallthrough: {
+						rollout: {
+							variations: [
+								{ variation: 0, weight: 75_000 },
+								{ variation: 1, weight: 25_000 },
+							],
+						},
+					},
+				},
+			},
+		});
+		const progressiveFlag = makeFlag({
+			key: 'progressive-default',
+			environments: {
+				production: {
+					...environment,
+					fallthrough: {
+						variation: 1,
+						progressiveRolloutConfig: {
+							controlVariation: 0,
+							endVariation: 1,
+							steps: [
+								{
+									rolloutWeight: 100_000,
+									duration: { quantity: 1, unit: 'day' },
+								},
+							],
+						},
+					},
+				},
+			},
+		});
+		const unresolvableFlag = makeFlag({
+			key: 'unresolvable-default',
+			environments: {
+				production: {
+					...environment,
+					fallthrough: { variation: 99 },
+				},
+			},
+		});
+		const mapping = new Map([['production', ddProd]]);
+
+		expect(buildDefaultVariantKeyPerEnv(splitFlag, mapping)).toEqual(new Map());
+		expect(buildDefaultVariantKeyPerEnv(progressiveFlag, mapping)).toEqual(
+			new Map(),
+		);
+		expect(buildDefaultVariantKeyPerEnv(unresolvableFlag, mapping)).toEqual(
+			new Map(),
+		);
+	});
+});
+
+describe('resolveDefaultVariantKey', () => {
+	it('uses the immutable Datadog key after a source variant rename', () => {
+		expect(
+			resolveDefaultVariantKey(
+				'renamed-source-key',
+				new Map([['renamed-source-key', 'existing-datadog-key']]),
+			),
+		).toBe('existing-datadog-key');
+	});
+
+	it('keeps the source key when no re-migration alias is needed', () => {
+		expect(resolveDefaultVariantKey('source-key', new Map())).toBe(
+			'source-key',
+		);
+	});
+});
+
 describe('buildAllocations', () => {
+	it('omits a fallthrough represented by the Datadog default variant', () => {
+		const flag = makeFlag({
+			key: 'default-variant-flag',
+			environments: {
+				production: {
+					on: true,
+					archived: false,
+					targets: [],
+					contextTargets: [],
+					rules: [],
+					fallthrough: { variation: 1 },
+					offVariation: 0,
+					prerequisites: [],
+					_environmentName: 'Production',
+				},
+			},
+		});
+		const envMapping = new Map([['production', ddProd]]);
+		const defaults = buildDefaultVariantKeyPerEnv(flag, envMapping);
+
+		expect(
+			buildAllocations(flag, envMapping, undefined, undefined, defaults),
+		).toEqual([]);
+	});
+
 	it('builds allocations from targets, rules, and fallthrough', () => {
 		const flag = makeFlag({
 			key: 'my-flag',
