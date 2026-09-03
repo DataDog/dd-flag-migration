@@ -43,6 +43,11 @@ import { CONFIG_DIR } from '../helpers/config.js';
 import { formatAxiosError } from '../helpers/format-axios-error.js';
 import { toSyncRequests } from '../helpers/migration.js';
 import { writeJsonOutput } from '../helpers/output.js';
+import {
+	resolveMigrationTargetTags,
+	selectMigrationTagMode,
+	type TagSyncMode,
+} from '../helpers/sync-tags.js';
 import { extractEnvironments, fetchEppoFlags } from './api.js';
 import { migrateAudiences } from './audiences.js';
 import { EppoMigrationSummary } from './components/EppoMigrationSummary.js';
@@ -359,6 +364,14 @@ async function confirmMigration(
 		}
 	}
 
+	let tagSyncMode: TagSyncMode = 'replace';
+	if (
+		!nonInteractive &&
+		flags.some((flag) => datadogIdForEppoFlag(flag, datadogKeys) !== undefined)
+	) {
+		tagSyncMode = await selectMigrationTagMode();
+	}
+
 	if (dryRun) {
 		console.log(chalk.bold.yellow('  Dry run — no flags will be created\n'));
 	}
@@ -595,10 +608,19 @@ async function confirmMigration(
 
 				if (existingFlagId) {
 					// Flag already exists in Datadog — sync targeting and enable in new environments
-					const syncTags = flag.tag_names ?? [];
+					const sourceTags = flag.tag_names ?? [];
+					const syncTags = await resolveMigrationTargetTags(
+						tagSyncMode,
+						sourceTags,
+						existingFlagId,
+						ddApiKey,
+						ddAppKey,
+						site,
+					);
 
 					if (envsToEnable.length === 0) {
-						// Always sync tags (even empty array, so removals propagate).
+						// Always sync tags. Overwrite mode propagates removals; merge
+						// mode preserves tags that exist only in Datadog.
 						// Variant deletes are intentionally SKIPPED in this branch: this
 						// path performs no allocation rewrite, so deleting a variant
 						// could orphan existing DD allocation references (allocations
@@ -849,7 +871,7 @@ async function confirmMigration(
 								site,
 							);
 
-							// Update tags on existing flag (replace so removals propagate)
+							// Update tags using the strategy selected for this migration.
 							await updateFlagTags(
 								ddApiKey,
 								ddAppKey,

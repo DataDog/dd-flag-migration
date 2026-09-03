@@ -42,12 +42,21 @@ When adding or changing what gets synced, classify each field into one of these 
 The source platform owns these end-to-end. On re-migration, make Datadog match exactly — add what's new, update what changed, delete what's gone.
 
 - Targeting rules / allocations (PUT-replace per environment)
-- Tags (PUT-replace; empty array clears all tags)
 - Default variant (per environment)
 - Environment enablement
 - **Variants** (POST/PUT/DELETE via the `/feature-flags/{id}/variants` sub-resource)
 
 When introducing a new field in this tier: a missing value in the source must propagate as a removal in Datadog, not as a no-op.
+
+### Configurable sync
+
+- **Tags**, including `team:*` tags: interactive migrations ask whether to
+  merge source-derived tags into existing Datadog tags or overwrite them.
+  LaunchDarkly team tags are included only when the source team is matched to
+  a Datadog team.
+  Merge preserves Datadog-only tags; overwrite is Tier 1 full sync and an empty
+  source array clears all tags. Non-interactive migrations retain overwrite as
+  the backward-compatible default.
 
 ### Tier 2 — Additive merge
 

@@ -1,10 +1,20 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it, jest } from '@jest/globals';
+import {
+	afterEach,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	jest,
+} from '@jest/globals';
+import AxiosMockAdapter from 'axios-mock-adapter';
 import ExcelJS from 'exceljs';
+import { ddClient } from '../src/datadog/api.js';
 import {
 	computeTargetTags,
+	resolveMigrationTargetTags,
 	type TagSyncMode,
 	type TagSyncSummary,
 } from '../src/helpers/sync-tags.js';
@@ -34,6 +44,17 @@ describe('computeTargetTags', () => {
 				['owner:alice', 'env:prod'],
 			);
 			expect(target.sort()).toEqual(['owner:alice', 'env:prod'].sort());
+			expect(removed).toEqual([]);
+		});
+
+		it('preserves Datadog team tags while adding source team tags', () => {
+			const { target, added, removed } = computeTargetTags(
+				mode,
+				['team:source-editor'],
+				['team:datadog-owner'],
+			);
+			expect(target).toEqual(['team:datadog-owner', 'team:source-editor']);
+			expect(added).toEqual(['team:source-editor']);
 			expect(removed).toEqual([]);
 		});
 
@@ -83,6 +104,16 @@ describe('computeTargetTags', () => {
 			expect(removed.sort()).toEqual(['owner:alice', 'env:prod'].sort());
 		});
 
+		it('removes Datadog-only team tags', () => {
+			const { target, removed } = computeTargetTags(
+				mode,
+				['team:source-editor'],
+				['team:datadog-owner'],
+			);
+			expect(target).toEqual(['team:source-editor']);
+			expect(removed).toEqual(['team:datadog-owner']);
+		});
+
 		it('adds all source tags when Datadog has none', () => {
 			const { target, added, removed } = computeTargetTags(
 				mode,
@@ -108,6 +139,62 @@ describe('computeTargetTags', () => {
 			expect(added).toEqual([]);
 			expect(removed).toEqual([]);
 		});
+	});
+});
+
+describe('resolveMigrationTargetTags', () => {
+	const site = 'example.datadoghq.com';
+	const flagId = 'flag-123';
+	const tagsUrl = `https://api.${site}/api/v2/feature-flags/${flagId}`;
+	let mock: AxiosMockAdapter;
+
+	beforeEach(() => {
+		mock = new AxiosMockAdapter(ddClient);
+	});
+
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('fetches and preserves existing Datadog tags in merge mode', async () => {
+		mock.onGet(tagsUrl).reply(200, {
+			data: {
+				attributes: {
+					tags: ['owner:datadog', 'team:datadog-owner'],
+				},
+			},
+		});
+
+		const target = await resolveMigrationTargetTags(
+			'additive',
+			['source-tag', 'team:source-editor'],
+			flagId,
+			'api-key',
+			'app-key',
+			site,
+		);
+
+		expect(target).toEqual([
+			'owner:datadog',
+			'team:datadog-owner',
+			'source-tag',
+			'team:source-editor',
+		]);
+		expect(mock.history.get).toHaveLength(1);
+	});
+
+	it('does not fetch Datadog tags in overwrite mode', async () => {
+		const target = await resolveMigrationTargetTags(
+			'replace',
+			['source-tag', 'team:source-editor'],
+			flagId,
+			'api-key',
+			'app-key',
+			site,
+		);
+
+		expect(target).toEqual(['source-tag', 'team:source-editor']);
+		expect(mock.history.get).toHaveLength(0);
 	});
 });
 
