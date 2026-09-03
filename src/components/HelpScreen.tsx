@@ -88,6 +88,16 @@ export function HelpScreen(): JSX.Element {
 				</Text>
 			),
 		},
+		{
+			id: 'add-tags-command',
+			render: () => (
+				<Text>
+					{'  '}
+					<Text color="cyan">add-tags</Text>
+					{'      Add tags to migrated flags while preserving existing tags'}
+				</Text>
+			),
+		},
 		{ id: 'space-commands', render: () => <Text> </Text> },
 		{
 			id: 'migrate-title',
@@ -476,6 +486,15 @@ export function HelpScreen(): JSX.Element {
 				<Text>
 					{'  '}
 					<Text color="gray">$</Text> dd-flag-migration bulk-enable
+				</Text>
+			),
+		},
+		{
+			id: 'example-add-tags',
+			render: () => (
+				<Text>
+					{'  '}
+					<Text color="gray">$</Text> dd-flag-migration add-tags
 				</Text>
 			),
 		},
