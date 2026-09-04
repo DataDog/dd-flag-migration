@@ -1,3 +1,5 @@
+import type { DistributionChannelMode } from './helpers/distribution-channel.js';
+
 export type ProviderValue = 'eppo' | 'launchdarkly';
 
 export type TagMode = 'additive' | 'replace';
@@ -14,6 +16,7 @@ export interface MigrateArgs {
 	datadogSite: string | undefined;
 	interactive: boolean;
 	doExport: boolean;
+	distributionChannelMode: DistributionChannelMode | undefined;
 	nonInteractive?: NonInteractiveArgs;
 }
 
@@ -62,6 +65,23 @@ function normalizeTagMode(raw: string): TagMode {
 	);
 }
 
+function normalizeDistributionChannelMode(
+	raw: string,
+): DistributionChannelMode {
+	const value = raw.trim().toLowerCase();
+	if (
+		value === 'auto' ||
+		value === 'client' ||
+		value === 'server' ||
+		value === 'all'
+	) {
+		return value;
+	}
+	throw new ArgParseError(
+		`--distribution-channel must be one of "auto", "client", "server", or "all", got: ${raw}`,
+	);
+}
+
 interface FlagDef {
 	name: string;
 	takesValue: boolean;
@@ -76,6 +96,7 @@ const FLAGS: FlagDef[] = [
 	{ name: '--project', takesValue: true },
 	{ name: '--env-map', takesValue: true },
 	{ name: '--feature-flag', takesValue: true },
+	{ name: '--distribution-channel', takesValue: true },
 ];
 
 /**
@@ -89,6 +110,7 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 	let interactive: boolean | undefined;
 	let provider: ProviderValue | undefined;
 	let projectKey: string | undefined;
+	let distributionChannelMode: DistributionChannelMode | undefined;
 	const envMap: Array<[string, string]> = [];
 	const flagKeys: string[] = [];
 
@@ -164,6 +186,11 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 			case '--feature-flag':
 				flagKeys.push((value as string).trim());
 				break;
+			case '--distribution-channel':
+				distributionChannelMode = normalizeDistributionChannelMode(
+					value as string,
+				);
+				break;
 		}
 	}
 
@@ -188,11 +215,17 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 				'--project is required in non-interactive mode for LaunchDarkly',
 			);
 		}
+		if (provider === 'eppo' && distributionChannelMode !== undefined) {
+			throw new ArgParseError(
+				'--distribution-channel is only supported for LaunchDarkly migrations',
+			);
+		}
 		return {
 			dryRun,
 			datadogSite,
 			interactive: false,
 			doExport,
+			distributionChannelMode,
 			nonInteractive: {
 				provider,
 				projectKey,
@@ -207,6 +240,7 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 		datadogSite,
 		interactive: true,
 		doExport,
+		distributionChannelMode,
 	};
 }
 

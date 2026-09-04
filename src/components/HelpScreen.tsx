@@ -137,6 +137,16 @@ export function HelpScreen(): JSX.Element {
 				</Text>
 			),
 		},
+		{
+			id: 'distribution-channel',
+			render: () => (
+				<Text>
+					{
+						'  --distribution-channel <mode>  LaunchDarkly: auto|client|server|all (default: prompt; non-interactive: auto)'
+					}
+				</Text>
+			),
+		},
 		{ id: 'space-migrate', render: () => <Text> </Text> },
 		{
 			id: 'required-title',

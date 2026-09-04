@@ -50,9 +50,19 @@ import type {
 	EnvironmentMapping,
 } from '../datadog/types.js';
 import { CONFIG_DIR } from '../helpers/config.js';
+import {
+	type DistributionChannelMode,
+	resolveDistributionChannel,
+	selectDistributionChannelMode,
+} from '../helpers/distribution-channel.js';
 import { formatAxiosError } from '../helpers/format-axios-error.js';
 import { toSyncRequests } from '../helpers/migration.js';
 import { writeJsonOutput } from '../helpers/output.js';
+import {
+	resolveMigrationTargetTags,
+	selectMigrationTagMode,
+	type TagSyncMode,
+} from '../helpers/sync-tags.js';
 import {
 	fetchCustomRoles,
 	fetchFlag,
@@ -81,6 +91,7 @@ import {
 	mapFlagType,
 	remapAllocationKeys,
 	resolveDefaultVariantKey,
+	resolveEditorTeams,
 	shouldSkipFlag,
 } from './helpers/migration.js';
 import {
@@ -91,8 +102,6 @@ import {
 import type { LDEnvironment, LDFlag, LDMigrationFile } from './types.js';
 
 // ─── UI Helpers ──────────────────────────────────────────────────────────────
-
-const LAUNCHDARKLY_DISTRIBUTION_CHANNEL = 'CLIENT';
 
 function clearScreen(): void {
 	process.stdout.write('\x1Bc');
@@ -189,7 +198,7 @@ async function promptForTeamMapping(
 		message: `Map LD team "${ldTeamKey}" → Datadog team:`,
 		choices: [
 			{
-				name: chalk.dim(`Skip — keep as "${ldTeamKey}"`),
+				name: chalk.dim('Skip — do not migrate this team'),
 				value: null,
 			},
 			...ddTeams.map((t) => ({
@@ -851,6 +860,7 @@ interface MigrationOptions {
 	nonInteractive?: boolean;
 	doExport?: boolean;
 	targetKeyBySource?: Map<string, string>;
+	distributionChannelMode?: DistributionChannelMode;
 }
 
 async function executeMigration(
@@ -873,6 +883,7 @@ async function executeMigration(
 		nonInteractive,
 		doExport,
 		targetKeyBySource,
+		distributionChannelMode: configuredDistributionChannelMode,
 	} = opts;
 
 	if (flags.length === 0) {
@@ -921,6 +932,20 @@ async function executeMigration(
 
 		if (action === 'select-more') return 'select-more';
 	}
+
+	let tagSyncMode: TagSyncMode = 'replace';
+	if (
+		!nonInteractive &&
+		flags.some((flag) => {
+			const conflict = classifyConflict(datadogFlags, projectKey, flag.key);
+			return conflict.type === 'same_project' || conflict.type === 'manual';
+		})
+	) {
+		tagSyncMode = await selectMigrationTagMode();
+	}
+	const distributionChannelMode =
+		configuredDistributionChannelMode ??
+		(nonInteractive ? 'auto' : await selectDistributionChannelMode());
 
 	// Fetch full flag details for selected flags
 	const detailSpinner = createSpinner(
@@ -1034,25 +1059,15 @@ async function executeMigration(
 		}
 	}
 
-	// Resolve LD editor-team keys to Datadog team UUIDs once. Skip-and-warn for
-	// any team handle we can't resolve to a DD team ID — sending the bare
-	// handle to the restriction-policy API would silently produce a broken
-	// principal and undermine the access controls this feature exists to set.
-	const editorTeamIds: string[] = [];
-	const editorTeamHandles: string[] = [];
-	const unresolvedEditorTeams: string[] = [];
-	if (!ddTeamsFetchFailed) {
-		for (const ldKey of projectEditorTeamKeys) {
-			const ddHandle = teamKeyMapping?.get(ldKey) ?? ldKey;
-			const ddId = ddHandleToId.get(ddHandle);
-			if (ddId) {
-				editorTeamIds.push(ddId);
-				editorTeamHandles.push(ddHandle);
-			} else {
-				unresolvedEditorTeams.push(ddHandle);
-			}
-		}
-	}
+	// Only matched Datadog teams contribute team tags or restriction-policy
+	// principals. This avoids tags that point to nonexistent Datadog teams.
+	const { editorTeamIds, editorTeamHandles, unresolvedEditorTeams } =
+		resolveEditorTeams(
+			projectEditorTeamKeys,
+			teamKeyMapping,
+			ddHandleToId,
+			ddTeamsFetchFailed,
+		);
 	if (ddTeamsFetchFailed && projectEditorTeamKeys.size > 0) {
 		console.log(
 			chalk.yellow(
@@ -1548,6 +1563,12 @@ async function executeMigration(
 					allocations,
 					semverSavedFilterIds,
 				);
+				const distributionChannel = resolveDistributionChannel(
+					distributionChannelMode,
+					hasSemverTargeting,
+				);
+				const semverForcedToClient =
+					distributionChannelMode === 'auto' && hasSemverTargeting;
 
 				const allRuleCount = allocations.reduce(
 					(sum, a) => sum + (a.targeting_rules?.length ?? 0),
@@ -1558,10 +1579,18 @@ async function executeMigration(
 					allRuleCount > 0 ? `, ${allRuleCount} rule(s)` : '';
 
 				if (existingFlagId) {
-					const syncTags = buildFlagTags(
+					const sourceTags = buildFlagTags(
 						flag.tags,
 						projectKey,
 						editorTeamHandles,
+					);
+					const syncTags = await resolveMigrationTargetTags(
+						tagSyncMode,
+						sourceTags,
+						existingFlagId,
+						ddApiKey,
+						ddAppKey,
+						ddSite,
 					);
 					// Repair or refresh permissions before mutating an existing flag. A
 					// previous migration may have restricted the authenticated user to
@@ -1599,7 +1628,9 @@ async function executeMigration(
 					}
 
 					if (envsToEnable.length === 0) {
-						// Always sync tags and restriction policy even when no new environments need enabling.
+						// Always sync tags and restriction policy even when no new
+						// environments need enabling. Overwrite mode propagates tag
+						// removals; merge mode preserves Datadog-only tags.
 						// Variant deletes are intentionally SKIPPED in this branch: this
 						// path performs no allocation rewrite, so deleting a variant
 						// could orphan existing DD allocation references (allocations
@@ -1639,18 +1670,20 @@ async function executeMigration(
 									},
 								},
 							});
-							dryRunRequests.push({
-								method: 'PUT',
-								path: `/api/v2/feature-flags/${existingFlagId}`,
-								body: {
-									data: {
-										type: 'feature-flags',
-										attributes: {
-											distribution_channel: LAUNCHDARKLY_DISTRIBUTION_CHANNEL,
+							if (distributionChannel !== undefined) {
+								dryRunRequests.push({
+									method: 'PUT',
+									path: `/api/v2/feature-flags/${existingFlagId}`,
+									body: {
+										data: {
+											type: 'feature-flags',
+											attributes: {
+												distribution_channel: distributionChannel,
+											},
 										},
 									},
-								},
-							});
+								});
+							}
 						} else {
 							if (!isBooleanFlag) {
 								const result = await syncVariantsCreatesAndUpdates(
@@ -1670,14 +1703,16 @@ async function executeMigration(
 								syncTags,
 								ddSite,
 							);
-							await updateFlagDistributionChannel(
-								ddApiKey,
-								ddAppKey,
-								existingFlagId,
-								LAUNCHDARKLY_DISTRIBUTION_CHANNEL,
-								ddSite,
-							);
-							if (hasSemverTargeting) {
+							if (distributionChannel !== undefined) {
+								await updateFlagDistributionChannel(
+									ddApiKey,
+									ddAppKey,
+									existingFlagId,
+									distributionChannel,
+									ddSite,
+								);
+							}
+							if (semverForcedToClient) {
 								semverForcedClientKeys.push(flag.key);
 							}
 						}
@@ -1736,18 +1771,20 @@ async function executeMigration(
 							};
 							deleteRequestsDry = deleteRequests;
 						}
-						dryRunRequests.push({
-							method: 'PUT',
-							path: `/api/v2/feature-flags/${existingFlagId}`,
-							body: {
-								data: {
-									type: 'feature-flags',
-									attributes: {
-										distribution_channel: LAUNCHDARKLY_DISTRIBUTION_CHANNEL,
+						if (distributionChannel !== undefined) {
+							dryRunRequests.push({
+								method: 'PUT',
+								path: `/api/v2/feature-flags/${existingFlagId}`,
+								body: {
+									data: {
+										type: 'feature-flags',
+										attributes: {
+											distribution_channel: distributionChannel,
+										},
 									},
 								},
-							},
-						});
+							});
+						}
 						let syncFilterCount = 0;
 						let syncRuleCount = 0;
 						for (const ddEnv of envsToEnable) {
@@ -1843,14 +1880,16 @@ async function executeMigration(
 										ddSite,
 									);
 							const variantCounts = variantSyncResult.counts;
-							await updateFlagDistributionChannel(
-								ddApiKey,
-								ddAppKey,
-								existingFlagId,
-								LAUNCHDARKLY_DISTRIBUTION_CHANNEL,
-								ddSite,
-							);
-							if (hasSemverTargeting) {
+							if (distributionChannel !== undefined) {
+								await updateFlagDistributionChannel(
+									ddApiKey,
+									ddAppKey,
+									existingFlagId,
+									distributionChannel,
+									ddSite,
+								);
+							}
+							if (semverForcedToClient) {
 								semverForcedClientKeys.push(flag.key);
 							}
 							let syncedAllocCount = 0;
@@ -1890,7 +1929,7 @@ async function executeMigration(
 								ddSite,
 							);
 
-							// Update tags on existing flag (replace so removals propagate)
+							// Update tags using the strategy selected for this migration.
 							await updateFlagTags(
 								ddApiKey,
 								ddAppKey,
@@ -1961,7 +2000,9 @@ async function executeMigration(
 							...(appliedPrefix ? { key_prefix: appliedPrefix } : {}),
 						},
 						...(tags.length > 0 ? { tags } : {}),
-						distribution_channel: LAUNCHDARKLY_DISTRIBUTION_CHANNEL,
+						...(distributionChannel !== undefined
+							? { distribution_channel: distributionChannel }
+							: {}),
 					};
 
 					if (dryRun) {
@@ -2029,7 +2070,7 @@ async function executeMigration(
 									);
 								}
 							}
-							if (hasSemverTargeting) {
+							if (semverForcedToClient) {
 								semverForcedClientKeys.push(flag.key);
 							}
 
@@ -2203,6 +2244,7 @@ export interface LDNonInteractiveOptions {
 export interface RunLaunchDarklyMigrationOptions {
 	nonInteractive?: LDNonInteractiveOptions;
 	doExport?: boolean;
+	distributionChannelMode?: DistributionChannelMode;
 }
 
 export async function runLaunchDarklyMigration(
@@ -2225,6 +2267,7 @@ export async function runLaunchDarklyMigration(
 			dryRun,
 			options.nonInteractive,
 			options.doExport ?? false,
+			options.distributionChannelMode ?? 'auto',
 		);
 		return;
 	}
@@ -2502,6 +2545,7 @@ export async function runLaunchDarklyMigration(
 						ddSite,
 						dryRun,
 						conflictResolution,
+						distributionChannelMode: options?.distributionChannelMode,
 					},
 				);
 				if (action === 'cancel') break outer;
@@ -2573,6 +2617,7 @@ async function runLaunchDarklyMigrationNonInteractive(
 	dryRun: boolean,
 	ni: LDNonInteractiveOptions,
 	doExport: boolean,
+	distributionChannelMode: DistributionChannelMode,
 ): Promise<void> {
 	console.log(chalk.gray('  Running in non-interactive mode\n'));
 	if (dryRun) {
@@ -2683,6 +2728,7 @@ async function runLaunchDarklyMigrationNonInteractive(
 			nonInteractive: true,
 			doExport,
 			targetKeyBySource,
+			distributionChannelMode,
 		},
 	);
 }

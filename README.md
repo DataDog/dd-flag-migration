@@ -199,8 +199,14 @@ When migrating from LaunchDarkly, the tool adds these steps:
 2. **Select LaunchDarkly environments** — choose which environments within that project to migrate
 3. **Link environments** — map each selected LaunchDarkly environment to one or more Datadog environments
 4. **Select flags** — flags already in Datadog are shown with a checkmark and will have their targeting synced for new environments rather than being re-created
+5. **Choose a distribution channel** — automatically use Client for flags with semver targeting, or explicitly use Client, Server, or All for every selected flag
 
 The tool translates LaunchDarkly targeting rules, individual user targets, percentage rollouts, and fallthrough variations into equivalent Datadog targeting filters. Before migrating flags, the tool runs a segment migration phase that converts referenced LaunchDarkly segments into Datadog saved filters and substitutes them into targeting rules. Flags that use unsupported operators (`before`, `after`) are automatically skipped with an explanation. Flags with prerequisites are migrated with a warning, since Datadog does not enforce prerequisites.
+
+In **Auto** distribution-channel mode, flags with semantic-version targeting
+are set to Client. Existing non-semver flags keep their current channel, and
+new non-semver flags use Datadog's default. Explicit Client, Server, and All
+modes set the corresponding channel on every selected flag.
 
 ### Non-interactive mode
 
@@ -224,6 +230,7 @@ Non-interactive migrations write a JSON result document to stdout. Status messag
 |---|---|
 | `--dry-run` | Preview changes without writing to Datadog |
 | `--export=<bool>` | Export results to an `.xlsx` file after migration (default: `false`) |
+| `--distribution-channel <auto\|client\|server\|all>` | LaunchDarkly distribution-channel behavior (default: `auto`) |
 
 **Examples**
 
@@ -499,7 +506,7 @@ Some LaunchDarkly and Eppo features have no direct equivalent in Datadog. The to
 | Feature | Provider | How it's handled |
 |---|---|---|
 | Dependent flags (prerequisites) | LaunchDarkly | Datadog does not enforce flag prerequisites. Flags that depend on another flag being in a specific state are migrated with a warning, since the prerequisite relationship is not preserved. |
-| SEMVER targeting on server-side flags | LaunchDarkly | SEMVER comparisons are a client-SDK feature in Datadog. Flags that use SEMVER targeting are automatically migrated with the **CLIENT** distribution channel, regardless of how they were originally configured. A warning is recorded in the migration results. |
+| SEMVER targeting on server-side flags | LaunchDarkly | SEMVER comparisons are a client-SDK feature in Datadog. In **Auto** distribution-channel mode, flags that use SEMVER targeting are migrated with the **CLIENT** channel and a warning is recorded. An explicit Client, Server, or All selection is honored instead. |
 | JSON variants that are top-level arrays | LaunchDarkly, Eppo | Datadog requires JSON variant values to be objects. Array-valued variants are automatically wrapped: `[...]` becomes `{ "value": [...] }`. A warning is recorded in the migration results. |
 
 ### Features with limited evaluation support
