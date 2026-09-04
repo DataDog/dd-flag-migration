@@ -1,5 +1,9 @@
 import { describe, expect, it } from '@jest/globals';
-import { ArgParseError, parseMigrateTagsArgs } from '../src/args.js';
+import {
+	ArgParseError,
+	parseMigrateTagsArgs,
+	parseSyncDistributionChannelArgs,
+} from '../src/args.js';
 
 describe('parseMigrateTagsArgs', () => {
 	it('defaults to interactive mode with no tag mode', () => {
@@ -177,6 +181,39 @@ describe('parseMigrateTagsArgs', () => {
 	it('rejects --interactive=maybe', () => {
 		expect(() => parseMigrateTagsArgs(['--interactive=maybe'])).toThrow(
 			/expects a boolean/,
+		);
+	});
+});
+
+describe('parseSyncDistributionChannelArgs', () => {
+	it('defaults to an interactive live run', () => {
+		expect(parseSyncDistributionChannelArgs([])).toEqual({
+			dryRun: false,
+			datadogSite: undefined,
+		});
+	});
+
+	it('parses dry-run and Datadog site forms', () => {
+		expect(
+			parseSyncDistributionChannelArgs([
+				'--dry-run',
+				'--datadog-site=datadoghq.eu',
+			]),
+		).toEqual({ dryRun: true, datadogSite: 'datadoghq.eu' });
+		expect(
+			parseSyncDistributionChannelArgs(['--datadog-site', 'us5.datadoghq.com']),
+		).toEqual({ dryRun: false, datadogSite: 'us5.datadoghq.com' });
+	});
+
+	it('rejects unsupported and malformed options', () => {
+		expect(() =>
+			parseSyncDistributionChannelArgs(['--interactive=false']),
+		).toThrow(/Unknown option/);
+		expect(() => parseSyncDistributionChannelArgs(['--datadog-site='])).toThrow(
+			/must not be empty/,
+		);
+		expect(() => parseSyncDistributionChannelArgs(['--dry-run=true'])).toThrow(
+			/does not take a value/,
 		);
 	});
 });

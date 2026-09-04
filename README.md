@@ -31,6 +31,9 @@ npx @datadog/dd-flag-migration bulk-enable
 
 # sync tags from your source provider onto migrated flags
 npx @datadog/dd-flag-migration sync-tags
+
+# set the distribution channel on LaunchDarkly-matched flags
+npx @datadog/dd-flag-migration sync-distribution-channel
 ```
 
 ### Contributing / running from source
@@ -41,7 +44,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Credentials you'll need
 
-Credentials are read from environment variables. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running `migrate`, `evaluate`, `bulk-permissions`, `bulk-enable`, or `sync-tags`. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1.
+Credentials are read from environment variables. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running `migrate`, `evaluate`, `bulk-permissions`, `bulk-enable`, `sync-tags`, or `sync-distribution-channel`. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1.
 
 `DD_SITE` is optional for interactive commands and pre-fills the Datadog site prompt when set. For non-interactive `migrate` runs, use either `DD_SITE` or `--datadog-site`; the explicit CLI option takes precedence. The standalone `scripts/get-datadog-flag.sh` script requires `DD_SITE` and does not accept a site argument.
 
@@ -66,14 +69,14 @@ Your LaunchDarkly access token needs **Reader** role permissions (or a custom ro
 | `EPPO_SDK_KEY` | migration was from Eppo | Eppo → SDK Keys (server SDK key, one per environment) |
 | `LAUNCHDARKLY_API_KEY` | migration was from LaunchDarkly *(preferred)* | LaunchDarkly → Account settings → Authorization → Access tokens |
 
-### Required for `bulk-permissions`, `bulk-enable`, and `sync-tags`
+### Required for `bulk-permissions`, `bulk-enable`, `sync-tags`, and `sync-distribution-channel`
 
 | Variable | Required when | Where to find it |
 |---|---|---|
 | `DD_API_KEY` | always | Datadog → Organization Settings → API Keys |
 | `DD_APP_KEY` | always | Datadog → Organization Settings → Application Keys |
 
-`sync-tags` also needs the source provider's credentials (`EPPO_API_KEY` or `LAUNCHDARKLY_API_KEY`) depending on the provider you select — the same variables used by `migrate`.
+`sync-tags` also needs the source provider's credentials (`EPPO_API_KEY` or `LAUNCHDARKLY_API_KEY`) depending on the provider you select. `sync-distribution-channel` needs `LAUNCHDARKLY_API_KEY`.
 
 ### Datadog Application Key permissions
 
@@ -82,8 +85,8 @@ Enable the scopes required for the command you are running:
 | Scope | Required by | Description |
 |---|---|---|
 | `feature_flag_approvals_override` | Optional for `bulk-enable` | Bypasses Feature Flag approval requirements. Without it, approval-protected changes are submitted as approval requests and reported as such. |
-| `feature_flag_config_read` | `migrate`, `bulk-permissions`, `bulk-enable`, `sync-tags` | View Feature Flag Configurations |
-| `feature_flag_config_write` | `migrate`, `bulk-enable`, `sync-tags` | Edit Feature Flag Configurations |
+| `feature_flag_config_read` | `migrate`, `bulk-permissions`, `bulk-enable`, `sync-tags`, `sync-distribution-channel` | View Feature Flag Configurations |
+| `feature_flag_config_write` | `migrate`, `bulk-enable`, `sync-tags`, `sync-distribution-channel` | Edit Feature Flag Configurations |
 | `feature_flag_environment_config_read` | `migrate`, `bulk-enable`, `sync-tags` | View Feature Flag Environment settings |
 | `teams_read` | `migrate`, `bulk-permissions`, `sync-tags` | View Teams for team-based access controls |
 | `restriction_policies_read` | `bulk-permissions` | View restriction policies |
@@ -406,6 +409,29 @@ To preview tag changes without writing to Datadog:
 
 ```bash
 npx @datadog/dd-flag-migration sync-tags --dry-run
+```
+
+---
+
+## Distribution Channel Sync
+
+Set the flag-level Datadog distribution channel for flags from a LaunchDarkly project:
+
+```bash
+npx @datadog/dd-flag-migration sync-distribution-channel
+
+# When running from this repository:
+yarn sync-distribution-channel
+```
+
+Select a LaunchDarkly project, choose from the safely matched Datadog flags, and then select **Client**, **Server**, or **Both**. The picker shows each flag's current channel. Matching uses LaunchDarkly migration metadata first, with an exact-key fallback for manually created Datadog flags; flags owned by another LaunchDarkly project and flags without a Datadog match are omitted.
+
+Distribution channels are flag-scoped in Datadog, so a change applies across every environment. The command skips flags already using the selected channel, continues after individual failures, and writes a `sync-distribution-channel-export-<timestamp>.xlsx` report.
+
+Preview the updates without writing to Datadog:
+
+```bash
+npx @datadog/dd-flag-migration sync-distribution-channel --dry-run
 ```
 
 ---
