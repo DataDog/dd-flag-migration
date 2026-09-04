@@ -527,6 +527,7 @@ For each selected flag, the tool:
 
 - Reads the flag's variations, targeting filters, and targeting rules from Eppo
 - Creates an equivalent flag in Datadog via the Feature Flags API
+- Synchronizes the Eppo display name when re-migrating an existing Datadog flag
 - Enables the flag in the Datadog environments that correspond to active Eppo environments
 
 Flags of type `BANDIT` or `LAYER` are skipped (not yet supported).
@@ -555,7 +556,9 @@ For each selected flag, the tool:
 - Maps a single-variation fallthrough to the environment's Datadog default
   variant; retains split or progressive fallthroughs as catch-all targeting
   filters
-- For flags that already exist in Datadog, syncs targeting for newly mapped environments instead of re-creating the flag
+- For flags that already exist in Datadog, synchronizes the LaunchDarkly display
+  name on every re-migration and syncs targeting for newly mapped environments
+  instead of re-creating the flag
 - Enables the flag in Datadog environments where it was enabled (`on: true`) in LaunchDarkly
 
 Archived flags and flags using unsupported operators (`before`, `after`) are skipped automatically. Individual segment rules that use unsupported features (multi-context membership, nested `segmentMatch`, or negation explosions) are skipped with a warning; the flags that reference them are still migrated with their other targeting rules intact.
