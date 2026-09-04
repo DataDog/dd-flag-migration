@@ -57,6 +57,11 @@ function parseLastJsonOutput(writes: string[]): {
 	};
 	failures: Array<{ key: string; error: string }>;
 	flagKeyMapping?: Array<{ sourceKey: string; datadogKey: string }>;
+	requests?: Array<{
+		method: string;
+		path: string;
+		body: { data?: { attributes?: Record<string, unknown> } };
+	}>;
 } {
 	for (let i = writes.length - 1; i >= 0; i--) {
 		const trimmed = writes[i].trimStart();
@@ -65,6 +70,24 @@ function parseLastJsonOutput(writes: string[]): {
 		}
 	}
 	throw new Error('No JSON output was written');
+}
+
+function flagUpdateAttributes(
+	mock: AxiosMockAdapter,
+	flagId: string,
+): Array<Record<string, unknown>> {
+	return mock.history.put
+		.filter(
+			(request) => request.url === `${DD_BASE}/api/v2/feature-flags/${flagId}`,
+		)
+		.map(
+			(request) =>
+				(
+					JSON.parse(request.data as string) as {
+						data: { attributes: Record<string, unknown> };
+					}
+				).data.attributes,
+		);
 }
 
 function eppoFlag(): EppoFlag {
@@ -184,12 +207,327 @@ describe('flag-level migration failures', () => {
 		eppoMock.onGet(`${EPPO_BASE}/api/v1/audiences`).reply(200, []);
 	}
 
+	function mockLaunchDarklySource(flag: LDFlag): void {
+		ldMock.onGet(`${LD_BASE}/api/v2/projects`).reply(200, {
+			items: [{ key: 'proj', name: 'Project' }],
+			totalCount: 1,
+		});
+		ldMock.onGet(`${LD_BASE}/api/v2/flags/proj/${flag.key}`).reply(200, flag);
+		ldMock.onGet(`${LD_BASE}/api/v2/projects/proj`).reply(200, {
+			environments: {
+				items: [
+					{
+						key: 'production',
+						name: 'Production',
+						color: '417505',
+						archived: false,
+					},
+				],
+			},
+		});
+		ldMock.onGet(`${LD_BASE}/api/v2/roles`).reply(200, {
+			items: [],
+			totalCount: 0,
+		});
+		ldMock.onGet(`${LD_BASE}/api/v2/teams`).reply(200, {
+			items: [],
+			totalCount: 0,
+		});
+	}
+
+	function mockLaunchDarklyNewFlag(flag: LDFlag): void {
+		mockLaunchDarklySource(flag);
+		ddMock.onGet(`${DD_BASE}/api/v2/feature-flags`).reply(200, {
+			data: [],
+			meta: { page: { total: 0 } },
+		});
+		ddMock.onGet(`${DD_BASE}/api/v2/feature-flags/environments`).reply(200, {
+			data: [ddEnvironment('dd-prod', 'Production', true)],
+		});
+		ddMock.onPost(`${DD_BASE}/api/v2/feature-flags`).reply(200, {
+			data: {
+				id: 'created-flag',
+				type: 'feature-flags',
+				attributes: { key: flag.key },
+			},
+		});
+	}
+
+	async function createLaunchDarklyFlag(
+		flag: LDFlag,
+		distributionChannelMode: 'auto' | 'client' | 'server' | 'all',
+	): Promise<Record<string, unknown>> {
+		mockLaunchDarklyNewFlag(flag);
+		await runLaunchDarklyMigration('dd-api-key', 'dd-app-key', DD_SITE, false, {
+			nonInteractive: {
+				projectKey: 'proj',
+				envMap: [['production', 'Production']],
+				flagKeys: [flag.key],
+			},
+			doExport: false,
+			distributionChannelMode,
+		});
+
+		const createRequest = ddMock.history.post.find(
+			(request) => request.url === `${DD_BASE}/api/v2/feature-flags`,
+		);
+		expect(createRequest).toBeDefined();
+		const body = JSON.parse(createRequest?.data as string) as {
+			data: { attributes: Record<string, unknown> };
+		};
+		return body.data.attributes;
+	}
+
+	it('omits the distribution channel for a new non-semver flag in Auto mode', async () => {
+		const attributes = await createLaunchDarklyFlag(ldFlag(), 'auto');
+		expect(attributes.distribution_channel).toBeUndefined();
+	});
+
+	it('sets CLIENT for a new semver flag in Auto mode', async () => {
+		const flag = ldFlag();
+		const environment = flag.environments?.production;
+		if (!environment) throw new Error('Test flag is missing production');
+		environment.rules = [
+			{
+				_id: 'semver-rule',
+				variation: 0,
+				clauses: [
+					{
+						_id: 'semver-clause',
+						attribute: 'version',
+						op: 'semVerGreaterThan',
+						values: ['1.0.0'],
+						contextKind: 'user',
+						negate: false,
+					},
+				],
+				trackEvents: false,
+			},
+		];
+
+		const attributes = await createLaunchDarklyFlag(flag, 'auto');
+		expect(attributes.distribution_channel).toBe('CLIENT');
+	});
+
+	it.each([
+		['client', 'CLIENT'],
+		['server', 'SERVER'],
+		['all', 'BOTH'],
+	] as const)('sets %s explicitly for a new non-semver flag', async (mode, expected) => {
+		const attributes = await createLaunchDarklyFlag(ldFlag(), mode);
+		expect(attributes.distribution_channel).toBe(expected);
+	});
+
+	it('does not update an existing non-semver channel in Auto mode', async () => {
+		const flag = ldFlag();
+		flag.name = flag.key;
+		const datadogKey = `prefixed-${flag.key}`;
+		mockLaunchDarklySource(flag);
+		ddMock.onGet(`${DD_BASE}/api/v2/feature-flags`).reply(200, {
+			data: [
+				{
+					id: 'dd-flag-1',
+					type: 'feature-flags',
+					attributes: {
+						key: datadogKey,
+						name: 'Old Datadog name',
+						migration_metadata: {
+							project_key: 'proj',
+							flag_key: flag.key,
+						},
+					},
+				},
+			],
+			meta: { page: { total: 1 } },
+		});
+		ddMock.onGet(`${DD_BASE}/api/v2/feature-flags/environments`).reply(200, {
+			data: [ddEnvironment('dd-prod', 'Production', true)],
+		});
+		ddMock.onGet(`${DD_BASE}/api/v2/feature-flags/dd-flag-1`).reply(
+			200,
+			ddFlagDetail([
+				{ id: 'true-id', key: 'true', name: 'On', value: 'true' },
+				{ id: 'false-id', key: 'false', name: 'Off', value: 'false' },
+			]),
+		);
+		ddMock.onPut(`${DD_BASE}/api/v2/feature-flags/dd-flag-1`).reply(200, {});
+
+		await runLaunchDarklyMigration('dd-api-key', 'dd-app-key', DD_SITE, false, {
+			nonInteractive: {
+				projectKey: 'proj',
+				envMap: [['production', 'Production']],
+				flagKeys: [`${flag.key},${datadogKey}`],
+			},
+			doExport: false,
+			distributionChannelMode: 'auto',
+		});
+
+		const updateAttributes = flagUpdateAttributes(ddMock, 'dd-flag-1');
+		expect(updateAttributes).toHaveLength(2);
+		expect(updateAttributes).toContainEqual({ name: datadogKey });
+		expect(updateAttributes).not.toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ key: expect.anything() }),
+			]),
+		);
+		expect(updateAttributes).not.toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ distribution_channel: expect.anything() }),
+			]),
+		);
+	});
+
+	it('includes a LaunchDarkly name update in a full-sync dry run', async () => {
+		const flag = ldFlag();
+		flag.name = 'Renamed LaunchDarkly flag';
+		const environment = flag.environments?.production;
+		if (!environment) throw new Error('Test flag is missing production');
+		environment.on = true;
+		mockLaunchDarklySource(flag);
+		ddMock.onGet(`${DD_BASE}/api/v2/feature-flags`).reply(200, {
+			data: [
+				{
+					id: 'dd-flag-1',
+					type: 'feature-flags',
+					attributes: {
+						key: flag.key,
+						name: 'Old Datadog name',
+						migration_metadata: {
+							project_key: 'proj',
+							flag_key: flag.key,
+						},
+					},
+				},
+			],
+			meta: { page: { total: 1 } },
+		});
+		ddMock.onGet(`${DD_BASE}/api/v2/feature-flags/environments`).reply(200, {
+			data: [ddEnvironment('dd-prod', 'Production', true)],
+		});
+
+		await runLaunchDarklyMigration('dd-api-key', 'dd-app-key', DD_SITE, true, {
+			nonInteractive: {
+				projectKey: 'proj',
+				envMap: [['production', 'Production']],
+				flagKeys: [flag.key],
+			},
+			doExport: false,
+			distributionChannelMode: 'auto',
+		});
+
+		const report = parseLastJsonOutput(stdoutWrites);
+		expect(report.requests).toContainEqual(
+			expect.objectContaining({
+				method: 'PUT',
+				path: '/api/v2/feature-flags/dd-flag-1',
+				body: {
+					data: {
+						type: 'feature-flags',
+						attributes: { name: flag.name },
+					},
+				},
+			}),
+		);
+	});
+
+	it('synchronizes an Eppo flag name when no environments need enabling', async () => {
+		const flag = eppoFlag();
+		flag.name = 'Renamed Eppo flag';
+		eppoMock.onGet(`${EPPO_BASE}/api/v1/feature-flags`).reply(200, [flag]);
+		eppoMock.onGet(`${EPPO_BASE}/api/v1/audiences`).reply(200, []);
+		mockDatadogForEppoExistingFlag();
+		ddMock.onGet(`${DD_BASE}/api/v2/feature-flags/dd-flag-1`).reply(
+			200,
+			ddFlagDetail([
+				{
+					id: 'on-id',
+					key: 'on',
+					name: 'On',
+					value: 'on',
+					migration_metadata: { provider: 'eppo', source_id: '10' },
+				},
+				{
+					id: 'off-id',
+					key: 'off',
+					name: 'Off',
+					value: 'off',
+					migration_metadata: { provider: 'eppo', source_id: '20' },
+				},
+			]),
+		);
+		ddMock.onPut(`${DD_BASE}/api/v2/feature-flags/dd-flag-1`).reply(200, {});
+
+		await runEppoMigration('dd-api-key', 'dd-app-key', DD_SITE, false, {
+			nonInteractive: {
+				envMap: [['Production', 'Production']],
+				flagKeys: [flag.key],
+			},
+			doExport: false,
+		});
+
+		const updateAttributes = flagUpdateAttributes(ddMock, 'dd-flag-1');
+		expect(updateAttributes).toContainEqual({ name: flag.name });
+	});
+
+	it('includes an Eppo name update in a full-sync dry run', async () => {
+		const flag = eppoFlag();
+		flag.name = 'Renamed Eppo flag';
+		const environment = flag.environments?.[0];
+		if (!environment) throw new Error('Test flag is missing production');
+		environment.active = true;
+		eppoMock.onGet(`${EPPO_BASE}/api/v1/feature-flags`).reply(200, [flag]);
+		eppoMock.onGet(`${EPPO_BASE}/api/v1/audiences`).reply(200, []);
+		mockDatadogForEppoExistingFlag();
+		ddMock.onGet(`${DD_BASE}/api/v2/feature-flags/dd-flag-1`).reply(
+			200,
+			ddFlagDetail([
+				{
+					id: 'on-id',
+					key: 'on',
+					name: 'On',
+					value: 'on',
+					migration_metadata: { provider: 'eppo', source_id: '10' },
+				},
+				{
+					id: 'off-id',
+					key: 'off',
+					name: 'Off',
+					value: 'off',
+					migration_metadata: { provider: 'eppo', source_id: '20' },
+				},
+			]),
+		);
+
+		await runEppoMigration('dd-api-key', 'dd-app-key', DD_SITE, true, {
+			nonInteractive: {
+				envMap: [['Production', 'Production']],
+				flagKeys: [flag.key],
+			},
+			doExport: false,
+		});
+
+		const report = parseLastJsonOutput(stdoutWrites);
+		expect(report.requests).toContainEqual(
+			expect.objectContaining({
+				method: 'PUT',
+				path: '/api/v2/feature-flags/dd-flag-1',
+				body: {
+					data: {
+						type: 'feature-flags',
+						attributes: { name: flag.name },
+					},
+				},
+			}),
+		);
+	});
+
 	it('captures Eppo live variant sync failures in the migration report', async () => {
 		mockEppoSourceData();
 		mockDatadogForEppoExistingFlag();
 		ddMock
 			.onGet(`${DD_BASE}/api/v2/feature-flags/dd-flag-1`)
 			.reply(200, ddFlagDetail());
+		ddMock.onPut(`${DD_BASE}/api/v2/feature-flags/dd-flag-1`).reply(200, {});
 		ddMock
 			.onPost(`${DD_BASE}/api/v2/feature-flags/dd-flag-1/variants`)
 			.reply(400, { errors: [{ detail: 'Invalid variant value' }] });
@@ -312,6 +650,7 @@ describe('flag-level migration failures', () => {
 		ddMock
 			.onGet(`${DD_BASE}/api/v2/feature-flags/dd-flag-1`)
 			.reply(200, ddFlagDetail());
+		ddMock.onPut(`${DD_BASE}/api/v2/feature-flags/dd-flag-1`).reply(200, {});
 		ddMock
 			.onPost(`${DD_BASE}/api/v2/feature-flags/dd-flag-1/variants`)
 			.reply(400, { errors: [{ detail: 'Invalid LD variant value' }] });

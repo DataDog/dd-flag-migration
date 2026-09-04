@@ -29,6 +29,7 @@ import {
 	syncAllocationsForEnvironment,
 	syncVariants,
 	syncVariantsCreatesAndUpdates,
+	updateFlagName,
 	updateFlagTags,
 	updateVariant,
 } from '../src/datadog/api.js';
@@ -1182,6 +1183,46 @@ describe('updateFlagTags', () => {
 
 		await expect(
 			updateFlagTags(API_KEY, APP_KEY, 'flag-123', ['team:eng'], SITE),
+		).rejects.toThrow();
+	});
+});
+
+describe('updateFlagName', () => {
+	let mock: AxiosMockAdapter;
+
+	beforeEach(() => {
+		mock = new AxiosMockAdapter(ddClient as never);
+	});
+
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('updates the display name without changing the flag key', async () => {
+		mock.onPut(`${BASE}/api/v2/feature-flags/flag-123`).reply((config) => {
+			expect(JSON.parse(config.data)).toEqual({
+				data: {
+					type: 'feature-flags',
+					attributes: { name: 'Updated checkout flag' },
+				},
+			});
+			return [200, {}];
+		});
+
+		await updateFlagName(
+			API_KEY,
+			APP_KEY,
+			'flag-123',
+			'Updated checkout flag',
+			SITE,
+		);
+	});
+
+	it('throws on error response', async () => {
+		mock.onPut(`${BASE}/api/v2/feature-flags/flag-123`).reply(409);
+
+		await expect(
+			updateFlagName(API_KEY, APP_KEY, 'flag-123', 'Duplicate name', SITE),
 		).rejects.toThrow();
 	});
 });
