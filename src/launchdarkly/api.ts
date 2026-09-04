@@ -222,7 +222,7 @@ export async function findSdkKeyOwner(
 	return results.find((r) => r !== undefined);
 }
 
-/** Fetch environments for a project from the LD API. */
+/** Fetch environments for a project from the expanded project response. */
 export async function fetchProjectEnvironments(
 	apiKey: string,
 	projectKey: string,
@@ -246,13 +246,61 @@ export async function fetchProjectEnvironments(
 	const rawEnvs = response.data.environments;
 	const envs = Array.isArray(rawEnvs) ? rawEnvs : (rawEnvs?.items ?? []);
 	return envs
-		.map((e) => ({
-			key: e.key,
-			name: e.name,
-			color: e.color,
-			archived: e.archived ?? false,
+		.map((environment) => ({
+			key: environment.key,
+			name: environment.name,
+			color: environment.color,
+			archived: environment.archived ?? false,
 		}))
 		.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Fetch every environment for a project from the paginated list endpoint. */
+export async function fetchAllProjectEnvironments(
+	apiKey: string,
+	projectKey: string,
+): Promise<LDEnvironment[]> {
+	const environments: LDEnvironment[] = [];
+	let offset = 0;
+	const limit = 100;
+
+	while (true) {
+		const response = await ldClient.get<{
+			items: Array<{
+				key: string;
+				name: string;
+				color: string;
+				archived?: boolean;
+			}>;
+			totalCount?: number;
+		}>(
+			`${LD_BASE_URL}/api/v2/projects/${encodeURIComponent(projectKey)}/environments`,
+			{
+				headers: ldHeaders(apiKey),
+				params: { limit, offset },
+			},
+		);
+
+		const items = response.data.items ?? [];
+		environments.push(
+			...items.map((environment) => ({
+				key: environment.key,
+				name: environment.name,
+				color: environment.color,
+				archived: environment.archived ?? false,
+			})),
+		);
+		offset += items.length;
+		if (
+			items.length < limit ||
+			(response.data.totalCount !== undefined &&
+				offset >= response.data.totalCount)
+		) {
+			break;
+		}
+	}
+
+	return environments.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 // ─── Flags ───────────────────────────────────────────────────────────────────
@@ -284,6 +332,49 @@ export async function fetchFlags(
 
 		offset += items.length;
 		if (items.length < limit || offset >= response.data.totalCount) break;
+	}
+
+	return flags;
+}
+
+/**
+ * Fetch full flag configurations for one environment in bulk. LaunchDarkly
+ * only includes prerequisites on this endpoint when both env and summary=0
+ * are supplied.
+ */
+export async function fetchFlagsForEnvironment(
+	apiKey: string,
+	projectKey: string,
+	environmentKey: string,
+): Promise<LDFlag[]> {
+	const flags: LDFlag[] = [];
+	let offset = 0;
+	const limit = 100;
+
+	while (true) {
+		const response = await ldClient.get<{
+			items: LDFlag[];
+			totalCount?: number;
+		}>(`${LD_BASE_URL}/api/v2/flags/${encodeURIComponent(projectKey)}`, {
+			headers: ldHeaders(apiKey),
+			params: {
+				env: environmentKey,
+				summary: 0,
+				limit,
+				offset,
+			},
+		});
+
+		const items = response.data.items ?? [];
+		flags.push(...items.filter((flag) => flag.key && flag.variations));
+		offset += items.length;
+		if (
+			items.length < limit ||
+			(response.data.totalCount !== undefined &&
+				offset >= response.data.totalCount)
+		) {
+			break;
+		}
 	}
 
 	return flags;
