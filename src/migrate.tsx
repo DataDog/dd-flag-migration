@@ -128,6 +128,7 @@ async function main(): Promise<void> {
 					args.dryRun,
 					{
 						doExport: args.doExport,
+						distributionChannelMode: args.distributionChannelMode,
 						nonInteractive: {
 							// biome-ignore lint/style/noNonNullAssertion: validated for LD
 							projectKey: ni.projectKey!,
@@ -180,7 +181,9 @@ async function main(): Promise<void> {
 		const { runLaunchDarklyMigration } = await import(
 			'./launchdarkly/migrate.js'
 		);
-		await runLaunchDarklyMigration(ddApiKey, ddAppKey, ddSite, args.dryRun);
+		await runLaunchDarklyMigration(ddApiKey, ddAppKey, ddSite, args.dryRun, {
+			distributionChannelMode: args.distributionChannelMode,
+		});
 	} else {
 		const { runEppoMigration } = await import('./eppo/migrate.js');
 		await runEppoMigration(ddApiKey, ddAppKey, ddSite, args.dryRun);

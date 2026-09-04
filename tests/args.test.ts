@@ -7,6 +7,7 @@ describe('parseMigrateArgs', () => {
 		expect(args.interactive).toBe(true);
 		expect(args.dryRun).toBe(false);
 		expect(args.doExport).toBe(false);
+		expect(args.distributionChannelMode).toBeUndefined();
 		expect(args.nonInteractive).toBeUndefined();
 	});
 
@@ -71,6 +72,41 @@ describe('parseMigrateArgs', () => {
 			'--feature-flag=foo',
 		]);
 		expect(args.nonInteractive?.provider).toBe('eppo');
+	});
+
+	it.each([
+		'auto',
+		'client',
+		'server',
+		'all',
+	] as const)('accepts --distribution-channel=%s for LaunchDarkly', (distributionChannelMode) => {
+		const args = parseMigrateArgs([
+			'--interactive=false',
+			'--provider=launchdarkly',
+			'--project=my-ld',
+			'--env-map=prod,prod',
+			'--feature-flag=foo',
+			`--distribution-channel=${distributionChannelMode}`,
+		]);
+		expect(args.distributionChannelMode).toBe(distributionChannelMode);
+	});
+
+	it('rejects an unknown distribution channel', () => {
+		expect(() => parseMigrateArgs(['--distribution-channel=mobile'])).toThrow(
+			/--distribution-channel must be one of/,
+		);
+	});
+
+	it('rejects --distribution-channel for Eppo', () => {
+		expect(() =>
+			parseMigrateArgs([
+				'--interactive=false',
+				'--provider=eppo',
+				'--env-map=prod,prod',
+				'--feature-flag=foo',
+				'--distribution-channel=client',
+			]),
+		).toThrow(/only supported for LaunchDarkly/);
 	});
 
 	it('rejects unknown provider', () => {
