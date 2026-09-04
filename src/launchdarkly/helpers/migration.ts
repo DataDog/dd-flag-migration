@@ -811,6 +811,48 @@ export function findTeamsWithEditAccess(
 	return teamKeys;
 }
 
+/**
+ * Resolve LaunchDarkly editor teams for Datadog.
+ *
+ * Only teams matched to a Datadog team are retained for `team:*` tags and
+ * restriction policies. An unmatched LaunchDarkly handle is reported but must
+ * not produce a tag that points to a nonexistent Datadog team.
+ */
+export function resolveEditorTeams(
+	ldTeamKeys: Iterable<string>,
+	teamKeyMapping: ReadonlyMap<string, string> | undefined,
+	ddHandleToId: ReadonlyMap<string, string>,
+	ddTeamsFetchFailed: boolean,
+): {
+	editorTeamIds: string[];
+	editorTeamHandles: string[];
+	unresolvedEditorTeams: string[];
+} {
+	const editorTeamIds = new Set<string>();
+	const editorTeamHandles = new Set<string>();
+	const unresolvedEditorTeams = new Set<string>();
+
+	for (const ldKey of ldTeamKeys) {
+		const ddHandle = teamKeyMapping?.get(ldKey) ?? ldKey;
+
+		if (ddTeamsFetchFailed) continue;
+
+		const ddId = ddHandleToId.get(ddHandle);
+		if (ddId) {
+			editorTeamIds.add(ddId);
+			editorTeamHandles.add(ddHandle);
+		} else {
+			unresolvedEditorTeams.add(ddHandle);
+		}
+	}
+
+	return {
+		editorTeamIds: [...editorTeamIds],
+		editorTeamHandles: [...editorTeamHandles],
+		unresolvedEditorTeams: [...unresolvedEditorTeams],
+	};
+}
+
 // ─── Tag Building ───────────────────────────────────────────────────────────
 
 /**

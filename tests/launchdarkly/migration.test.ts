@@ -19,6 +19,7 @@ import {
 	hasSemverConditions,
 	mapFlagType,
 	mapOperator,
+	resolveEditorTeams,
 	resolveSegmentMatch,
 	shouldSkipFlag,
 } from '../../src/launchdarkly/helpers/migration.js';
@@ -1451,6 +1452,45 @@ describe('findTeamsWithEditAccess', () => {
 		expect(findTeamsWithEditAccess(teams, new Set(['editor']))).toEqual(
 			new Set(),
 		);
+	});
+});
+
+// ─── resolveEditorTeams ──────────────────────────────────────────────────────
+
+describe('resolveEditorTeams', () => {
+	it('does not tag an unmatched LaunchDarkly team', () => {
+		expect(
+			resolveEditorTeams(['ld-platform'], undefined, new Map(), false),
+		).toEqual({
+			editorTeamIds: [],
+			editorTeamHandles: [],
+			unresolvedEditorTeams: ['ld-platform'],
+		});
+	});
+
+	it('uses an explicitly mapped Datadog handle and ID', () => {
+		expect(
+			resolveEditorTeams(
+				['ld-platform'],
+				new Map([['ld-platform', 'dd-platform']]),
+				new Map([['dd-platform', 'team-123']]),
+				false,
+			),
+		).toEqual({
+			editorTeamIds: ['team-123'],
+			editorTeamHandles: ['dd-platform'],
+			unresolvedEditorTeams: [],
+		});
+	});
+
+	it('does not tag teams when Datadog teams cannot be fetched', () => {
+		expect(
+			resolveEditorTeams(['ld-platform'], undefined, new Map(), true),
+		).toEqual({
+			editorTeamIds: [],
+			editorTeamHandles: [],
+			unresolvedEditorTeams: [],
+		});
 	});
 });
 

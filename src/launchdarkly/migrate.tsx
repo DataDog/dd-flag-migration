@@ -54,6 +54,11 @@ import { formatAxiosError } from '../helpers/format-axios-error.js';
 import { toSyncRequests } from '../helpers/migration.js';
 import { writeJsonOutput } from '../helpers/output.js';
 import {
+	resolveMigrationTargetTags,
+	selectMigrationTagMode,
+	type TagSyncMode,
+} from '../helpers/sync-tags.js';
+import {
 	fetchCustomRoles,
 	fetchFlag,
 	fetchFlagRelease,
@@ -79,6 +84,7 @@ import {
 	hasSemverConditions,
 	mapFlagType,
 	remapAllocationKeys,
+	resolveEditorTeams,
 	shouldSkipFlag,
 } from './helpers/migration.js';
 import {
@@ -185,7 +191,7 @@ async function promptForTeamMapping(
 		message: `Map LD team "${ldTeamKey}" → Datadog team:`,
 		choices: [
 			{
-				name: chalk.dim(`Skip — keep as "${ldTeamKey}"`),
+				name: chalk.dim('Skip — do not migrate this team'),
 				value: null,
 			},
 			...ddTeams.map((t) => ({
@@ -918,6 +924,17 @@ async function executeMigration(
 		if (action === 'select-more') return 'select-more';
 	}
 
+	let tagSyncMode: TagSyncMode = 'replace';
+	if (
+		!nonInteractive &&
+		flags.some((flag) => {
+			const conflict = classifyConflict(datadogFlags, projectKey, flag.key);
+			return conflict.type === 'same_project' || conflict.type === 'manual';
+		})
+	) {
+		tagSyncMode = await selectMigrationTagMode();
+	}
+
 	// Fetch full flag details for selected flags
 	const detailSpinner = createSpinner(
 		`Fetching details for ${flags.length} flag(s)… (0/${flags.length} downloaded)`,
@@ -1030,25 +1047,15 @@ async function executeMigration(
 		}
 	}
 
-	// Resolve LD editor-team keys to Datadog team UUIDs once. Skip-and-warn for
-	// any team handle we can't resolve to a DD team ID — sending the bare
-	// handle to the restriction-policy API would silently produce a broken
-	// principal and undermine the access controls this feature exists to set.
-	const editorTeamIds: string[] = [];
-	const editorTeamHandles: string[] = [];
-	const unresolvedEditorTeams: string[] = [];
-	if (!ddTeamsFetchFailed) {
-		for (const ldKey of projectEditorTeamKeys) {
-			const ddHandle = teamKeyMapping?.get(ldKey) ?? ldKey;
-			const ddId = ddHandleToId.get(ddHandle);
-			if (ddId) {
-				editorTeamIds.push(ddId);
-				editorTeamHandles.push(ddHandle);
-			} else {
-				unresolvedEditorTeams.push(ddHandle);
-			}
-		}
-	}
+	// Only matched Datadog teams contribute team tags or restriction-policy
+	// principals. This avoids tags that point to nonexistent Datadog teams.
+	const { editorTeamIds, editorTeamHandles, unresolvedEditorTeams } =
+		resolveEditorTeams(
+			projectEditorTeamKeys,
+			teamKeyMapping,
+			ddHandleToId,
+			ddTeamsFetchFailed,
+		);
 	if (ddTeamsFetchFailed && projectEditorTeamKeys.size > 0) {
 		console.log(
 			chalk.yellow(
@@ -1545,10 +1552,18 @@ async function executeMigration(
 					allRuleCount > 0 ? `, ${allRuleCount} rule(s)` : '';
 
 				if (existingFlagId) {
-					const syncTags = buildFlagTags(
+					const sourceTags = buildFlagTags(
 						flag.tags,
 						projectKey,
 						editorTeamHandles,
+					);
+					const syncTags = await resolveMigrationTargetTags(
+						tagSyncMode,
+						sourceTags,
+						existingFlagId,
+						ddApiKey,
+						ddAppKey,
+						ddSite,
 					);
 					// Repair or refresh permissions before mutating an existing flag. A
 					// previous migration may have restricted the authenticated user to
@@ -1586,7 +1601,9 @@ async function executeMigration(
 					}
 
 					if (envsToEnable.length === 0) {
-						// Always sync tags and restriction policy even when no new environments need enabling.
+						// Always sync tags and restriction policy even when no new
+						// environments need enabling. Overwrite mode propagates tag
+						// removals; merge mode preserves Datadog-only tags.
 						// Variant deletes are intentionally SKIPPED in this branch: this
 						// path performs no allocation rewrite, so deleting a variant
 						// could orphan existing DD allocation references (allocations
@@ -1854,7 +1871,7 @@ async function executeMigration(
 								ddSite,
 							);
 
-							// Update tags on existing flag (replace so removals propagate)
+							// Update tags using the strategy selected for this migration.
 							await updateFlagTags(
 								ddApiKey,
 								ddAppKey,

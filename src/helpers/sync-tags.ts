@@ -108,6 +108,42 @@ export async function selectTagMode(): Promise<TagSyncMode> {
 	});
 }
 
+/** Prompt for tag behavior when a migration updates existing Datadog flags. */
+export async function selectMigrationTagMode(): Promise<TagSyncMode> {
+	return select<TagSyncMode>({
+		message:
+			'For existing Datadog flags, how should tags and team tags be synced?',
+		choices: [
+			{
+				name: 'Merge — add source tags and matched team tags, keep existing Datadog tags',
+				value: 'additive',
+				short: 'Merge',
+			},
+			{
+				name: 'Overwrite — replace Datadog tags with source and matched team tags',
+				value: 'replace',
+				short: 'Overwrite',
+			},
+		],
+	});
+}
+
+/** Resolve the tags to write when a migration updates an existing flag. */
+export async function resolveMigrationTargetTags(
+	mode: TagSyncMode,
+	sourceTags: string[],
+	datadogFlagId: string,
+	ddApiKey: string,
+	ddAppKey: string,
+	ddSite: string,
+): Promise<string[]> {
+	const existingTags =
+		mode === 'additive'
+			? await fetchFlagTags(ddApiKey, ddAppKey, datadogFlagId, ddSite)
+			: [];
+	return computeTargetTags(mode, sourceTags, existingTags).target;
+}
+
 export interface ExecuteTagSyncOptions {
 	nonInteractive?: boolean;
 	onProgress?: (index: number, total: number, item: TagSyncItem) => void;
