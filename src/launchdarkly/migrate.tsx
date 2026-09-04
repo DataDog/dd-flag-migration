@@ -35,6 +35,7 @@ import {
 	syncAllocationsForEnvironment,
 	syncVariantsCreatesAndUpdates,
 	updateFlagDistributionChannel,
+	updateFlagName,
 	updateFlagTags,
 } from '../datadog/api.js';
 import {
@@ -863,6 +864,14 @@ interface MigrationOptions {
 	distributionChannelMode?: DistributionChannelMode;
 }
 
+function resolveDatadogFlagName(
+	sourceName: string,
+	sourceKey: string,
+	datadogKey: string,
+): string {
+	return sourceName === sourceKey ? datadogKey : sourceName;
+}
+
 async function executeMigration(
 	flags: LDFlag[],
 	envMapping: EnvironmentMapping<string>,
@@ -1559,6 +1568,11 @@ async function executeMigration(
 				// resolution. This ensures sync re-runs can match existing
 				// allocations by key (preserving UUIDs).
 				allocations = remapAllocationKeys(allocations, flag.key, resolvedDdKey);
+				const targetName = resolveDatadogFlagName(
+					flag.name,
+					flag.key,
+					resolvedDdKey,
+				);
 				const hasSemverTargeting = hasSemverConditions(
 					allocations,
 					semverSavedFilterIds,
@@ -1627,6 +1641,19 @@ async function executeMigration(
 						}
 					}
 
+					if (dryRun) {
+						dryRunRequests.push({
+							method: 'PUT',
+							path: `/api/v2/feature-flags/${existingFlagId}`,
+							body: {
+								data: {
+									type: 'feature-flags',
+									attributes: { name: targetName },
+								},
+							},
+						});
+					}
+
 					if (envsToEnable.length === 0) {
 						// Always sync tags and restriction policy even when no new
 						// environments need enabling. Overwrite mode propagates tag
@@ -1685,6 +1712,13 @@ async function executeMigration(
 								});
 							}
 						} else {
+							await updateFlagName(
+								ddApiKey,
+								ddAppKey,
+								existingFlagId,
+								targetName,
+								ddSite,
+							);
 							if (!isBooleanFlag) {
 								const result = await syncVariantsCreatesAndUpdates(
 									ddApiKey,
@@ -1723,8 +1757,8 @@ async function executeMigration(
 						syncedFlagKeys.push(flag.key);
 						doSync(
 							dryRun
-								? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (${tagLabel}${variantLabel}${policyLabel})`
-								: `${chalk.green('✓')} Synced ${chalk.cyan(flag.key)} (${tagLabel}${variantLabel}${policyLabel})`,
+								? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (1 name, ${tagLabel}${variantLabel}${policyLabel})`
+								: `${chalk.green('✓')} Synced ${chalk.cyan(flag.key)} (1 name, ${tagLabel}${variantLabel}${policyLabel})`,
 						);
 						continue;
 					}
@@ -1843,10 +1877,17 @@ async function executeMigration(
 						syncedFlagKeys.push(flag.key);
 						doSync(
 							`${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} ` +
-								`(${syncFilterLabel}${syncRuleLabel}${variantLabel}${tagLabel}${enableLabel})`,
+								`(${syncFilterLabel}${syncRuleLabel}${variantLabel}${tagLabel}, 1 name${enableLabel})`,
 						);
 					} else {
 						try {
+							await updateFlagName(
+								ddApiKey,
+								ddAppKey,
+								existingFlagId,
+								targetName,
+								ddSite,
+							);
 							// Apply variant creates+updates first so allocation
 							// variant_id resolution sees new variants. Deletes are
 							// deferred until AFTER allocation sync so we never remove
@@ -1970,7 +2011,7 @@ async function executeMigration(
 								enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
 							syncedFlagKeys.push(flag.key);
 							doSync(
-								`${chalk.green('✓')} Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${variantLabel}${tagLabel}${enableLabel})`,
+								`${chalk.green('✓')} Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${variantLabel}${tagLabel}, 1 name${enableLabel})`,
 							);
 						} catch (err) {
 							const error = formatAxiosError(err);
@@ -1990,7 +2031,7 @@ async function executeMigration(
 
 					const request: DatadogCreateFlagRequest = {
 						key: ddKey,
-						name: flag.name === flag.key ? ddKey : flag.name,
+						name: resolveDatadogFlagName(flag.name, flag.key, ddKey),
 						value_type: mapFlagType(flag),
 						variants,
 						allocations: allocations.length > 0 ? allocations : undefined,

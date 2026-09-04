@@ -27,6 +27,7 @@ import {
 	syncAllocationsForEnvironment,
 	syncVariantsCreatesAndUpdates,
 	updateFlagDistributionChannel,
+	updateFlagName,
 	updateFlagTags,
 } from '../datadog/api.js';
 import {
@@ -618,6 +619,19 @@ async function confirmMigration(
 						site,
 					);
 
+					if (dryRun) {
+						dryRunRequests.push({
+							method: 'PUT',
+							path: `/api/v2/feature-flags/${existingFlagId}`,
+							body: {
+								data: {
+									type: 'feature-flags',
+									attributes: { name: flag.name },
+								},
+							},
+						});
+					}
+
 					if (envsToEnable.length === 0) {
 						// Always sync tags. Overwrite mode propagates removals; merge
 						// mode preserves tags that exist only in Datadog.
@@ -670,6 +684,13 @@ async function confirmMigration(
 								});
 							}
 						} else {
+							await updateFlagName(
+								ddApiKey,
+								ddAppKey,
+								existingFlagId,
+								flag.name,
+								site,
+							);
 							const result = await syncVariantsCreatesAndUpdates(
 								ddApiKey,
 								ddAppKey,
@@ -700,8 +721,8 @@ async function confirmMigration(
 						const variantLabel = formatVariantLabel(variantCounts);
 						doSync(
 							dryRun
-								? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (${syncTags.length} tag(s)${variantLabel})`
-								: `${chalk.green('✓')} Synced ${chalk.cyan(flag.key)} (${syncTags.length} tag(s)${variantLabel})`,
+								? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (1 name, ${syncTags.length} tag(s)${variantLabel})`
+								: `${chalk.green('✓')} Synced ${chalk.cyan(flag.key)} (1 name, ${syncTags.length} tag(s)${variantLabel})`,
 						);
 						continue;
 					}
@@ -804,10 +825,17 @@ async function confirmMigration(
 								: '';
 						doSync(
 							`${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} ` +
-								`(${syncFilterLabel}${syncRuleLabel}${variantLabel}${tagLabel}${enableLabel})`,
+								`(${syncFilterLabel}${syncRuleLabel}${variantLabel}${tagLabel}, 1 name${enableLabel})`,
 						);
 					} else {
 						try {
+							await updateFlagName(
+								ddApiKey,
+								ddAppKey,
+								existingFlagId,
+								flag.name,
+								site,
+							);
 							// Apply variant creates+updates first so allocation
 							// variant_id resolution sees new variants. Deletes are
 							// deferred until AFTER allocation sync so we never remove
@@ -912,7 +940,7 @@ async function confirmMigration(
 							const enableLabel =
 								enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
 							doSync(
-								`${chalk.green('✓')} Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${variantLabel}${tagLabel}${enableLabel})`,
+								`${chalk.green('✓')} Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${variantLabel}${tagLabel}, 1 name${enableLabel})`,
 							);
 						} catch (err) {
 							const error = formatAxiosError(err);
