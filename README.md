@@ -31,6 +31,9 @@ npx @datadog/dd-flag-migration bulk-enable
 
 # sync tags from your source provider onto migrated flags
 npx @datadog/dd-flag-migration sync-tags
+
+# add tags to selected migrated flags
+npx @datadog/dd-flag-migration add-tags
 ```
 
 ### Contributing / running from source
@@ -41,7 +44,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Credentials you'll need
 
-Credentials are read from environment variables. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running `migrate`, `evaluate`, `bulk-permissions`, `bulk-enable`, or `sync-tags`. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1.
+Credentials are read from environment variables. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running `migrate`, `evaluate`, `bulk-permissions`, `bulk-enable`, `sync-tags`, or `add-tags`. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1.
 
 `DD_SITE` is optional for interactive commands and pre-fills the Datadog site prompt when set. For non-interactive `migrate` runs, use either `DD_SITE` or `--datadog-site`; the explicit CLI option takes precedence. The standalone `scripts/get-datadog-flag.sh` script requires `DD_SITE` and does not accept a site argument.
 
@@ -66,7 +69,7 @@ Your LaunchDarkly access token needs **Reader** role permissions (or a custom ro
 | `EPPO_SDK_KEY` | migration was from Eppo | Eppo → SDK Keys (server SDK key, one per environment) |
 | `LAUNCHDARKLY_API_KEY` | migration was from LaunchDarkly *(preferred)* | LaunchDarkly → Account settings → Authorization → Access tokens |
 
-### Required for `bulk-permissions`, `bulk-enable`, and `sync-tags`
+### Required for `bulk-permissions`, `bulk-enable`, `sync-tags`, and `add-tags`
 
 | Variable | Required when | Where to find it |
 |---|---|---|
@@ -82,8 +85,8 @@ Enable the scopes required for the command you are running:
 | Scope | Required by | Description |
 |---|---|---|
 | `feature_flag_approvals_override` | Optional for `bulk-enable` | Bypasses Feature Flag approval requirements. Without it, approval-protected changes are submitted as approval requests and reported as such. |
-| `feature_flag_config_read` | `migrate`, `bulk-permissions`, `bulk-enable`, `sync-tags` | View Feature Flag Configurations |
-| `feature_flag_config_write` | `migrate`, `bulk-enable`, `sync-tags` | Edit Feature Flag Configurations |
+| `feature_flag_config_read` | `migrate`, `bulk-permissions`, `bulk-enable`, `sync-tags`, `add-tags` | View Feature Flag Configurations |
+| `feature_flag_config_write` | `migrate`, `bulk-enable`, `sync-tags`, `add-tags` | Edit Feature Flag Configurations |
 | `feature_flag_environment_config_read` | `migrate`, `bulk-enable`, `sync-tags` | View Feature Flag Environment settings |
 | `teams_read` | `migrate`, `bulk-permissions`, `sync-tags` | View Teams for team-based access controls |
 | `restriction_policies_read` | `bulk-permissions` | View restriction policies |
@@ -324,6 +327,21 @@ yarn bulk-enable
 First select one or more Datadog environments, then select the migrated flags to enable. The flag picker supports filtering by flag key or tag; press **Tab** for advanced filters scoped to the selected environments. Select **needs-enabling** to hide flags that are already enabled in every selected environment. Flags whose status cannot be confirmed remain visible under **needs-enabling** so they are not silently omitted. Production environments are clearly marked and require an explicit confirmation.
 
 Updates run one at a time and use the shared Datadog rate-limit and retry handling. A failure for one flag/environment pair does not stop the remaining updates. Every confirmed update writes a `bulk-enable-export-<timestamp>.xlsx` report in the current directory. The report distinguishes newly enabled pairs, already-enabled pairs, approval requests, failures, and successful writes whose prior status could not be read.
+
+---
+
+## Add Tags
+
+Add one or more tags to selected migrated Datadog flags with:
+
+```bash
+npx @datadog/dd-flag-migration add-tags
+
+# When running from this repository:
+yarn add-tags
+```
+
+Select flags using the searchable migrated-flag picker, then enter tags separated by spaces. The command re-fetches each flag's current tags immediately before updating it, merges the entered tags with that current set, and never removes existing tags. Duplicate tags and flags that already have every entered tag are treated as no-ops. You can optionally generate an `add-tags-export-<timestamp>.xlsx` report containing the requested, existing, added, and resulting tags plus each flag's outcome.
 
 ---
 
