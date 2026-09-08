@@ -462,11 +462,70 @@ export type BuildAllocationsResult =
 	| DatadogAllocationForFlagCreation[]
 	| { flagSkip: string };
 
+/**
+ * Resolve an environment fallthrough that Datadog can represent as its default
+ * variant. Split and progressive fallthroughs return undefined because a
+ * Datadog default can reference only one variant.
+ */
+function getSingleVariantFallthroughKey(
+	flag: LDFlag,
+	environmentKey: string,
+): string | undefined {
+	const fallthrough = flag.environments?.[environmentKey]?.fallthrough;
+	if (!fallthrough || fallthrough.progressiveRolloutConfig) return undefined;
+
+	let variationIndex = fallthrough.variation;
+	if (variationIndex === undefined && fallthrough.rollout) {
+		const nonZeroVariations = fallthrough.rollout.variations.filter(
+			(variation) => variation.weight > 0,
+		);
+		if (
+			nonZeroVariations.length !== 1 ||
+			nonZeroVariations[0].weight !== 100_000
+		) {
+			return undefined;
+		}
+		variationIndex = nonZeroVariations[0].variation;
+	}
+
+	return variationIndex === undefined
+		? undefined
+		: buildVariants(flag)[variationIndex]?.key;
+}
+
+/** Build the per-environment Datadog default variant map for a migration. */
+export function buildDefaultVariantKeyPerEnv(
+	flag: LDFlag,
+	envMapping: EnvironmentMappingInput<string>,
+): Map<string, string> {
+	const result = new Map<string, string>();
+
+	for (const [ldEnvKey, mappedEnvironments] of envMapping) {
+		const variantKey = getSingleVariantFallthroughKey(flag, ldEnvKey);
+		if (variantKey === undefined) continue;
+
+		for (const ddEnv of mappedDatadogEnvironments(mappedEnvironments)) {
+			result.set(ddEnv.id, variantKey);
+		}
+	}
+
+	return result;
+}
+
+export function resolveDefaultVariantKey(
+	sourceVariantKey: string | undefined,
+	sourceKeyToDatadogKey: ReadonlyMap<string, string>,
+): string | undefined {
+	if (sourceVariantKey === undefined) return undefined;
+	return sourceKeyToDatadogKey.get(sourceVariantKey) ?? sourceVariantKey;
+}
+
 export function buildAllocations(
 	flag: LDFlag,
 	envMapping: EnvironmentMappingInput<string>,
 	savedFilterLookup: Map<string, string> = new Map(),
 	segmentConstantLookup: Map<string, boolean> = new Map(),
+	defaultVariantKeyPerEnv: ReadonlyMap<string, string> = new Map(),
 ): BuildAllocationsResult {
 	const allocations: DatadogAllocationForFlagCreation[] = [];
 
@@ -580,7 +639,10 @@ export function buildAllocations(
 				});
 			}
 
-			// 3. Fallthrough → default allocation (no targeting rules)
+			// 3. Fallthrough → default allocation when it cannot be represented by
+			// Datadog's single default variant.
+			if (defaultVariantKeyPerEnv.has(ddEnv.id)) continue;
+
 			const ft = envConfig.fallthrough;
 			const fallthroughWeights = buildVariantWeights(
 				flag,

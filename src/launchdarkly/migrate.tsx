@@ -50,6 +50,11 @@ import type {
 	EnvironmentMapping,
 } from '../datadog/types.js';
 import { CONFIG_DIR } from '../helpers/config.js';
+import {
+	type DistributionChannelMode,
+	resolveDistributionChannel,
+	selectDistributionChannelMode,
+} from '../helpers/distribution-channel.js';
 import { formatAxiosError } from '../helpers/format-axios-error.js';
 import { toSyncRequests } from '../helpers/migration.js';
 import { writeJsonOutput } from '../helpers/output.js';
@@ -75,6 +80,7 @@ import {
 import { LDMigrationSummary } from './components/LDMigrationSummary.js';
 import {
 	buildAllocations,
+	buildDefaultVariantKeyPerEnv,
 	buildFlagTags,
 	buildVariants,
 	findProjectEditorRoleKeys,
@@ -84,6 +90,7 @@ import {
 	hasSemverConditions,
 	mapFlagType,
 	remapAllocationKeys,
+	resolveDefaultVariantKey,
 	resolveEditorTeams,
 	shouldSkipFlag,
 } from './helpers/migration.js';
@@ -853,6 +860,7 @@ interface MigrationOptions {
 	nonInteractive?: boolean;
 	doExport?: boolean;
 	targetKeyBySource?: Map<string, string>;
+	distributionChannelMode?: DistributionChannelMode;
 }
 
 async function executeMigration(
@@ -875,6 +883,7 @@ async function executeMigration(
 		nonInteractive,
 		doExport,
 		targetKeyBySource,
+		distributionChannelMode: configuredDistributionChannelMode,
 	} = opts;
 
 	if (flags.length === 0) {
@@ -934,6 +943,9 @@ async function executeMigration(
 	) {
 		tagSyncMode = await selectMigrationTagMode();
 	}
+	const distributionChannelMode =
+		configuredDistributionChannelMode ??
+		(nonInteractive ? 'auto' : await selectDistributionChannelMode());
 
 	// Fetch full flag details for selected flags
 	const detailSpinner = createSpinner(
@@ -1449,11 +1461,16 @@ async function executeMigration(
 					jsonArrayWrappedKeys.push(flag.key);
 				}
 
+				const defaultVariantKeyPerEnv = buildDefaultVariantKeyPerEnv(
+					flag,
+					envMapping,
+				);
 				const allocationsResult = buildAllocations(
 					flag,
 					envMapping,
 					savedFilterLookup,
 					segmentConstantLookup,
+					defaultVariantKeyPerEnv,
 				);
 				if (!Array.isArray(allocationsResult)) {
 					doSkip(
@@ -1542,6 +1559,16 @@ async function executeMigration(
 				// resolution. This ensures sync re-runs can match existing
 				// allocations by key (preserving UUIDs).
 				allocations = remapAllocationKeys(allocations, flag.key, resolvedDdKey);
+				const hasSemverTargeting = hasSemverConditions(
+					allocations,
+					semverSavedFilterIds,
+				);
+				const distributionChannel = resolveDistributionChannel(
+					distributionChannelMode,
+					hasSemverTargeting,
+				);
+				const semverForcedToClient =
+					distributionChannelMode === 'auto' && hasSemverTargeting;
 
 				const allRuleCount = allocations.reduce(
 					(sum, a) => sum + (a.targeting_rules?.length ?? 0),
@@ -1643,14 +1670,16 @@ async function executeMigration(
 									},
 								},
 							});
-							if (hasSemverConditions(allocations, semverSavedFilterIds)) {
+							if (distributionChannel !== undefined) {
 								dryRunRequests.push({
 									method: 'PUT',
 									path: `/api/v2/feature-flags/${existingFlagId}`,
 									body: {
 										data: {
 											type: 'feature-flags',
-											attributes: { distribution_channel: 'CLIENT' },
+											attributes: {
+												distribution_channel: distributionChannel,
+											},
 										},
 									},
 								});
@@ -1674,14 +1703,16 @@ async function executeMigration(
 								syncTags,
 								ddSite,
 							);
-							if (hasSemverConditions(allocations, semverSavedFilterIds)) {
+							if (distributionChannel !== undefined) {
 								await updateFlagDistributionChannel(
 									ddApiKey,
 									ddAppKey,
 									existingFlagId,
-									'CLIENT',
+									distributionChannel,
 									ddSite,
 								);
+							}
+							if (semverForcedToClient) {
 								semverForcedClientKeys.push(flag.key);
 							}
 						}
@@ -1709,6 +1740,7 @@ async function executeMigration(
 							path: string;
 							body: unknown;
 						}> = [];
+						let sourceKeyToDatadogKey = new Map<string, string>();
 						let variantCountsDry = { added: 0, updated: 0, deleted: 0 };
 						if (!isBooleanFlag) {
 							const { variants: existingVariantsDry } = await fetchFlagDetail(
@@ -1717,13 +1749,17 @@ async function executeMigration(
 								existingFlagId,
 								ddSite,
 							);
-							const { createUpdateRequests, deleteRequests } =
-								buildVariantSyncDryRunRequests(
-									existingFlagId,
-									variants,
-									existingVariantsDry,
-									'launchdarkly',
-								);
+							const {
+								createUpdateRequests,
+								deleteRequests,
+								sourceKeyToDatadogKey: sourceKeyMap,
+							} = buildVariantSyncDryRunRequests(
+								existingFlagId,
+								variants,
+								existingVariantsDry,
+								'launchdarkly',
+							);
+							sourceKeyToDatadogKey = sourceKeyMap;
 							// Variant creates+updates precede allocation PUTs.
 							for (const r of createUpdateRequests) dryRunRequests.push(r);
 							variantCountsDry = {
@@ -1735,14 +1771,16 @@ async function executeMigration(
 							};
 							deleteRequestsDry = deleteRequests;
 						}
-						if (hasSemverConditions(allocations, semverSavedFilterIds)) {
+						if (distributionChannel !== undefined) {
 							dryRunRequests.push({
 								method: 'PUT',
 								path: `/api/v2/feature-flags/${existingFlagId}`,
 								body: {
 									data: {
 										type: 'feature-flags',
-										attributes: { distribution_channel: 'CLIENT' },
+										attributes: {
+											distribution_channel: distributionChannel,
+										},
 									},
 								},
 							});
@@ -1756,9 +1794,20 @@ async function executeMigration(
 								(sum, r) => sum + (r.targeting_rules?.length ?? 0),
 								0,
 							);
+							const sourceDefaultVariantKey = defaultVariantKeyPerEnv.get(
+								ddEnv.id,
+							);
+							const defaultVariantKey = resolveDefaultVariantKey(
+								sourceDefaultVariantKey,
+								sourceKeyToDatadogKey,
+							);
 							dryRunRequests.push({
 								method: 'PUT',
-								path: `/api/v2/feature-flags/${existingFlagId}/environments/${ddEnv.id}/allocations`,
+								path:
+									`/api/v2/feature-flags/${existingFlagId}/environments/${ddEnv.id}/allocations` +
+									(defaultVariantKey !== undefined
+										? `?default_variant_key=${defaultVariantKey}`
+										: ''),
 								body: syncReqs,
 							});
 							dryRunRequests.push({
@@ -1831,20 +1880,29 @@ async function executeMigration(
 										ddSite,
 									);
 							const variantCounts = variantSyncResult.counts;
-							if (hasSemverConditions(allocations, semverSavedFilterIds)) {
+							if (distributionChannel !== undefined) {
 								await updateFlagDistributionChannel(
 									ddApiKey,
 									ddAppKey,
 									existingFlagId,
-									'CLIENT',
+									distributionChannel,
 									ddSite,
 								);
+							}
+							if (semverForcedToClient) {
 								semverForcedClientKeys.push(flag.key);
 							}
 							let syncedAllocCount = 0;
 							let syncedRuleCount = 0;
 							for (const ddEnv of envsToEnable) {
 								const syncReqs = toSyncRequests(allocations, ddEnv.id);
+								const sourceDefaultVariantKey = defaultVariantKeyPerEnv.get(
+									ddEnv.id,
+								);
+								const defaultVariantKey = resolveDefaultVariantKey(
+									sourceDefaultVariantKey,
+									variantSyncResult.sourceKeyToDatadogKey,
+								);
 								await syncAllocationsForEnvironment(
 									ddApiKey,
 									ddAppKey,
@@ -1852,7 +1910,7 @@ async function executeMigration(
 									ddEnv.id,
 									syncReqs,
 									ddSite,
-									undefined,
+									defaultVariantKey,
 									variantSyncResult.variantKeyToId,
 								);
 								syncedAllocCount += syncReqs.length;
@@ -1942,8 +2000,8 @@ async function executeMigration(
 							...(appliedPrefix ? { key_prefix: appliedPrefix } : {}),
 						},
 						...(tags.length > 0 ? { tags } : {}),
-						...(hasSemverConditions(allocations, semverSavedFilterIds)
-							? { distribution_channel: 'CLIENT' }
+						...(distributionChannel !== undefined
+							? { distribution_channel: distributionChannel }
 							: {}),
 					};
 
@@ -1954,6 +2012,14 @@ async function executeMigration(
 							body: { data: { type: 'feature-flags', attributes: request } },
 						});
 						for (const ddEnv of envsToEnable) {
+							const defaultVariantKey = defaultVariantKeyPerEnv.get(ddEnv.id);
+							if (defaultVariantKey !== undefined) {
+								dryRunRequests.push({
+									method: 'PUT',
+									path: `/api/v2/feature-flags/<uuid-for-${ddKey}>/environments/${ddEnv.id}/allocations?default_variant_key=${defaultVariantKey}`,
+									body: toSyncRequests(allocations, ddEnv.id),
+								});
+							}
 							dryRunRequests.push({
 								method: 'POST',
 								path: `/api/v2/feature-flags/<uuid-for-${ddKey}>/environments/${ddEnv.id}/enable`,
@@ -1990,7 +2056,21 @@ async function executeMigration(
 								request,
 								ddSite,
 							);
-							if (hasSemverConditions(allocations, semverSavedFilterIds)) {
+							for (const ddEnv of envsToEnable) {
+								const defaultVariantKey = defaultVariantKeyPerEnv.get(ddEnv.id);
+								if (defaultVariantKey !== undefined) {
+									await syncAllocationsForEnvironment(
+										ddApiKey,
+										ddAppKey,
+										createdFlag.id,
+										ddEnv.id,
+										toSyncRequests(allocations, ddEnv.id),
+										ddSite,
+										defaultVariantKey,
+									);
+								}
+							}
+							if (semverForcedToClient) {
 								semverForcedClientKeys.push(flag.key);
 							}
 
@@ -2164,6 +2244,7 @@ export interface LDNonInteractiveOptions {
 export interface RunLaunchDarklyMigrationOptions {
 	nonInteractive?: LDNonInteractiveOptions;
 	doExport?: boolean;
+	distributionChannelMode?: DistributionChannelMode;
 }
 
 export async function runLaunchDarklyMigration(
@@ -2186,6 +2267,7 @@ export async function runLaunchDarklyMigration(
 			dryRun,
 			options.nonInteractive,
 			options.doExport ?? false,
+			options.distributionChannelMode ?? 'auto',
 		);
 		return;
 	}
@@ -2463,6 +2545,7 @@ export async function runLaunchDarklyMigration(
 						ddSite,
 						dryRun,
 						conflictResolution,
+						distributionChannelMode: options?.distributionChannelMode,
 					},
 				);
 				if (action === 'cancel') break outer;
@@ -2534,6 +2617,7 @@ async function runLaunchDarklyMigrationNonInteractive(
 	dryRun: boolean,
 	ni: LDNonInteractiveOptions,
 	doExport: boolean,
+	distributionChannelMode: DistributionChannelMode,
 ): Promise<void> {
 	console.log(chalk.gray('  Running in non-interactive mode\n'));
 	if (dryRun) {
@@ -2644,6 +2728,7 @@ async function runLaunchDarklyMigrationNonInteractive(
 			nonInteractive: true,
 			doExport,
 			targetKeyBySource,
+			distributionChannelMode,
 		},
 	);
 }
