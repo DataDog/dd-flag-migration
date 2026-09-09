@@ -10,6 +10,7 @@ import type {
 	DatadogAllocationSyncRequest,
 	DatadogCreatedFlag,
 	DatadogCreateFlagRequest,
+	DatadogDistributionChannel,
 	DatadogEnvironment,
 	DatadogEnvironmentStatus,
 	DatadogFlagEntry,
@@ -209,6 +210,7 @@ type JsonApiFlag = {
 		key: string;
 		name: string;
 		tags?: string[];
+		distribution_channel?: DatadogDistributionChannel;
 		migration_metadata?: MigrationMetadata;
 		feature_flag_environments?: Array<{
 			environment_id: string;
@@ -298,6 +300,9 @@ export async function fetchDatadogFlags(
 				id: f.id,
 				key: f.attributes.key,
 				...(f.attributes.tags !== undefined ? { tags: f.attributes.tags } : {}),
+				...(f.attributes.distribution_channel !== undefined
+					? { distributionChannel: f.attributes.distribution_channel }
+					: {}),
 				migration_metadata: f.attributes.migration_metadata,
 				...(flagEnvironments !== undefined
 					? {
@@ -403,7 +408,7 @@ export async function updateFlagDistributionChannel(
 	apiKey: string,
 	appKey: string,
 	flagId: string,
-	distributionChannel: 'CLIENT' | 'SERVER' | 'BOTH',
+	distributionChannel: DatadogDistributionChannel,
 	site = 'datadoghq.com',
 ): Promise<void> {
 	const baseUrl = `https://api.${site}`;

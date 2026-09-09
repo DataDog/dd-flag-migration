@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### CLI
+
+- Feat: add an interactive bulk distribution channel sync for LaunchDarkly-matched Datadog flags, with dry-run previews and XLSX reports.
+
 ## [1.3.0] — 2026-07-27
 
 ### Migration — LaunchDarkly

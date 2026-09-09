@@ -79,6 +79,7 @@ export const Header = ({ subtitle }: HeaderProps): JSX.Element => {
 export const HEADER_SUBTITLES = {
 	migrate: '            Migrate to Datadog            ',
 	migrateTags: '           Sync Tags to Datadog           ',
+	distributionChannel: '       Sync Distribution Channel        ',
 	eppo: '              Eppo → Datadog              ',
 	launchdarkly: '          LaunchDarkly → Datadog          ',
 	evaluate: '           Evaluate Migration             ',

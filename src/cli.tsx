@@ -30,6 +30,9 @@ if (subcommand === '--version' || subcommand === '-V') {
 } else if (subcommand === 'sync-tags') {
 	process.argv.splice(2, 1);
 	await import('./sync-tags.js');
+} else if (subcommand === 'sync-distribution-channel') {
+	process.argv.splice(2, 1);
+	await import('./sync-distribution-channel.js');
 } else if (subcommand === 'evaluate') {
 	process.argv.splice(2, 1);
 	await import('./evaluate.js');

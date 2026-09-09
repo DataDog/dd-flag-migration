@@ -10,11 +10,13 @@ export interface MigrationMetadata {
 }
 
 export type DatadogEnvironmentStatus = 'ENABLED' | 'DISABLED';
+export type DatadogDistributionChannel = 'CLIENT' | 'SERVER' | 'ALL';
 
 export interface DatadogFlagEntry {
 	id: string;
 	key: string;
 	tags?: string[];
+	distributionChannel?: DatadogDistributionChannel;
 	migration_metadata?: MigrationMetadata;
 	environmentStatuses?: Map<string, DatadogEnvironmentStatus>;
 }
@@ -87,7 +89,7 @@ export interface DatadogCreateFlagRequest {
 	allocations?: DatadogAllocationForFlagCreation[];
 	migration_metadata?: MigrationMetadata;
 	tags?: string[];
-	distribution_channel?: 'CLIENT' | 'SERVER' | 'BOTH';
+	distribution_channel?: DatadogDistributionChannel;
 }
 
 export interface DatadogCreatedFlag {
