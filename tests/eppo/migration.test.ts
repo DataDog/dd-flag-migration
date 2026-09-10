@@ -14,6 +14,7 @@ import {
 	buildDefaultVariantKeyPerEnv,
 	buildTargetingRules,
 	buildVariants,
+	getEnvsToDisable,
 	getEnvsToEnable,
 	hasSemverConditions,
 	mapOperator,
@@ -986,6 +987,37 @@ describe('getEnvsToEnable', () => {
 		const flag = makeFlag({ id: 1, key: 'test', environments: [] });
 		const mapping = new Map<number, DatadogEnvironment>([[10, ddDev]]);
 		expect(getEnvsToEnable(flag, mapping)).toEqual([]);
+	});
+});
+
+// ─── getEnvsToDisable ─────────────────────────────────────────────────────────
+
+describe('getEnvsToDisable', () => {
+	it('returns every Datadog environment mapped from an inactive Eppo environment', () => {
+		const flag = makeFlag({
+			id: 1,
+			key: 'test',
+			environments: [
+				{ id: 10, name: 'Development', active: true, is_production: false },
+				{ id: 20, name: 'Production', active: false, is_production: true },
+			],
+		});
+
+		const result = getEnvsToDisable(
+			flag,
+			new Map<number, DatadogEnvironment | DatadogEnvironment[]>([
+				[10, ddDev],
+				[20, [ddDev, ddProd]],
+			]),
+		);
+
+		expect(result.map((env) => env.id)).toEqual(['dd-dev', 'dd-prod']);
+	});
+
+	it('treats a missing mapped environment as inactive', () => {
+		const flag = makeFlag({ id: 1, key: 'test', environments: [] });
+
+		expect(getEnvsToDisable(flag, new Map([[10, ddDev]]))).toEqual([ddDev]);
 	});
 });
 

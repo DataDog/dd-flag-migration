@@ -770,6 +770,20 @@ async function main(): Promise<void> {
 			(enableFailCountByFlag.get(f.key) ?? 0) + 1,
 		);
 	}
+	const disableFailCountByFlag = new Map<string, number>();
+	for (const f of migration.disableFailures ?? []) {
+		disableFailCountByFlag.set(
+			f.key,
+			(disableFailCountByFlag.get(f.key) ?? 0) + 1,
+		);
+	}
+	const disableApprovalRequestCountByFlag = new Map<string, number>();
+	for (const request of migration.disableApprovalRequests ?? []) {
+		disableApprovalRequestCountByFlag.set(
+			request.key,
+			(disableApprovalRequestCountByFlag.get(request.key) ?? 0) + 1,
+		);
+	}
 
 	// Build flag lookup for provider-specific evaluation
 	const ldFlagByKey = isLD
@@ -785,12 +799,27 @@ async function main(): Promise<void> {
 		const ddMigrationMetadata = ddMigrationMetadataByKey.get(datadogFlagKey);
 
 		const skipReason = skippedFlagReason.get(flagKey);
-		const envFailCount = enableFailCountByFlag.get(flagKey) ?? 0;
+		const enableFailCount = enableFailCountByFlag.get(flagKey) ?? 0;
+		const disableFailCount = disableFailCountByFlag.get(flagKey) ?? 0;
+		const disableApprovalRequestCount =
+			disableApprovalRequestCountByFlag.get(flagKey) ?? 0;
+		const envFailCount =
+			enableFailCount + disableFailCount + disableApprovalRequestCount;
 		const partialDetails: string[] = [];
 		if (skipReason !== undefined) {
 			partialDetails.push(skipReason);
-		} else if (envFailCount > 0) {
-			partialDetails.push(`Could not enable (${envFailCount} env(s))`);
+		} else {
+			if (enableFailCount > 0) {
+				partialDetails.push(`Could not enable (${enableFailCount} env(s))`);
+			}
+			if (disableFailCount > 0) {
+				partialDetails.push(`Could not disable (${disableFailCount} env(s))`);
+			}
+			if (disableApprovalRequestCount > 0) {
+				partialDetails.push(
+					`Disable approval requested (${disableApprovalRequestCount} env(s))`,
+				);
+			}
 		}
 
 		const migrationStatus: MigrationStatus = !inMigrationFile

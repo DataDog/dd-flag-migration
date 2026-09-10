@@ -750,6 +750,23 @@ export function getEnvsToEnable(
 	return envsToEnable;
 }
 
+/** Determine which DD environments should be disabled for a flag */
+export function getEnvsToDisable(
+	flag: LDFlag,
+	envMapping: EnvironmentMappingInput<string>,
+): DatadogEnvironment[] {
+	const envsToDisable: DatadogEnvironment[] = [];
+
+	for (const [ldEnvKey, mappedEnvironments] of envMapping) {
+		const envConfig = flag.environments?.[ldEnvKey];
+		if (!envConfig?.on) {
+			envsToDisable.push(...mappedDatadogEnvironments(mappedEnvironments));
+		}
+	}
+
+	return envsToDisable;
+}
+
 // ─── RBAC Team Discovery ─────────────────────────────────────────────────────
 
 // Any update* action, plus the non-update flag write actions, maps to DD write access.

@@ -105,9 +105,12 @@ export interface MigrationFile {
 		skipped: number;
 		errored: number;
 		enabled: number;
+		disabled?: number;
 	};
 	failures: MigrationFlagFailure[];
 	enableFailures: MigrationEnvFailure[];
+	disableFailures?: MigrationEnvFailure[];
+	disableApprovalRequests?: Array<{ key: string; env: string }>;
 	skippedAllocations?: Array<{
 		flagKey: string;
 		allocationName: string;

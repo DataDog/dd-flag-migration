@@ -15,6 +15,8 @@ import {
 	createVariant,
 	ddClient,
 	deleteVariant,
+	disableFeatureFlagEnvironment,
+	disableFeatureFlagEnvironmentWithOutcome,
 	enableFeatureFlagEnvironment,
 	enableFeatureFlagEnvironmentWithOutcome,
 	fetchCurrentUserIdentity,
@@ -751,6 +753,61 @@ describe('enableFeatureFlagEnvironment', () => {
 
 		await expect(
 			enableFeatureFlagEnvironment(API_KEY, APP_KEY, 'f1', 'e1', SITE),
+		).rejects.toThrow();
+	});
+});
+
+// ─── disableFeatureFlagEnvironment ────────────────────────────────────────────
+
+describe('disableFeatureFlagEnvironment', () => {
+	let mock: AxiosMockAdapter;
+
+	beforeEach(() => {
+		mock = new AxiosMockAdapter(ddClient as never);
+	});
+
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('posts to the correct URL', async () => {
+		const flagId = 'flag-uuid-123';
+		const envId = 'env-uuid-456';
+
+		mock
+			.onPost(
+				`${BASE}/api/v2/feature-flags/${flagId}/environments/${envId}/disable`,
+			)
+			.reply(200, {});
+
+		await expect(
+			disableFeatureFlagEnvironment(API_KEY, APP_KEY, flagId, envId, SITE),
+		).resolves.toBeUndefined();
+	});
+
+	it('returns approval_requested when disabling requires approval', async () => {
+		mock
+			.onPost(`${BASE}/api/v2/feature-flags/f1/environments/e1/disable`)
+			.reply(202, {});
+
+		await expect(
+			disableFeatureFlagEnvironmentWithOutcome(
+				API_KEY,
+				APP_KEY,
+				'f1',
+				'e1',
+				SITE,
+			),
+		).resolves.toBe('approval_requested');
+	});
+
+	it('throws on HTTP error', async () => {
+		mock
+			.onPost(`${BASE}/api/v2/feature-flags/f1/environments/e1/disable`)
+			.reply(404);
+
+		await expect(
+			disableFeatureFlagEnvironment(API_KEY, APP_KEY, 'f1', 'e1', SITE),
 		).rejects.toThrow();
 	});
 });

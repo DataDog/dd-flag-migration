@@ -25,6 +25,7 @@ import {
 	applyVariantDeletes,
 	buildRestrictionPolicyBindings,
 	createFeatureFlag,
+	disableFeatureFlagEnvironmentWithOutcome,
 	enableFeatureFlagEnvironment,
 	fetchCurrentUserIdentity,
 	fetchDatadogEnvironments,
@@ -85,6 +86,7 @@ import {
 	buildVariants,
 	findProjectEditorRoleKeys,
 	findTeamsWithEditAccess,
+	getEnvsToDisable,
 	getEnvsToEnable,
 	hasJsonArrayVariants,
 	hasSemverConditions,
@@ -1187,8 +1189,12 @@ async function executeMigration(
 		skipped = 0,
 		errored = 0;
 	let totalEnabled = 0;
+	let totalDisabled = 0;
 	const failures: Array<{ key: string; error: string }> = [];
 	const enableFailures: Array<{ key: string; env: string; error: string }> = [];
+	const disableFailures: Array<{ key: string; env: string; error: string }> =
+		[];
+	const disableApprovalRequests: Array<{ key: string; env: string }> = [];
 	const restrictionPolicyFailures: Array<{ key: string; error: string }> = [];
 	const skippedFlags: Array<{ key: string; reason: string }> = [];
 	const syncedFlagKeys: string[] = [];
@@ -1318,9 +1324,18 @@ async function executeMigration(
 				projectName,
 				migratedAt: timestamp,
 				success: false,
-				summary: { created, synced, skipped, errored, enabled: totalEnabled },
+				summary: {
+					created,
+					synced,
+					skipped,
+					errored,
+					enabled: totalEnabled,
+					disabled: totalDisabled,
+				},
 				failures,
 				enableFailures,
+				disableFailures,
+				disableApprovalRequests,
 				skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
 				syncedFlagKeys: syncedFlagKeys.length > 0 ? syncedFlagKeys : undefined,
 				semverForcedClientKeys:
@@ -1482,6 +1497,7 @@ async function executeMigration(
 				}
 				let allocations = allocationsResult;
 				const envsToEnable = getEnvsToEnable(flag, envMapping);
+				const envsToDisable = getEnvsToDisable(flag, envMapping);
 				const targetKey = targetKeyBySource?.get(flag.key) ?? flag.key;
 				const conflict = nonInteractive
 					? classifyNonInteractiveConflict(
@@ -1636,6 +1652,7 @@ async function executeMigration(
 						// could orphan existing DD allocation references (allocations
 						// reference variants by UUID). Creates+updates are safe.
 						let variantCounts = { added: 0, updated: 0, deleted: 0 };
+						let disabledCount = 0;
 						if (dryRun) {
 							if (!isBooleanFlag) {
 								const { variants: existingVariants } = await fetchFlagDetail(
@@ -1684,6 +1701,13 @@ async function executeMigration(
 									},
 								});
 							}
+							for (const ddEnv of envsToDisable) {
+								dryRunRequests.push({
+									method: 'POST',
+									path: `/api/v2/feature-flags/${existingFlagId}/environments/${ddEnv.id}/disable`,
+									body: {},
+								});
+							}
 						} else {
 							if (!isBooleanFlag) {
 								const result = await syncVariantsCreatesAndUpdates(
@@ -1715,16 +1739,51 @@ async function executeMigration(
 							if (semverForcedToClient) {
 								semverForcedClientKeys.push(flag.key);
 							}
+							for (const ddEnv of envsToDisable) {
+								try {
+									const outcome =
+										await disableFeatureFlagEnvironmentWithOutcome(
+											ddApiKey,
+											ddAppKey,
+											existingFlagId,
+											ddEnv.id,
+											ddSite,
+										);
+
+									if (outcome === 'disabled') {
+										disabledCount++;
+									} else {
+										disableApprovalRequests.push({
+											key: flag.key,
+											env: ddEnv.name,
+										});
+									}
+								} catch (err) {
+									disableFailures.push({
+										key: flag.key,
+										env: ddEnv.name,
+										error: formatAxiosError(err),
+									});
+								}
+							}
+							totalDisabled += disabledCount;
 						}
 						const policyLabel =
 							editorTeamIds.length > 0 ? ' (permissions refreshed)' : '';
 						const tagLabel = `${syncTags.length} tag(s)`;
 						const variantLabel = formatVariantLabel(variantCounts);
+						const disableLabel = dryRun
+							? envsToDisable.length > 0
+								? `, would disable in ${envsToDisable.map((e) => e.name).join(', ')}`
+								: ''
+							: disabledCount > 0
+								? `, disabled in ${disabledCount} env(s)`
+								: '';
 						syncedFlagKeys.push(flag.key);
 						doSync(
 							dryRun
-								? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (${tagLabel}${variantLabel}${policyLabel})`
-								: `${chalk.green('✓')} Synced ${chalk.cyan(flag.key)} (${tagLabel}${variantLabel}${policyLabel})`,
+								? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (${tagLabel}${variantLabel}${disableLabel}${policyLabel})`
+								: `${chalk.green('✓')} Synced ${chalk.cyan(flag.key)} (${tagLabel}${variantLabel}${disableLabel}${policyLabel})`,
 						);
 						continue;
 					}
@@ -1816,6 +1875,13 @@ async function executeMigration(
 								body: {},
 							});
 						}
+						for (const ddEnv of envsToDisable) {
+							dryRunRequests.push({
+								method: 'POST',
+								path: `/api/v2/feature-flags/${existingFlagId}/environments/${ddEnv.id}/disable`,
+								body: {},
+							});
+						}
 						// Variant deletes go AFTER allocation PUTs.
 						for (const r of deleteRequestsDry) dryRunRequests.push(r);
 						dryRunRequests.push({
@@ -1840,10 +1906,14 @@ async function executeMigration(
 							envsToEnable.length > 0
 								? `, would enable in ${envsToEnable.map((e) => e.name).join(', ')}`
 								: '';
+						const disableLabel =
+							envsToDisable.length > 0
+								? `, would disable in ${envsToDisable.map((e) => e.name).join(', ')}`
+								: '';
 						syncedFlagKeys.push(flag.key);
 						doSync(
 							`${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} ` +
-								`(${syncFilterLabel}${syncRuleLabel}${variantLabel}${tagLabel}${enableLabel})`,
+								`(${syncFilterLabel}${syncRuleLabel}${variantLabel}${tagLabel}${enableLabel}${disableLabel})`,
 						);
 					} else {
 						try {
@@ -1958,7 +2028,37 @@ async function executeMigration(
 								}
 							}
 
+							let disabledCount = 0;
+							for (const ddEnv of envsToDisable) {
+								try {
+									const outcome =
+										await disableFeatureFlagEnvironmentWithOutcome(
+											ddApiKey,
+											ddAppKey,
+											existingFlagId,
+											ddEnv.id,
+											ddSite,
+										);
+
+									if (outcome === 'disabled') {
+										disabledCount++;
+									} else {
+										disableApprovalRequests.push({
+											key: flag.key,
+											env: ddEnv.name,
+										});
+									}
+								} catch (err) {
+									disableFailures.push({
+										key: flag.key,
+										env: ddEnv.name,
+										error: formatAxiosError(err),
+									});
+								}
+							}
+
 							totalEnabled += enabledCount;
+							totalDisabled += disabledCount;
 							const syncedRuleLabel =
 								syncedRuleCount > 0 ? `, ${syncedRuleCount} rule(s)` : '';
 							const tagLabel =
@@ -1968,9 +2068,13 @@ async function executeMigration(
 							const variantLabel = formatVariantLabel(variantCounts);
 							const enableLabel =
 								enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
+							const disableLabel =
+								disabledCount > 0
+									? `, disabled in ${disabledCount} env(s)`
+									: '';
 							syncedFlagKeys.push(flag.key);
 							doSync(
-								`${chalk.green('✓')} Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${variantLabel}${tagLabel}${enableLabel})`,
+								`${chalk.green('✓')} Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${variantLabel}${tagLabel}${enableLabel}${disableLabel})`,
 							);
 						} catch (err) {
 							const error = formatAxiosError(err);
@@ -2139,9 +2243,18 @@ async function executeMigration(
 	await renderStatic(
 		<LDMigrationSummary
 			dryRun={dryRun}
-			counts={{ created, synced, skipped, errored, enabled: totalEnabled }}
+			counts={{
+				created,
+				synced,
+				skipped,
+				errored,
+				enabled: totalEnabled,
+				disabled: totalDisabled,
+			}}
 			failures={failures}
 			enableFailures={enableFailures}
+			disableFailures={disableFailures}
+			disableApprovalRequests={disableApprovalRequests}
 			restrictionPolicyFailures={restrictionPolicyFailures}
 		/>,
 	);
@@ -2155,9 +2268,10 @@ async function executeMigration(
 			provider: 'launchdarkly',
 			migratedAt: timestamp,
 			success: errored === 0,
-			summary: { created, synced, skipped, errored, enabled: 0 },
+			summary: { created, synced, skipped, errored, enabled: 0, disabled: 0 },
 			failures,
 			enableFailures: [],
+			disableFailures: [],
 			skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
 			flags: detailedFlags.map((f) => ({
 				key: f.key,
@@ -2184,9 +2298,18 @@ async function executeMigration(
 			projectName,
 			migratedAt: timestamp,
 			success: errored === 0,
-			summary: { created, synced, skipped, errored, enabled: totalEnabled },
+			summary: {
+				created,
+				synced,
+				skipped,
+				errored,
+				enabled: totalEnabled,
+				disabled: totalDisabled,
+			},
 			failures,
 			enableFailures,
+			disableFailures,
+			disableApprovalRequests,
 			skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
 			syncedFlagKeys: syncedFlagKeys.length > 0 ? syncedFlagKeys : undefined,
 			semverForcedClientKeys:

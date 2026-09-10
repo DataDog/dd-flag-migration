@@ -381,3 +381,20 @@ export function getEnvsToEnable(
 	}
 	return envsToEnable;
 }
+
+// Determine which DD environments should be disabled for a flag
+export function getEnvsToDisable(
+	flag: EppoFlag,
+	mapping: EnvironmentMappingInput<number>,
+): DatadogEnvironment[] {
+	const activeEnvIds = new Set(
+		(flag.environments ?? []).filter((e) => e.active).map((e) => e.id),
+	);
+	const envsToDisable: DatadogEnvironment[] = [];
+	for (const [eppoEnvId, mappedEnvironments] of mapping) {
+		if (!activeEnvIds.has(eppoEnvId)) {
+			envsToDisable.push(...mappedDatadogEnvironments(mappedEnvironments));
+		}
+	}
+	return envsToDisable;
+}
