@@ -640,6 +640,72 @@ describe('buildTargetingRules', () => {
 		]);
 	});
 
+	it('strips slashes from LaunchDarkly built-in attributes', () => {
+		const clauses = [
+			makeClause({
+				attribute: '/os/name',
+				contextKind: 'ld_device',
+				values: ['macOS'],
+			}),
+		];
+
+		expect(buildTargetingRules(clauses)).toEqual([
+			{
+				conditions: [
+					{
+						operator: 'ONE_OF',
+						attribute: 'ld_device.osname',
+						value: ['macOS'],
+					},
+				],
+			},
+		]);
+	});
+
+	it('preserves slashes outside LaunchDarkly built-in context kinds', () => {
+		const clauses = [
+			makeClause({
+				attribute: '/os/name',
+				contextKind: 'device',
+				values: ['macOS'],
+			}),
+		];
+
+		expect(buildTargetingRules(clauses)).toEqual([
+			{
+				conditions: [
+					{
+						operator: 'ONE_OF',
+						attribute: 'device./os/name',
+						value: ['macOS'],
+					},
+				],
+			},
+		]);
+	});
+
+	it('preserves literal user attributes that start with ld_', () => {
+		const clauses = [
+			makeClause({
+				attribute: 'ld_profile/name',
+				contextKind: 'user',
+				values: ['pro'],
+			}),
+		];
+
+		expect(buildTargetingRules(clauses)).toEqual([
+			{
+				conditions: [
+					{
+						operator: 'ONE_OF',
+						attribute: 'ld_profile/name',
+						value: ['pro'],
+					},
+				],
+			},
+		]);
+	});
+
 	it('returns null for unsupported operator (before/after)', () => {
 		const clauses = [makeClause({ op: 'before' })];
 		expect(buildTargetingRules(clauses)).toBeNull();

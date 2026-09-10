@@ -16,7 +16,10 @@ import type {
 	SavedFilterSummary,
 } from '../datadog/types.js';
 import { fetchSegment, fetchSegments } from './api.js';
-import { mapOperator } from './helpers/migration.js';
+import {
+	mapOperator,
+	normalizeLaunchDarklyAttribute,
+} from './helpers/migration.js';
 import { negateTargetingRules } from './helpers/negation.js';
 import type { LDFlag, LDSegment } from './types.js';
 
@@ -174,8 +177,7 @@ export function buildNonNegatedRules(
 			const mapped = mapOperator(clause.op, clause.negate, clause.values);
 			if ('skip' in mapped) return null;
 			const ck = clause.contextKind ?? 'user';
-			const attribute =
-				ck === 'user' ? clause.attribute : `${ck}.${clause.attribute}`;
+			const attribute = normalizeLaunchDarklyAttribute(clause.attribute, ck);
 			conditions.push({
 				operator: mapped.operator,
 				attribute,
@@ -242,8 +244,7 @@ export function buildNegatedRules(
 				const mapped = mapOperator(clause.op, clause.negate, clause.values);
 				if ('skip' in mapped) return null;
 				const ck = clause.contextKind ?? 'user';
-				const attribute =
-					ck === 'user' ? clause.attribute : `${ck}.${clause.attribute}`;
+				const attribute = normalizeLaunchDarklyAttribute(clause.attribute, ck);
 				conditions.push({
 					operator: mapped.operator,
 					attribute,

@@ -46,6 +46,23 @@ function targetKeyAttribute(contextKind: string | undefined): string {
 	return ck === 'user' ? 'id' : `${ck}.key`;
 }
 
+/**
+ * Map an LD clause attribute to Datadog's flat attribute namespace.
+ * Slash-delimited references are normalized only for `ld_` context kinds;
+ * non-leading slashes are part of a literal LD attribute name.
+ */
+export function normalizeLaunchDarklyAttribute(
+	attribute: string,
+	contextKind: string | undefined,
+): string {
+	const ck = contextKind ?? 'user';
+	const normalizedAttribute =
+		ck.startsWith('ld_') && attribute.startsWith('/')
+			? attribute.replaceAll('/', '')
+			: attribute;
+	return ck === 'user' ? normalizedAttribute : `${ck}.${normalizedAttribute}`;
+}
+
 // ─── Operator Mapping ────────────────────────────────────────────────────────
 
 type OperatorResult =
@@ -379,9 +396,7 @@ export function buildTargetingRules(
 			const attribute =
 				clause.attribute === 'key'
 					? targetKeyAttribute(ck)
-					: ck === 'user'
-						? clause.attribute
-						: `${ck}.${clause.attribute}`;
+					: normalizeLaunchDarklyAttribute(clause.attribute, ck);
 			inlineConditions.push({
 				operator: result.operator,
 				attribute,
