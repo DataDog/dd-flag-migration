@@ -2,6 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.0] — 2026-09-10
+
+### Migration — Eppo & LaunchDarkly
+
+- Feat: support one-to-many source-to-Datadog environment mappings (#130)
+- Feat: choose whether re-migration merges source tags with existing Datadog tags or overwrites them (#143)
+- Fix: synchronize source environments that are disabled, including during re-migration (#149)
+
+### Migration — LaunchDarkly
+
+- Feat: make the distribution channel configurable for migrated flags (#144)
+- Fix: align migrated default variations and distribution channels with LaunchDarkly settings (#144)
+- Fix: normalize LaunchDarkly SEMVER values before migration (#131)
+- Fix: retain migration access when applying restrictions to migrated flags (#122)
+- Fix: update targeting-filter keys after a migrated flag is renamed to resolve a conflict (#126)
+- Fix: emit only the selected variant at 100% weight for single-variation targeting filters (#120)
+
+### Permissions
+
+- Feat: add bulk flag-permission management with team-tag syncing (#127)
+- Feat: support distinct permission policies for each team in bulk permission updates (#136)
+- Fix: avoid unsupported viewer-team permission policies (#137)
+
+### CLI
+
+- Feat: add the `bulk-enable` command for enabling flag environments in bulk (#129)
+- Feat: add the `sync-tags` command for synchronizing tags on migrated flags (#133)
+- Feat: use `DD_SITE` to configure the Datadog site (#132)
+
 ## [1.3.0] — 2026-07-27
 
 ### Migration — LaunchDarkly
