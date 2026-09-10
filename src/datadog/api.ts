@@ -7,12 +7,15 @@ import {
 } from './helpers.js';
 import type {
 	CreateSavedFilterRequest,
+	DatadogAllocationDetail,
 	DatadogAllocationSyncRequest,
+	DatadogAllocationUpsertRequest,
 	DatadogCreatedFlag,
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,
 	DatadogEnvironmentStatus,
 	DatadogFlagEntry,
+	DatadogFlagEnvironmentAllocations,
 	DatadogTeam,
 	DatadogVariantDetail,
 	DDRestrictionBinding,
@@ -513,8 +516,12 @@ type JsonApiFlagDetail = {
 		}>;
 		feature_flag_environments: Array<{
 			environment_id: string;
+			environment_name?: string;
 			status: 'ENABLED' | 'DISABLED';
-			allocations: Array<{ id: string; key: string }> | null;
+			allocations:
+				| DatadogAllocationDetail[]
+				| Record<string, DatadogAllocationDetail>
+				| null;
 		}>;
 	};
 };
@@ -570,8 +577,8 @@ export async function fetchFlagDetail(
 	const allocationKeyToIdByEnv = new Map<string, Map<string, string>>();
 	for (const env of feature_flag_environments ?? []) {
 		const allocKeyToId = new Map<string, string>();
-		for (const alloc of env.allocations ?? []) {
-			allocKeyToId.set(alloc.key, alloc.id);
+		for (const alloc of allocationList(env.allocations)) {
+			if (alloc.id !== undefined) allocKeyToId.set(alloc.key, alloc.id);
 		}
 		allocationKeyToIdByEnv.set(env.environment_id, allocKeyToId);
 	}
@@ -581,6 +588,70 @@ export async function fetchFlagDetail(
 		variants: variantDetails,
 		allocationKeyToIdByEnv,
 	};
+}
+
+function allocationList(
+	allocations:
+		| DatadogAllocationDetail[]
+		| Record<string, DatadogAllocationDetail>
+		| null,
+): DatadogAllocationDetail[] {
+	if (allocations === null) return [];
+	return Array.isArray(allocations) ? allocations : Object.values(allocations);
+}
+
+export async function fetchFlagAllocations(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	site = 'datadoghq.com',
+): Promise<DatadogFlagEnvironmentAllocations[]> {
+	const baseUrl = `https://api.${site}`;
+	const response = await ddClient.get<{ data: JsonApiFlagDetail }>(
+		`${baseUrl}/api/v2/feature-flags/${flagId}`,
+		{ headers: ddHeaders(apiKey, appKey) },
+	);
+
+	return (response.data.data.attributes.feature_flag_environments ?? []).map(
+		(environment) => ({
+			environment_id: environment.environment_id,
+			...(environment.environment_name !== undefined
+				? { environment_name: environment.environment_name }
+				: {}),
+			allocations: allocationList(environment.allocations),
+		}),
+	);
+}
+
+export type TargetingRuleUpdateOutcome = 'updated' | 'approval_requested';
+
+export async function overwriteFlagAllocationsForEnvironment(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	environmentId: string,
+	allocations: DatadogAllocationUpsertRequest[],
+	site = 'datadoghq.com',
+): Promise<TargetingRuleUpdateOutcome> {
+	const baseUrl = `https://api.${site}`;
+	const body = {
+		data: allocations.map(({ id, ...attributes }) => ({
+			type: 'allocations',
+			...(id !== undefined ? { id } : {}),
+			attributes,
+		})),
+	};
+	const response = await ddClient.put(
+		`${baseUrl}/api/v2/feature-flags/${flagId}/environments/${environmentId}/allocations`,
+		body,
+		{
+			headers: {
+				...ddHeaders(apiKey, appKey),
+				'Content-Type': 'application/vnd.api+json',
+			},
+		},
+	);
+	return response.status === 202 ? 'approval_requested' : 'updated';
 }
 
 // ─── Variants ────────────────────────────────────────────────────────────────

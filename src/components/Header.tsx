@@ -84,4 +84,5 @@ export const HEADER_SUBTITLES = {
 	evaluate: '           Evaluate Migration             ',
 	bulkPermissions: '        Bulk Permission Management        ',
 	bulkEnable: '       Bulk Environment Enablement        ',
+	cleanTargetingAttributes: '        Clean Targeting Attributes        ',
 } as const;

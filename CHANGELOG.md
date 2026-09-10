@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### CLI
+
+- Feat: add interactive cleanup for forward slashes in Datadog targeting attributes
+- Feat: export cleanup results, approval warnings, and failures to Excel
+
 ## [1.3.0] — 2026-07-27
 
 ### Migration — LaunchDarkly

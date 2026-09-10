@@ -24,8 +24,10 @@ import {
 	fetchDatadogFlags,
 	fetchDatadogTeams,
 	fetchFeatureFlagEnvironmentStatuses,
+	fetchFlagAllocations,
 	fetchFlagTags,
 	fetchRestrictionPolicy,
+	overwriteFlagAllocationsForEnvironment,
 	syncAllocationsForEnvironment,
 	syncVariants,
 	syncVariantsCreatesAndUpdates,
@@ -797,6 +799,158 @@ describe('fetchFeatureFlagEnvironmentStatuses', () => {
 				['env-disabled', 'DISABLED'],
 			]),
 		);
+	});
+});
+
+describe('targeting attribute cleanup API helpers', () => {
+	let mock: AxiosMockAdapter;
+
+	beforeEach(() => {
+		mock = new AxiosMockAdapter(ddClient as never);
+	});
+
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('fetches complete allocation bodies from array and keyed-object responses', async () => {
+		const allocation = {
+			id: 'allocation-1',
+			key: 'rule-1',
+			name: 'Rule 1',
+			type: 'FEATURE_GATE',
+			targeting_rules: [
+				{
+					conditions: [
+						{
+							attribute: 'ld_device.\\os\\name',
+							operator: 'ONE_OF',
+							value: ['iOS'],
+						},
+					],
+				},
+			],
+			variant_weights: [{ variant_id: 'variant-1', value: 100 }],
+		};
+		mock.onGet(`${BASE}/api/v2/feature-flags/flag-1`).reply(200, {
+			data: {
+				id: 'flag-1',
+				type: 'feature-flags',
+				attributes: {
+					variants: [],
+					feature_flag_environments: [
+						{
+							environment_id: 'env-array',
+							environment_name: 'Production',
+							status: 'ENABLED',
+							allocations: [allocation],
+						},
+						{
+							environment_id: 'env-object',
+							status: 'DISABLED',
+							allocations: { 'allocation-1': allocation },
+						},
+					],
+				},
+			},
+		});
+
+		await expect(
+			fetchFlagAllocations(API_KEY, APP_KEY, 'flag-1', SITE),
+		).resolves.toEqual([
+			{
+				environment_id: 'env-array',
+				environment_name: 'Production',
+				allocations: [allocation],
+			},
+			{ environment_id: 'env-object', allocations: [allocation] },
+		]);
+	});
+
+	it('overwrites the complete environment allocation set and preserves IDs', async () => {
+		mock
+			.onPut(
+				`${BASE}/api/v2/feature-flags/flag-1/environments/env-1/allocations`,
+			)
+			.reply((config) => {
+				expect(config.headers?.['dd-api-key']).toBe(API_KEY);
+				expect(config.headers?.['dd-application-key']).toBe(APP_KEY);
+				expect(JSON.parse(config.data as string)).toEqual({
+					data: [
+						{
+							type: 'allocations',
+							id: 'allocation-1',
+							attributes: {
+								key: 'rule-1',
+								name: 'Rule 1',
+								type: 'FEATURE_GATE',
+								targeting_rules: [
+									{
+										conditions: [
+											{
+												attribute: 'ld_device.osname',
+												operator: 'ONE_OF',
+												value: ['iOS'],
+											},
+										],
+									},
+								],
+								variant_weights: [{ variant_id: 'variant-1', value: 100 }],
+							},
+						},
+					],
+				});
+				return [200, {}];
+			});
+
+		await expect(
+			overwriteFlagAllocationsForEnvironment(
+				API_KEY,
+				APP_KEY,
+				'flag-1',
+				'env-1',
+				[
+					{
+						id: 'allocation-1',
+						key: 'rule-1',
+						name: 'Rule 1',
+						type: 'FEATURE_GATE',
+						targeting_rules: [
+							{
+								conditions: [
+									{
+										attribute: 'ld_device.osname',
+										operator: 'ONE_OF',
+										value: ['iOS'],
+									},
+								],
+							},
+						],
+						variant_weights: [{ variant_id: 'variant-1', value: 100 }],
+					},
+				],
+				SITE,
+			),
+		).resolves.toBe('updated');
+	});
+
+	it('reports approval requests from allocation replacement', async () => {
+		mock
+			.onPut(
+				`${BASE}/api/v2/feature-flags/flag-1/environments/env-1/allocations`,
+			)
+			.reply(202, {});
+
+		await expect(
+			overwriteFlagAllocationsForEnvironment(
+				API_KEY,
+				APP_KEY,
+				'flag-1',
+				'env-1',
+				[],
+				SITE,
+			),
+		).resolves.toBe('approval_requested');
 	});
 });
 

@@ -1,5 +1,9 @@
 import { describe, expect, it } from '@jest/globals';
-import { ArgParseError, parseMigrateArgs } from '../src/args.js';
+import {
+	ArgParseError,
+	parseCleanTargetingAttributesArgs,
+	parseMigrateArgs,
+} from '../src/args.js';
 
 describe('parseMigrateArgs', () => {
 	it('defaults to interactive mode', () => {
@@ -265,6 +269,48 @@ describe('parseMigrateArgs', () => {
 	it('rejects --interactive=maybe', () => {
 		expect(() => parseMigrateArgs(['--interactive=maybe'])).toThrow(
 			/expects a boolean/,
+		);
+	});
+});
+
+describe('parseCleanTargetingAttributesArgs', () => {
+	it('defaults to an interactive live run', () => {
+		expect(parseCleanTargetingAttributesArgs([])).toEqual({
+			dryRun: false,
+			datadogSite: undefined,
+		});
+	});
+
+	it('parses dry-run and both site argument forms', () => {
+		expect(
+			parseCleanTargetingAttributesArgs([
+				'--dry-run',
+				'--datadog-site=us5.datadoghq.com',
+			]),
+		).toEqual({
+			dryRun: true,
+			datadogSite: 'us5.datadoghq.com',
+		});
+		expect(
+			parseCleanTargetingAttributesArgs(['--datadog-site', 'datadoghq.com']),
+		).toEqual({
+			dryRun: false,
+			datadogSite: 'datadoghq.com',
+		});
+	});
+
+	it('rejects unknown, missing, and empty options', () => {
+		expect(() =>
+			parseCleanTargetingAttributesArgs(['--interactive=false']),
+		).toThrow(/Unknown option/);
+		expect(() => parseCleanTargetingAttributesArgs(['--datadog-site'])).toThrow(
+			/requires a value/,
+		);
+		expect(() =>
+			parseCleanTargetingAttributesArgs(['--datadog-site=  ']),
+		).toThrow(/must not be empty/);
+		expect(() => parseCleanTargetingAttributesArgs(['--dry-run=true'])).toThrow(
+			/does not take a value/,
 		);
 	});
 });

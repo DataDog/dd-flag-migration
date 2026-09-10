@@ -59,10 +59,82 @@ export interface DatadogCondition {
 	value?: string[];
 	// SF-ref shape — present alone when this condition references a saved filter
 	saved_filter_id?: string;
+	[key: string]: unknown;
 }
 
 export interface DatadogTargetingRule {
 	conditions: DatadogCondition[];
+	[key: string]: unknown;
+}
+
+export interface DatadogVariantWeightDetail {
+	value: number;
+	variant_id?: string;
+	variant_key?: string;
+	[key: string]: unknown;
+}
+
+export interface DatadogGuardrailMetricDetail {
+	metric_id: string;
+	trigger_action: string;
+	triggered_by?: string;
+	[key: string]: unknown;
+}
+
+export interface DatadogExposureRolloutStepDetail {
+	exposure_ratio: number;
+	grouped_step_index: number;
+	id?: string;
+	interval_ms?: number;
+	is_pause_record: boolean;
+	[key: string]: unknown;
+}
+
+export interface DatadogExposureScheduleDetail {
+	absolute_start_time?: string;
+	control_variant_id?: string;
+	control_variant_key?: string;
+	id?: string;
+	rollout_options: {
+		autostart?: boolean;
+		selection_interval_ms?: number;
+		strategy: string;
+		[key: string]: unknown;
+	};
+	rollout_steps: DatadogExposureRolloutStepDetail[];
+	[key: string]: unknown;
+}
+
+export interface DatadogAllocationDetail {
+	id?: string;
+	key: string;
+	name: string;
+	type: string;
+	targeting_rules?: DatadogTargetingRule[];
+	variant_weights?: DatadogVariantWeightDetail[];
+	experiment_id?: string;
+	exposure_schedule?: DatadogExposureScheduleDetail;
+	guardrail_metrics?: DatadogGuardrailMetricDetail[];
+	[key: string]: unknown;
+}
+
+export type DatadogAllocationUpsertRequest = Pick<
+	DatadogAllocationDetail,
+	| 'id'
+	| 'key'
+	| 'name'
+	| 'type'
+	| 'targeting_rules'
+	| 'variant_weights'
+	| 'experiment_id'
+	| 'exposure_schedule'
+	| 'guardrail_metrics'
+>;
+
+export interface DatadogFlagEnvironmentAllocations {
+	environment_id: string;
+	environment_name?: string;
+	allocations: DatadogAllocationDetail[];
 }
 
 export interface DatadogAllocationForFlagCreation {
