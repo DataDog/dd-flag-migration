@@ -180,9 +180,12 @@ export interface LDMigrationFile {
 		skipped: number;
 		errored: number;
 		enabled: number;
+		disabled?: number;
 	};
 	failures: Array<{ key: string; error: string }>;
 	enableFailures: Array<{ key: string; env: string; error: string }>;
+	disableFailures?: Array<{ key: string; env: string; error: string }>;
+	disableApprovalRequests?: Array<{ key: string; env: string }>;
 	skippedFlags?: Array<{ key: string; reason: string }>;
 	syncedFlagKeys?: string[];
 	semverForcedClientKeys?: string[];

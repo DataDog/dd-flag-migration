@@ -7,6 +7,7 @@ export type MigrationSummaryCounts = {
 	skipped: number;
 	errored: number;
 	enabled: number;
+	disabled?: number;
 };
 
 export type MigrationSummaryFailure = {
@@ -18,6 +19,11 @@ export type MigrationSummaryEnableFailure = {
 	key: string;
 	env: string;
 	error: string;
+};
+
+export type MigrationSummaryApprovalRequest = {
+	key: string;
+	env: string;
 };
 
 export type MigrationSummaryDetailSection = {
@@ -36,6 +42,8 @@ export type MigrationSummaryProps = {
 	counts: MigrationSummaryCounts;
 	failures?: readonly MigrationSummaryFailure[];
 	enableFailures?: readonly MigrationSummaryEnableFailure[];
+	disableFailures?: readonly MigrationSummaryEnableFailure[];
+	disableApprovalRequests?: readonly MigrationSummaryApprovalRequest[];
 	detailSections?: readonly MigrationSummaryDetailSection[];
 };
 
@@ -53,10 +61,14 @@ function buildCountsLine(
 		!dryRun && counts.enabled > 0
 			? `  ${chalk.hex('#632CA6')(String(counts.enabled))} enabled`
 			: '';
+	const disabledSummary =
+		!dryRun && (counts.disabled ?? 0) > 0
+			? `  ${chalk.hex('#632CA6')(String(counts.disabled))} disabled`
+			: '';
 	return (
 		`  ${chalk.green(String(counts.created))} ${dryRun ? 'would be created' : 'created'}` +
 		`${syncedSummary}  ${chalk.yellow(String(counts.skipped))} skipped  ` +
-		`${chalk.red(String(counts.errored))} failed${enabledSummary}`
+		`${chalk.red(String(counts.errored))} failed${enabledSummary}${disabledSummary}`
 	);
 }
 
@@ -65,6 +77,8 @@ function buildMigrationSummaryLines({
 	counts,
 	failures = [],
 	enableFailures = [],
+	disableFailures = [],
+	disableApprovalRequests = [],
 	detailSections = [],
 }: MigrationSummaryProps): LineItem[] {
 	const lines: LineItem[] = [
@@ -97,6 +111,36 @@ function buildMigrationSummaryLines({
 		enableFailures.forEach((failure, index) => {
 			lines.push({
 				id: `enable-failure-${failure.key}-${failure.env}-${index}`,
+				text: `  ${chalk.yellow('⚠')} ${failure.key} / ${failure.env}: ${failure.error}`,
+			});
+		});
+	}
+
+	if (disableApprovalRequests.length > 0) {
+		lines.push({ id: 'blank-disable-approval-requests', text: ' ' });
+		lines.push({
+			id: 'disable-approval-requests-title',
+			text: chalk.yellow('  Disable approval requested in some environments:'),
+		});
+		disableApprovalRequests.forEach((request, index) => {
+			lines.push({
+				id: `disable-approval-request-${request.key}-${request.env}-${index}`,
+				text: `  ${chalk.yellow('⚠')} ${request.key} / ${request.env}`,
+			});
+		});
+	}
+
+	if (disableFailures.length > 0) {
+		lines.push({ id: 'blank-disable-failures', text: ' ' });
+		lines.push({
+			id: 'disable-failures-title',
+			text: chalk.yellow(
+				'  Flags synced but could not be disabled in some environments:',
+			),
+		});
+		disableFailures.forEach((failure, index) => {
+			lines.push({
+				id: `disable-failure-${failure.key}-${failure.env}-${index}`,
 				text: `  ${chalk.yellow('⚠')} ${failure.key} / ${failure.env}: ${failure.error}`,
 			});
 		});

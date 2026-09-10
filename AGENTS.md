@@ -43,7 +43,7 @@ The source platform owns these end-to-end. On re-migration, make Datadog match e
 
 - Targeting rules / allocations (PUT-replace per environment)
 - Default variant (per environment)
-- Environment enablement
+- Environment state (enablement and disablement)
 - **Variants** (POST/PUT/DELETE via the `/feature-flags/{id}/variants` sub-resource)
 
 When introducing a new field in this tier: a missing value in the source must propagate as a removal in Datadog, not as a no-op.
@@ -81,7 +81,7 @@ Renames in the source platform do not propagate. Customers must delete + recreat
 
 1. Decide which tier it belongs to. Default to Tier 1 unless there's a concrete reason to merge or preserve.
 2. Wire it into **both** `src/eppo/index.ts` and `src/launchdarkly/index.ts` re-migration paths — they have identical structure.
-3. Each path has two sub-branches: `envsToEnable.length === 0` (no new envs to enable, sync metadata only) and `envsToEnable.length > 0` (full re-sync). Cover both.
+3. Each path has two sub-branches: `envsToEnable.length === 0` (no active source environments; sync metadata and disable inactive mappings) and `envsToEnable.length > 0` (full re-sync, including disabling inactive mappings). Cover both.
 4. Each branch has a `dryRun` and a live mode. Cover both.
 5. Mirror the existing `migration_metadata` pattern when creating new Datadog resources, with `provider: 'launchdarkly' | 'eppo'` plus a source identifier.
 6. Update the spinner success message to include counts for the new field.
@@ -117,7 +117,8 @@ Two rules follow:
 The `envsToEnable.length === 0` re-migration sub-branch does **not** rewrite
 allocations, so it must **skip variant deletes** entirely — a delete there
 would orphan UUID references that no code path is going to clean up. Tags and
-restriction policy still sync; variants only get creates and updates.
+restriction policy still sync, mapped inactive environments are disabled, and
+variants only get creates and updates.
 
 ## When adding a new source provider
 

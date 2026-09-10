@@ -16,6 +16,7 @@ import {
 	buildVariants,
 	findProjectEditorRoleKeys,
 	findTeamsWithEditAccess,
+	getEnvsToDisable,
 	getEnvsToEnable,
 	hasSemverConditions,
 	mapFlagType,
@@ -1336,6 +1337,58 @@ describe('getEnvsToEnable', () => {
 
 		expect(result).toHaveLength(1);
 		expect(result[0].id).toBe('dd-dev');
+	});
+});
+
+// ─── getEnvsToDisable ─────────────────────────────────────────────────────────
+
+describe('getEnvsToDisable', () => {
+	it('returns every Datadog environment mapped from an LD environment where the flag is off', () => {
+		const flag = makeFlag({
+			key: 'test',
+			environments: {
+				dev: {
+					on: true,
+					archived: false,
+					targets: [],
+					contextTargets: [],
+					rules: [],
+					fallthrough: { variation: 0 },
+					offVariation: 1,
+					prerequisites: [],
+					_environmentName: 'Dev',
+				},
+				production: {
+					on: false,
+					archived: false,
+					targets: [],
+					contextTargets: [],
+					rules: [],
+					fallthrough: { variation: 0 },
+					offVariation: 1,
+					prerequisites: [],
+					_environmentName: 'Production',
+				},
+			},
+		});
+
+		const result = getEnvsToDisable(
+			flag,
+			new Map<string, DatadogEnvironment | DatadogEnvironment[]>([
+				['dev', ddDev],
+				['production', [ddDev, ddProd]],
+			]),
+		);
+
+		expect(result.map((env) => env.id)).toEqual(['dd-dev', 'dd-prod']);
+	});
+
+	it('treats a missing mapped environment config as off', () => {
+		const flag = makeFlag({ key: 'test', environments: {} });
+
+		expect(getEnvsToDisable(flag, new Map([['production', ddProd]]))).toEqual([
+			ddProd,
+		]);
 	});
 });
 

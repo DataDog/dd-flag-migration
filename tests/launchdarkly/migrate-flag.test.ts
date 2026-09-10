@@ -16,6 +16,7 @@ import {
 	buildAllocations,
 	buildFlagTags,
 	buildVariants,
+	getEnvsToDisable,
 	getEnvsToEnable,
 	mapFlagType,
 	remapAllocationKeys,
@@ -78,6 +79,7 @@ function migrateFlag(
 	warn?: string;
 	request?: DatadogCreateFlagRequest;
 	envsToEnable: DatadogEnvironment[];
+	envsToDisable: DatadogEnvironment[];
 } {
 	const skipResult = shouldSkipFlag(flag, selectedEnvs);
 	if (skipResult.skip) {
@@ -85,6 +87,7 @@ function migrateFlag(
 			skipped: true,
 			skipReason: skipResult.reason,
 			envsToEnable: [],
+			envsToDisable: [],
 		};
 	}
 
@@ -95,10 +98,12 @@ function migrateFlag(
 			skipped: true,
 			skipReason: allocationsResult.flagSkip,
 			envsToEnable: [],
+			envsToDisable: [],
 		};
 	}
 	const allocations = allocationsResult;
 	const envsToEnable = getEnvsToEnable(flag, envMapping);
+	const envsToDisable = getEnvsToDisable(flag, envMapping);
 	const tags = buildFlagTags(flag.tags, projectKey);
 
 	const request: DatadogCreateFlagRequest = {
@@ -115,6 +120,7 @@ function migrateFlag(
 		warn: skipResult.warn,
 		request,
 		envsToEnable,
+		envsToDisable,
 	};
 }
 
@@ -176,9 +182,9 @@ describe('migrate a simple boolean flag (on in one env, off in another)', () => 
 		expect(allocs[1].environment_id).toBe('dd-prod');
 	});
 
-	it('enables only the environment where the flag is on', () => {
-		expect(result.envsToEnable).toHaveLength(1);
-		expect(result.envsToEnable[0].id).toBe('dd-staging');
+	it('enables the on environment and disables the off environment', () => {
+		expect(result.envsToEnable.map((env) => env.id)).toEqual(['dd-staging']);
+		expect(result.envsToDisable.map((env) => env.id)).toEqual(['dd-prod']);
 	});
 });
 

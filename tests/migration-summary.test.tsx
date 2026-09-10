@@ -20,11 +20,16 @@ describe('migration summary views', () => {
 					skipped: 3,
 					errored: 1,
 					enabled: 4,
+					disabled: 2,
 				}}
 				failures={[{ key: 'broken-flag', error: 'request failed' }]}
 				enableFailures={[
 					{ key: 'partial-flag', env: 'Production', error: 'forbidden' },
 				]}
+				disableFailures={[
+					{ key: 'stale-flag', env: 'Staging', error: 'request failed' },
+				]}
+				disableApprovalRequests={[{ key: 'pending-flag', env: 'Production' }]}
 				detailSections={[
 					{
 						id: 'extra',
@@ -38,12 +43,18 @@ describe('migration summary views', () => {
 		expect(stripAnsi(lastFrame() ?? '')).toMatchInlineSnapshot(`
 "
 Migration complete!
-  2 created  1 synced  3 skipped  1 failed  4 enabled
+  2 created  1 synced  3 skipped  1 failed  4 enabled  2 disabled
 
   ✗ broken-flag: request failed
 
   Flags created but could not be enabled in some environments:
   ⚠ partial-flag / Production: forbidden
+
+  Disable approval requested in some environments:
+  ⚠ pending-flag / Production
+
+  Flags synced but could not be disabled in some environments:
+  ⚠ stale-flag / Staging: request failed
 
   Extra warning section
   ⚠ extra-flag: needs attention"

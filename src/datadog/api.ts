@@ -498,6 +498,47 @@ export async function enableFeatureFlagEnvironment(
 	);
 }
 
+export type FeatureFlagEnvironmentDisableOutcome =
+	| 'disabled'
+	| 'approval_requested';
+
+export async function disableFeatureFlagEnvironmentWithOutcome(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	environmentId: string,
+	site = 'datadoghq.com',
+): Promise<FeatureFlagEnvironmentDisableOutcome> {
+	const baseUrl = `https://api.${site}`;
+	const response = await ddClient.post(
+		`${baseUrl}/api/v2/feature-flags/${flagId}/environments/${environmentId}/disable`,
+		{},
+		{
+			headers: {
+				...ddHeaders(apiKey, appKey),
+				'Content-Type': 'application/json',
+			},
+		},
+	);
+	return response.status === 202 ? 'approval_requested' : 'disabled';
+}
+
+export async function disableFeatureFlagEnvironment(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	environmentId: string,
+	site = 'datadoghq.com',
+): Promise<void> {
+	await disableFeatureFlagEnvironmentWithOutcome(
+		apiKey,
+		appKey,
+		flagId,
+		environmentId,
+		site,
+	);
+}
+
 type JsonApiFlagDetail = {
 	id: string;
 	type: string;

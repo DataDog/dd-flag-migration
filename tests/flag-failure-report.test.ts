@@ -56,6 +56,7 @@ function parseLastJsonOutput(writes: string[]): {
 		errored: number;
 	};
 	failures: Array<{ key: string; error: string }>;
+	disableApprovalRequests?: Array<{ key: string; env: string }>;
 	flagKeyMapping?: Array<{ sourceKey: string; datadogKey: string }>;
 } {
 	for (let i = writes.length - 1; i >= 0; i--) {
@@ -295,6 +296,52 @@ describe('flag-level migration failures', () => {
 		expect(attributes.distribution_channel).toBe(expected);
 	});
 
+	it('records a LaunchDarkly disable approval request without counting the environment as disabled', async () => {
+		const flag = ldFlag();
+		mockLaunchDarklySource(flag);
+		ddMock.onGet(`${DD_BASE}/api/v2/feature-flags`).reply(200, {
+			data: [
+				{
+					id: 'dd-flag-1',
+					type: 'feature-flags',
+					attributes: {
+						key: flag.key,
+						name: flag.name,
+						migration_metadata: {
+							project_key: 'proj',
+							flag_key: flag.key,
+						},
+					},
+				},
+			],
+			meta: { page: { total: 1 } },
+		});
+		ddMock.onGet(`${DD_BASE}/api/v2/feature-flags/environments`).reply(200, {
+			data: [ddEnvironment('dd-prod', 'Production', true)],
+		});
+		ddMock.onPut(`${DD_BASE}/api/v2/feature-flags/dd-flag-1`).reply(200, {});
+		ddMock
+			.onPost(
+				`${DD_BASE}/api/v2/feature-flags/dd-flag-1/environments/dd-prod/disable`,
+			)
+			.reply(202, {});
+
+		await runLaunchDarklyMigration('dd-api-key', 'dd-app-key', DD_SITE, false, {
+			nonInteractive: {
+				projectKey: 'proj',
+				envMap: [['production', 'Production']],
+				flagKeys: [flag.key],
+			},
+			doExport: false,
+		});
+
+		const report = parseLastJsonOutput(stdoutWrites);
+		expect(report.summary).toMatchObject({ synced: 1, disabled: 0 });
+		expect(report.disableApprovalRequests).toEqual([
+			{ key: flag.key, env: 'Production' },
+		]);
+	});
+
 	it('does not update an existing non-semver channel in Auto mode', async () => {
 		const flag = ldFlag();
 		mockLaunchDarklySource(flag);
@@ -347,6 +394,50 @@ describe('flag-level migration failures', () => {
 		expect(updateBody.data.attributes).not.toHaveProperty(
 			'distribution_channel',
 		);
+	});
+
+	it('records an Eppo disable approval request without counting the environment as disabled', async () => {
+		mockEppoSourceData();
+		mockDatadogForEppoExistingFlag();
+		ddMock.onGet(`${DD_BASE}/api/v2/feature-flags/dd-flag-1`).reply(
+			200,
+			ddFlagDetail([
+				{
+					id: 'on-id',
+					key: 'on',
+					name: 'On',
+					value: 'on',
+					migration_metadata: { provider: 'eppo', source_id: '10' },
+				},
+				{
+					id: 'off-id',
+					key: 'off',
+					name: 'Off',
+					value: 'off',
+					migration_metadata: { provider: 'eppo', source_id: '20' },
+				},
+			]),
+		);
+		ddMock.onPut(`${DD_BASE}/api/v2/feature-flags/dd-flag-1`).reply(200, {});
+		ddMock
+			.onPost(
+				`${DD_BASE}/api/v2/feature-flags/dd-flag-1/environments/dd-prod/disable`,
+			)
+			.reply(202, {});
+
+		await runEppoMigration('dd-api-key', 'dd-app-key', DD_SITE, false, {
+			nonInteractive: {
+				envMap: [['Production', 'Production']],
+				flagKeys: ['flag-with-bad-variant'],
+			},
+			doExport: false,
+		});
+
+		const report = parseLastJsonOutput(stdoutWrites);
+		expect(report.summary).toMatchObject({ disabled: 0 });
+		expect(report.disableApprovalRequests).toEqual([
+			{ key: 'flag-with-bad-variant', env: 'Production' },
+		]);
 	});
 
 	it('captures Eppo live variant sync failures in the migration report', async () => {
