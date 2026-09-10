@@ -493,7 +493,7 @@ describe('evaluateLDFlagAdvanced with contextAttributes', () => {
 });
 
 describe('generateLDTestCases with non-user contextKind', () => {
-	const makeFlag = (contextKind: string): LDFlag =>
+	const makeFlag = (contextKind: string, attribute = 'versionName'): LDFlag =>
 		({
 			name: 'App Version Flag',
 			kind: 'boolean',
@@ -517,7 +517,7 @@ describe('generateLDTestCases with non-user contextKind', () => {
 							clauses: [
 								{
 									_id: 'c1',
-									attribute: 'versionName',
+									attribute,
 									op: 'in',
 									values: ['4.0.0'],
 									contextKind,
@@ -602,6 +602,22 @@ describe('generateLDTestCases with non-user contextKind', () => {
 			caseWithAttr?.attributes['ld_application.versionName'],
 		).toBeDefined();
 		expect(caseWithAttr?.attributes.versionName).toBeUndefined();
+	});
+
+	it('normalizes built-in attribute paths only in flat Datadog attributes', () => {
+		const testCases = generateLDTestCases(
+			makeFlag('ld_device', '/os/name'),
+			'production',
+		);
+		const caseWithAttr = testCases.find(
+			(tc) => 'ld_device.osname' in tc.attributes,
+		);
+
+		expect(caseWithAttr?.attributes['ld_device.osname']).toBe('4.0.0');
+		expect(caseWithAttr?.attributes['ld_device./os/name']).toBeUndefined();
+		expect(caseWithAttr?.contextAttributes?.ld_device?.['/os/name']).toBe(
+			'4.0.0',
+		);
 	});
 
 	it('does not set contextAttributes on the "no attributes" base case', () => {

@@ -177,9 +177,7 @@ export function buildNonNegatedRules(
 			const mapped = mapOperator(clause.op, clause.negate, clause.values);
 			if ('skip' in mapped) return null;
 			const ck = clause.contextKind ?? 'user';
-			const attribute = normalizeLaunchDarklyAttribute(
-				ck === 'user' ? clause.attribute : `${ck}.${clause.attribute}`,
-			);
+			const attribute = normalizeLaunchDarklyAttribute(clause.attribute, ck);
 			conditions.push({
 				operator: mapped.operator,
 				attribute,
@@ -246,9 +244,7 @@ export function buildNegatedRules(
 				const mapped = mapOperator(clause.op, clause.negate, clause.values);
 				if ('skip' in mapped) return null;
 				const ck = clause.contextKind ?? 'user';
-				const attribute = normalizeLaunchDarklyAttribute(
-					ck === 'user' ? clause.attribute : `${ck}.${clause.attribute}`,
-				);
+				const attribute = normalizeLaunchDarklyAttribute(clause.attribute, ck);
 				conditions.push({
 					operator: mapped.operator,
 					attribute,

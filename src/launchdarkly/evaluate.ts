@@ -6,7 +6,10 @@ import type {
 	SubjectAttributes,
 	TestCase,
 } from '../types.js';
-import { mapFlagType } from './helpers/migration.js';
+import {
+	mapFlagType,
+	normalizeLaunchDarklyAttribute,
+} from './helpers/migration.js';
 import type { LDClause, LDFlag } from './types.js';
 
 type LDClient = LDSdk.LDClient;
@@ -180,8 +183,7 @@ export function generateLDTestCases(flag: LDFlag, envKey: string): TestCase[] {
 				} else if (ck === 'user' && clause.attribute === 'key') {
 					matchSubjectIdOverride = String(mv);
 				} else {
-					const flatKey =
-						ck === 'user' ? clause.attribute : `${ck}.${clause.attribute}`;
+					const flatKey = normalizeLaunchDarklyAttribute(clause.attribute, ck);
 					matchAttrs[flatKey] = mv;
 					if (ck !== 'user') {
 						matchContextAttrs[ck] ??= {};
@@ -196,8 +198,7 @@ export function generateLDTestCases(flag: LDFlag, envKey: string): TestCase[] {
 				} else if (ck === 'user' && clause.attribute === 'key') {
 					nonMatchSubjectIdOverride = String(nv);
 				} else {
-					const flatKey =
-						ck === 'user' ? clause.attribute : `${ck}.${clause.attribute}`;
+					const flatKey = normalizeLaunchDarklyAttribute(clause.attribute, ck);
 					nonMatchAttrs[flatKey] = nv;
 					if (ck !== 'user') {
 						nonMatchContextAttrs[ck] ??= {};

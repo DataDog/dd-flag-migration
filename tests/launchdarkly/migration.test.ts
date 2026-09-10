@@ -662,7 +662,7 @@ describe('buildTargetingRules', () => {
 		]);
 	});
 
-	it('preserves slashes in attributes that do not start with ld_', () => {
+	it('preserves slashes outside LaunchDarkly built-in context kinds', () => {
 		const clauses = [
 			makeClause({
 				attribute: '/os/name',
@@ -678,6 +678,28 @@ describe('buildTargetingRules', () => {
 						operator: 'ONE_OF',
 						attribute: 'device./os/name',
 						value: ['macOS'],
+					},
+				],
+			},
+		]);
+	});
+
+	it('preserves literal user attributes that start with ld_', () => {
+		const clauses = [
+			makeClause({
+				attribute: 'ld_profile/name',
+				contextKind: 'user',
+				values: ['pro'],
+			}),
+		];
+
+		expect(buildTargetingRules(clauses)).toEqual([
+			{
+				conditions: [
+					{
+						operator: 'ONE_OF',
+						attribute: 'ld_profile/name',
+						value: ['pro'],
 					},
 				],
 			},
