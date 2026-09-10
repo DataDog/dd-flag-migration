@@ -36,6 +36,11 @@ export interface MigrateTagsArgs {
 	nonInteractive?: MigrateTagsNonInteractiveArgs;
 }
 
+export interface CleanTargetingAttributesArgs {
+	dryRun: boolean;
+	datadogSite: string | undefined;
+}
+
 export class ArgParseError extends Error {}
 
 function parseBool(raw: string, flag: string): boolean {
@@ -372,4 +377,50 @@ export function parseMigrateTagsArgs(argv: string[]): MigrateTagsArgs {
 		interactive: true,
 		tagMode,
 	};
+}
+
+const CLEAN_TARGETING_ATTRIBUTE_FLAGS: FlagDef[] = [
+	{ name: '--dry-run', takesValue: false },
+	{ name: '--datadog-site', takesValue: true },
+];
+
+export function parseCleanTargetingAttributesArgs(
+	argv: string[],
+): CleanTargetingAttributesArgs {
+	let dryRun = false;
+	let datadogSite: string | undefined;
+
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		const eq = arg.indexOf('=');
+		const name = arg.startsWith('--') && eq !== -1 ? arg.slice(0, eq) : arg;
+		const valueFromEquals =
+			arg.startsWith('--') && eq !== -1 ? arg.slice(eq + 1) : undefined;
+		const definition = CLEAN_TARGETING_ATTRIBUTE_FLAGS.find(
+			(flag) => flag.name === name,
+		);
+		if (!definition) throw new ArgParseError(`Unknown option: ${arg}`);
+
+		let value: string | undefined;
+		if (definition.takesValue) {
+			if (valueFromEquals !== undefined) {
+				value = valueFromEquals;
+			} else {
+				if (i + 1 >= argv.length) {
+					throw new ArgParseError(`${name} requires a value`);
+				}
+				value = argv[++i];
+			}
+			if (value.trim().length === 0) {
+				throw new ArgParseError(`${name} value must not be empty`);
+			}
+		} else if (valueFromEquals !== undefined) {
+			throw new ArgParseError(`${name} does not take a value`);
+		}
+
+		if (name === '--dry-run') dryRun = true;
+		else datadogSite = value?.trim();
+	}
+
+	return { dryRun, datadogSite };
 }

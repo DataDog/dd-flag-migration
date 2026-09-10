@@ -31,6 +31,9 @@ npx @datadog/dd-flag-migration bulk-enable
 
 # sync tags from your source provider onto migrated flags
 npx @datadog/dd-flag-migration sync-tags
+
+# remove forward slashes from selected Datadog targeting attributes
+npx @datadog/dd-flag-migration clean-targeting-attributes
 ```
 
 ### Contributing / running from source
@@ -41,7 +44,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Credentials you'll need
 
-Credentials are read from environment variables. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running `migrate`, `evaluate`, `bulk-permissions`, `bulk-enable`, or `sync-tags`. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1.
+Credentials are read from environment variables. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running `migrate`, `evaluate`, `bulk-permissions`, `bulk-enable`, `sync-tags`, or `clean-targeting-attributes`. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1.
 
 `DD_SITE` is optional for interactive commands and pre-fills the Datadog site prompt when set. For non-interactive `migrate` runs, use either `DD_SITE` or `--datadog-site`; the explicit CLI option takes precedence. The standalone `scripts/get-datadog-flag.sh` script requires `DD_SITE` and does not accept a site argument.
 
@@ -66,7 +69,7 @@ Your LaunchDarkly access token needs **Reader** role permissions (or a custom ro
 | `EPPO_SDK_KEY` | migration was from Eppo | Eppo → SDK Keys (server SDK key, one per environment) |
 | `LAUNCHDARKLY_API_KEY` | migration was from LaunchDarkly *(preferred)* | LaunchDarkly → Account settings → Authorization → Access tokens |
 
-### Required for `bulk-permissions`, `bulk-enable`, and `sync-tags`
+### Required for `bulk-permissions`, `bulk-enable`, `sync-tags`, and `clean-targeting-attributes`
 
 | Variable | Required when | Where to find it |
 |---|---|---|
@@ -81,10 +84,10 @@ Enable the scopes required for the command you are running:
 
 | Scope | Required by | Description |
 |---|---|---|
-| `feature_flag_approvals_override` | Optional for `bulk-enable` | Bypasses Feature Flag approval requirements. Without it, approval-protected changes are submitted as approval requests and reported as such. |
-| `feature_flag_config_read` | `migrate`, `bulk-permissions`, `bulk-enable`, `sync-tags` | View Feature Flag Configurations |
-| `feature_flag_config_write` | `migrate`, `bulk-enable`, `sync-tags` | Edit Feature Flag Configurations |
-| `feature_flag_environment_config_read` | `migrate`, `bulk-enable`, `sync-tags` | View Feature Flag Environment settings |
+| `feature_flag_approvals_override` | Optional for `bulk-enable`, `clean-targeting-attributes` | Bypasses Feature Flag approval requirements. Without it, approval-protected changes are submitted as approval requests and reported as such. |
+| `feature_flag_config_read` | `migrate`, `bulk-permissions`, `bulk-enable`, `sync-tags`, `clean-targeting-attributes` | View Feature Flag Configurations |
+| `feature_flag_config_write` | `migrate`, `bulk-enable`, `sync-tags`, `clean-targeting-attributes` | Edit Feature Flag Configurations |
+| `feature_flag_environment_config_read` | `migrate`, `bulk-enable`, `sync-tags`, `clean-targeting-attributes` | View Feature Flag Environment settings |
 | `teams_read` | `migrate`, `bulk-permissions`, `sync-tags` | View Teams for team-based access controls |
 | `restriction_policies_read` | `bulk-permissions` | View restriction policies |
 | `restriction_policies_write` | `bulk-permissions` | Edit restriction policies |
@@ -331,6 +334,37 @@ yarn bulk-enable
 First select one or more Datadog environments, then select the migrated flags to enable. The flag picker supports filtering by flag key or tag; press **Tab** for advanced filters scoped to the selected environments. Select **needs-enabling** to hide flags that are already enabled in every selected environment. Flags whose status cannot be confirmed remain visible under **needs-enabling** so they are not silently omitted. Production environments are clearly marked and require an explicit confirmation.
 
 Updates run one at a time and use the shared Datadog rate-limit and retry handling. A failure for one flag/environment pair does not stop the remaining updates. Every confirmed update writes a `bulk-enable-export-<timestamp>.xlsx` report in the current directory. The report distinguishes newly enabled pairs, already-enabled pairs, approval requests, failures, and successful writes whose prior status could not be read.
+
+---
+
+## Clean Targeting Attributes
+
+Remove forward slashes from inline Datadog targeting-rule attribute names with:
+
+```bash
+npx @datadog/dd-flag-migration clean-targeting-attributes
+
+# When running from this repository:
+yarn clean-targeting-attributes
+```
+
+The command scans every active Datadog flag and lists only flags with inline targeting attributes containing `/`. The searchable multi-select shows the affected attributes and environment count for each flag. After selection, the command prints every planned replacement and asks for confirmation.
+
+For example, `ld_device./os/name` becomes `ld_device.osname`. Only the condition's `attribute` value changes. Operators, comparison values, targeting filters, variant weights, and unrelated allocations are preserved. Conditions that reference saved filters are not changed because their attributes are stored in the separate saved-filter resource.
+
+Datadog replaces the complete targeting-filter set when an environment is updated, so the command reads and resubmits every allocation for each affected environment. Updates run sequentially, and a failure in one environment does not stop the remaining selections. Approval-protected changes are reported as approval requests unless the application key has the optional `feature_flag_approvals_override` scope.
+
+Every completed live update writes a `clean-targeting-attributes-export-<timestamp>.xlsx` report in the current directory. The report includes the flag, environment, targeting filter, previous and updated attributes, update result, approval warnings, write failures, and flags that could not be inspected.
+
+### Dry run
+
+Preview the matching flags and selected attribute changes without writing to Datadog or generating a spreadsheet:
+
+```bash
+npx @datadog/dd-flag-migration clean-targeting-attributes --dry-run
+```
+
+Use `--datadog-site=<site>` to set the Datadog site for one run. Otherwise, the interactive site prompt uses `DD_SITE` or the saved site preference when available.
 
 ---
 

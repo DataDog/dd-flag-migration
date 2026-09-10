@@ -88,6 +88,16 @@ export function HelpScreen(): JSX.Element {
 				</Text>
 			),
 		},
+		{
+			id: 'clean-targeting-attributes-command',
+			render: () => (
+				<Text>
+					{'  '}
+					<Text color="cyan">clean-targeting-attributes</Text>
+					{'   Remove slashes from selected targeting attributes'}
+				</Text>
+			),
+		},
 		{ id: 'space-commands', render: () => <Text> </Text> },
 		{
 			id: 'migrate-title',
@@ -366,6 +376,36 @@ export function HelpScreen(): JSX.Element {
 			),
 		},
 		{ id: 'space-evaluate', render: () => <Text> </Text> },
+		{
+			id: 'clean-targeting-attributes-title',
+			render: () => (
+				<Text>
+					<Text bold>Options for</Text>{' '}
+					<Text color="cyan">clean-targeting-attributes</Text>:
+				</Text>
+			),
+		},
+		{
+			id: 'clean-targeting-attributes-dry-run',
+			render: () => (
+				<Text>
+					{
+						'  --dry-run                    Preview selected attribute changes without writing'
+					}
+				</Text>
+			),
+		},
+		{
+			id: 'clean-targeting-attributes-site',
+			render: () => (
+				<Text>
+					{
+						'  --datadog-site=<site>        Set the Datadog site (overrides DD_SITE)'
+					}
+				</Text>
+			),
+		},
+		{ id: 'space-clean-targeting-attributes', render: () => <Text> </Text> },
 		{ id: 'examples-title', render: () => <Text bold>Examples:</Text> },
 		{
 			id: 'example-migrate',
@@ -486,6 +526,16 @@ export function HelpScreen(): JSX.Element {
 				<Text>
 					{'  '}
 					<Text color="gray">$</Text> dd-flag-migration bulk-enable
+				</Text>
+			),
+		},
+		{
+			id: 'example-clean-targeting-attributes',
+			render: () => (
+				<Text>
+					{'  '}
+					<Text color="gray">$</Text> dd-flag-migration
+					clean-targeting-attributes --dry-run
 				</Text>
 			),
 		},
