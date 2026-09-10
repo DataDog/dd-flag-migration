@@ -300,6 +300,7 @@ export async function fetchDatadogFlags(
 			allFlags.push({
 				id: f.id,
 				key: f.attributes.key,
+				name: f.attributes.name,
 				...(f.attributes.tags !== undefined ? { tags: f.attributes.tags } : {}),
 				migration_metadata: f.attributes.migration_metadata,
 				...(flagEnvironments !== undefined
@@ -985,6 +986,37 @@ export async function fetchCurrentUserIdentity(
 		);
 	}
 	return { userId, orgId };
+}
+
+export async function fetchCurrentOrganizationName(
+	apiKey: string,
+	appKey: string,
+	site = 'datadoghq.com',
+): Promise<string> {
+	const baseUrl = `https://api.${site}`;
+	const response = await ddClient.get<{
+		data: {
+			relationships: { org: { data: { id: string } } };
+		};
+		included?: Array<{
+			id: string;
+			type: string;
+			attributes?: { name?: string };
+		}>;
+	}>(`${baseUrl}/api/v2/current_user`, {
+		headers: ddHeaders(apiKey, appKey),
+	});
+	const orgId = response.data.data.relationships.org.data.id;
+	const organization = response.data.included?.find(
+		(resource) => resource.type === 'orgs' && resource.id === orgId,
+	);
+	const orgName = organization?.attributes?.name?.trim();
+	if (!orgName) {
+		throw new Error(
+			'Could not determine the current Datadog organization name from /api/v2/current_user',
+		);
+	}
+	return orgName;
 }
 
 /**

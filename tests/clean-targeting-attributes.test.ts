@@ -3,11 +3,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, jest } from '@jest/globals';
 import ExcelJS from 'exceljs';
+import stripAnsi from 'strip-ansi';
 import {
 	applyTargetingAttributePlans,
 	planTargetingAttributeCleanup,
 	targetingAttributeChangeCount,
 } from '../src/clean-targeting-attributes/process.js';
+import { buildFlagInspectionChoices } from '../src/clean-targeting-attributes/selection.js';
 import { exportTargetingAttributeCleanupToXlsx } from '../src/clean-targeting-attributes/xlsx.js';
 import type {
 	DatadogFlagEntry,
@@ -15,6 +17,34 @@ import type {
 } from '../src/datadog/types.js';
 
 const flag: DatadogFlagEntry = { id: 'flag-1', key: 'device-flag' };
+
+describe('targeting attribute inspection selection', () => {
+	it('makes flag names, keys, and tags searchable before inspection', () => {
+		const choices = buildFlagInspectionChoices([
+			{
+				id: 'flag-z',
+				key: 'z-key',
+				name: 'Checkout Rollout',
+				tags: ['team:storefront', 'project:mobile'],
+			},
+			{ id: 'flag-a', key: 'a-key', name: 'Account Flag' },
+		]);
+
+		expect(choices.map((choice) => choice.value.key)).toEqual([
+			'a-key',
+			'z-key',
+		]);
+		expect(stripAnsi(choices[1].name)).toContain(
+			'Checkout Rollout  (z-key)  (team:storefront, project:mobile)',
+		);
+		expect(choices[1].searchTerms).toEqual([
+			'z-key',
+			'Checkout Rollout',
+			'team:storefront',
+			'project:mobile',
+		]);
+	});
+});
 
 describe('planTargetingAttributeCleanup', () => {
 	it('deletes forward slashes only from inline attribute names', () => {
@@ -361,6 +391,7 @@ describe('targeting attribute cleanup spreadsheet', () => {
 						error: new Error('update failed'),
 					},
 				],
+				'Example Organization',
 				[
 					{
 						flagId: 'unreadable-id',
@@ -376,6 +407,9 @@ describe('targeting attribute cleanup spreadsheet', () => {
 			const workbook = new ExcelJS.Workbook();
 			await workbook.xlsx.readFile(filepath);
 			const worksheet = workbook.getWorksheet('Targeting Attribute Changes');
+			expect(worksheet?.getCell('A1').value).toBe(
+				'Targeting Attribute Cleanup Report for Example Organization',
+			);
 			expect(worksheet?.getCell('A5').value).toBe('device-flag');
 			expect(worksheet?.getCell('G5').value).toBe('ld_device./os/name');
 			expect(worksheet?.getCell('H5').value).toBe('ld_device.osname');

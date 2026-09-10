@@ -348,7 +348,7 @@ npx @datadog/dd-flag-migration clean-targeting-attributes
 yarn clean-targeting-attributes
 ```
 
-The command scans every active Datadog flag and lists only flags with inline targeting attributes containing `/`. The searchable multi-select shows the affected attributes and environment count for each flag. After selection, the command prints every planned replacement and asks for confirmation.
+The command first shows active Datadog flags in a searchable multi-select. Filter by flag name, key, or tag and select the flags to inspect; allocation details are fetched only for that selection. A second picker then lists only selected flags with inline targeting attributes containing `/`, including the affected attributes and environment count. Choose which matches to update, review every planned replacement, and confirm the write.
 
 For example, `ld_device./os/name` becomes `ld_device.osname`. Only the condition's `attribute` value changes. Operators, comparison values, targeting filters, variant weights, and unrelated allocations are preserved. Conditions that reference saved filters are not changed because their attributes are stored in the separate saved-filter resource.
 

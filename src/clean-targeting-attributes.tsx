@@ -7,6 +7,7 @@ import {
 	type TargetingAttributeFlagPlan,
 	targetingAttributeChangeCount,
 } from './clean-targeting-attributes/process.js';
+import { buildFlagInspectionChoices } from './clean-targeting-attributes/selection.js';
 import { exportTargetingAttributeCleanupToXlsx } from './clean-targeting-attributes/xlsx.js';
 import { confirm } from './components/Confirm.js';
 import { filterableCheckbox } from './components/FilterableCheckbox.js';
@@ -14,10 +15,12 @@ import { HEADER_SUBTITLES, Header } from './components/Header.js';
 import { PromptCancelledError, renderStatic } from './components/mount.js';
 import { spinner } from './components/Spinner.js';
 import {
+	fetchCurrentOrganizationName,
 	fetchDatadogFlags,
 	fetchFlagAllocations,
 	overwriteFlagAllocationsForEnvironment,
 } from './datadog/api.js';
+import type { DatadogFlagEntry } from './datadog/types.js';
 import { requireEnvVars } from './helpers/env.js';
 import { formatAxiosError } from './helpers/format-axios-error.js';
 import { checkRequiredPermissions } from './helpers/permissions.js';
@@ -58,6 +61,17 @@ function choiceLabel(plan: TargetingAttributeFlagPlan): string {
 	return `${plan.flag.key}${chalk.gray(
 		`  (${count} match${count === 1 ? '' : 'es'} in ${plan.environments.length} environment${plan.environments.length === 1 ? '' : 's'}: ${displayedAttributes}${remaining})`,
 	)}`;
+}
+
+async function selectFlagsToInspect(
+	flags: DatadogFlagEntry[],
+): Promise<DatadogFlagEntry[] | null> {
+	const pageSize = Math.max(5, (process.stdout.rows ?? 24) - 9);
+	return filterableCheckbox({
+		message: 'Select active flags to inspect for targeting attribute cleanup:',
+		choices: buildFlagInspectionChoices(flags),
+		pageSize,
+	});
 }
 
 async function selectPlans(
@@ -116,8 +130,25 @@ async function main(): Promise<void> {
 	const site = await promptForDatadogSite(args.datadogSite);
 	await checkRequiredPermissions(apiKey, appKey, site, REQUIRED_PERMISSIONS);
 
-	const discovery = spinner('Fetching active Datadog flags…').start();
-	const flags = await fetchDatadogFlags(apiKey, appKey, site);
+	const loading = spinner('Fetching active Datadog flags…').start();
+	const [flags, organizationName] = await Promise.all([
+		fetchDatadogFlags(apiKey, appKey, site),
+		fetchCurrentOrganizationName(apiKey, appKey, site),
+	]);
+	loading.succeed(`Found ${flags.length} active flag(s)`);
+	if (flags.length === 0) {
+		console.log(chalk.yellow('\nNo active Datadog flags were found.'));
+		return;
+	}
+
+	const flagsToInspect = await selectFlagsToInspect(flags);
+	if (flagsToInspect === null) throw new PromptCancelledError();
+	if (flagsToInspect.length === 0) {
+		console.log(chalk.yellow('\nNo flags selected — nothing to inspect.'));
+		return;
+	}
+
+	const discovery = spinner('Inspecting selected flags…').start();
 	const plans: TargetingAttributeFlagPlan[] = [];
 	const discoveryFailures: Array<{
 		flagId: string;
@@ -125,9 +156,9 @@ async function main(): Promise<void> {
 		error: unknown;
 	}> = [];
 
-	for (let index = 0; index < flags.length; index++) {
-		const flag = flags[index];
-		discovery.text = `Inspecting ${flag.key} (${index + 1}/${flags.length})…`;
+	for (let index = 0; index < flagsToInspect.length; index++) {
+		const flag = flagsToInspect[index];
+		discovery.text = `Inspecting ${flag.key} (${index + 1}/${flagsToInspect.length})…`;
 		try {
 			const environments = await fetchFlagAllocations(
 				apiKey,
@@ -234,6 +265,7 @@ async function main(): Promise<void> {
 	} finally {
 		await exportTargetingAttributeCleanupToXlsx(
 			result.environmentResults,
+			organizationName,
 			discoveryFailures,
 		);
 	}

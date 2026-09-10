@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### CLI
 
-- Feat: add interactive cleanup for forward slashes in Datadog targeting attributes
+- Feat: add interactive cleanup for forward slashes in Datadog targeting attributes, with name/key/tag filtering before allocation inspection
 - Feat: export cleanup results, approval warnings, and failures to Excel
 
 ## [1.3.0] — 2026-07-27

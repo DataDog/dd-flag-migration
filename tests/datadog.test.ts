@@ -17,6 +17,7 @@ import {
 	deleteVariant,
 	enableFeatureFlagEnvironment,
 	enableFeatureFlagEnvironmentWithOutcome,
+	fetchCurrentOrganizationName,
 	fetchCurrentUserIdentity,
 	fetchCurrentUserPermissions,
 	fetchDatadogEnvironments,
@@ -320,6 +321,7 @@ describe('fetchDatadogFlags', () => {
 			{
 				id: 'uuid-1',
 				key: 'flag-a',
+				name: 'Flag A',
 				tags: ['project:health-100'],
 				migration_metadata: { project_key: 'proj-1', flag_key: 'flag-a' },
 				environmentStatuses: new Map([
@@ -330,6 +332,7 @@ describe('fetchDatadogFlags', () => {
 			{
 				id: 'uuid-2',
 				key: 'flag-b',
+				name: 'Flag B',
 				migration_metadata: undefined,
 			},
 		]);
@@ -359,6 +362,7 @@ describe('fetchDatadogFlags', () => {
 			{
 				id: 'uuid-p',
 				key: 'mobile-flag-a',
+				name: 'Flag A',
 				migration_metadata: {
 					project_key: 'proj-1',
 					flag_key: 'flag-a',
@@ -1432,6 +1436,65 @@ describe('fetchCurrentUserIdentity', () => {
 		await expect(
 			fetchCurrentUserIdentity(API_KEY, APP_KEY, SITE),
 		).rejects.toThrow('Could not determine Datadog user and org IDs');
+	});
+});
+
+// ─── fetchCurrentOrganizationName ────────────────────────────────────────────
+
+describe('fetchCurrentOrganizationName', () => {
+	let mock: AxiosMockAdapter;
+
+	beforeEach(() => {
+		mock = new AxiosMockAdapter(ddClient as never);
+	});
+
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('returns the current organization name', async () => {
+		mock.onGet(`${BASE}/api/v2/current_user`).reply(200, {
+			data: {
+				id: 'user-uuid',
+				type: 'users',
+				relationships: {
+					org: { data: { id: 'org-uuid', type: 'orgs' } },
+				},
+			},
+			included: [
+				{
+					id: 'other-org-uuid',
+					type: 'orgs',
+					attributes: { name: 'Other Organization' },
+				},
+				{
+					id: 'org-uuid',
+					type: 'orgs',
+					attributes: { name: 'Example Organization' },
+				},
+			],
+		});
+
+		await expect(
+			fetchCurrentOrganizationName(API_KEY, APP_KEY, SITE),
+		).resolves.toBe('Example Organization');
+	});
+
+	it('throws when the current organization name is missing', async () => {
+		mock.onGet(`${BASE}/api/v2/current_user`).reply(200, {
+			data: {
+				relationships: {
+					org: { data: { id: 'org-uuid', type: 'orgs' } },
+				},
+			},
+			included: [],
+		});
+
+		await expect(
+			fetchCurrentOrganizationName(API_KEY, APP_KEY, SITE),
+		).rejects.toThrow(
+			'Could not determine the current Datadog organization name',
+		);
 	});
 });
 

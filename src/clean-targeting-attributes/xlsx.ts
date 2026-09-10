@@ -28,6 +28,7 @@ const STATUS_COLOR: Record<
 
 export async function exportTargetingAttributeCleanupToXlsx(
 	results: TargetingAttributeEnvironmentResult[],
+	organizationName: string,
 	inspectionFailures: TargetingAttributeInspectionFailure[] = [],
 	outputDirectory = process.cwd(),
 ): Promise<string> {
@@ -62,7 +63,7 @@ export async function exportTargetingAttributeCleanupToXlsx(
 	addSheetHeader(
 		worksheet,
 		headers.length,
-		'Targeting Attribute Cleanup Report',
+		`Targeting Attribute Cleanup Report for ${organizationName}`,
 		`Cleanup completed on ${new Date().toLocaleString('en-US')}. Green rows were updated, yellow rows require approval, and red rows failed or could not be inspected.`,
 	);
 	addHeaderRow(worksheet, headers);
