@@ -378,6 +378,25 @@ describe('buildNonNegatedRules', () => {
 		expect(cond?.value).toEqual(['enterprise']);
 	});
 
+	it('strips slashes from LaunchDarkly built-in attributes', () => {
+		const seg = makeSegment({
+			key: 's',
+			rules: [
+				makeRule([
+					makeClause({
+						attribute: '/os/name',
+						contextKind: 'ld_device',
+						values: ['macOS'],
+					}),
+				]),
+			],
+		});
+
+		expect(buildNonNegatedRules(seg)?.[0].conditions[0].attribute).toBe(
+			'ld_device.osname',
+		);
+	});
+
 	it('multi-rule segment → one targeting rule per rule (OR semantics)', () => {
 		const seg = makeSegment({
 			key: 's',
@@ -515,6 +534,25 @@ describe('buildNegatedRules', () => {
 			attribute: 'tenant',
 			value: ['acme'],
 		});
+	});
+
+	it('strips slashes from LaunchDarkly built-in attributes', () => {
+		const seg = makeSegment({
+			key: 's',
+			rules: [
+				makeRule([
+					makeClause({
+						attribute: '/os/name',
+						contextKind: 'ld_device',
+						values: ['macOS'],
+					}),
+				]),
+			],
+		});
+
+		expect(buildNegatedRules(seg)?.[0].conditions[0].attribute).toBe(
+			'ld_device.osname',
+		);
 	});
 
 	it('negates 2 rules of 2 clauses → 4 result groups (2×2 Cartesian)', () => {

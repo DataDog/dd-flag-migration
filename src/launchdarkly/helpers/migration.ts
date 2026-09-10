@@ -46,6 +46,16 @@ function targetKeyAttribute(contextKind: string | undefined): string {
 	return ck === 'user' ? 'id' : `${ck}.key`;
 }
 
+/**
+ * LaunchDarkly built-in attributes use slash-delimited paths under `ld_`
+ * context kinds. Datadog expects those paths flattened without the slashes.
+ */
+export function normalizeLaunchDarklyAttribute(attribute: string): string {
+	return attribute.startsWith('ld_')
+		? attribute.replaceAll('/', '')
+		: attribute;
+}
+
 // ─── Operator Mapping ────────────────────────────────────────────────────────
 
 type OperatorResult =
@@ -376,12 +386,13 @@ export function buildTargetingRules(
 			const result = mapOperator(clause.op, clause.negate, clause.values);
 			if ('skip' in result) return null; // unsupported non-segment op (safety net)
 			const ck = clause.contextKind ?? 'user';
-			const attribute =
+			const attribute = normalizeLaunchDarklyAttribute(
 				clause.attribute === 'key'
 					? targetKeyAttribute(ck)
 					: ck === 'user'
 						? clause.attribute
-						: `${ck}.${clause.attribute}`;
+						: `${ck}.${clause.attribute}`,
+			);
 			inlineConditions.push({
 				operator: result.operator,
 				attribute,
