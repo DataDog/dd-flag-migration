@@ -399,6 +399,25 @@ export async function updateFlagTags(
 	});
 }
 
+export async function updateFlagName(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	name: string,
+	site = 'datadoghq.com',
+): Promise<void> {
+	const baseUrl = `https://api.${site}`;
+	const body = {
+		data: { type: 'feature-flags', attributes: { name } },
+	};
+	await ddClient.put(`${baseUrl}/api/v2/feature-flags/${flagId}`, body, {
+		headers: {
+			...ddHeaders(apiKey, appKey),
+			'Content-Type': 'application/json',
+		},
+	});
+}
+
 export async function updateFlagDistributionChannel(
 	apiKey: string,
 	appKey: string,
