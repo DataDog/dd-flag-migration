@@ -39,6 +39,9 @@ if (subcommand === '--version' || subcommand === '-V') {
 } else if (subcommand === 'bulk-enable') {
 	process.argv.splice(2, 1);
 	await import('./bulk-enable.js');
+} else if (subcommand === 'add-tags' || subcommand === 'add-tag') {
+	process.argv.splice(2, 1);
+	await import('./add-tags.js');
 } else {
 	console.error(chalk.red(`\nUnknown command: ${subcommand}`));
 	console.error(chalk.gray('Run dd-flag-migration --help for usage.\n'));
