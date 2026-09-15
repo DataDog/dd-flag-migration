@@ -31,6 +31,9 @@ npx @datadog/dd-flag-migration bulk-enable
 
 # sync tags from your source provider onto migrated flags
 npx @datadog/dd-flag-migration sync-tags
+
+# export flag keys exclusive to Datadog or LaunchDarkly
+npx @datadog/dd-flag-migration audit-orphans --project=my-ld-project
 ```
 
 ### Contributing / running from source
@@ -41,7 +44,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Credentials you'll need
 
-Credentials are read from environment variables. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running `migrate`, `evaluate`, `bulk-permissions`, `bulk-enable`, or `sync-tags`. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1.
+Credentials are read from environment variables. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running `migrate`, `evaluate`, `audit-orphans`, `bulk-permissions`, `bulk-enable`, or `sync-tags`. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1.
 
 `DD_SITE` is optional for interactive commands and pre-fills the Datadog site prompt when set. For non-interactive `migrate` runs, use either `DD_SITE` or `--datadog-site`; the explicit CLI option takes precedence. The standalone `scripts/get-datadog-flag.sh` script requires `DD_SITE` and does not accept a site argument.
 
@@ -74,6 +77,13 @@ Your LaunchDarkly access token needs **Reader** role permissions (or a custom ro
 | `DD_APP_KEY` | always | Datadog → Organization Settings → Application Keys |
 
 `sync-tags` also needs the source provider's credentials (`EPPO_API_KEY` or `LAUNCHDARKLY_API_KEY`) depending on the provider you select — the same variables used by `migrate`.
+
+### Required for `audit-orphans`
+
+`audit-orphans` requires `DD_API_KEY`, `DD_APP_KEY`, and
+`LAUNCHDARKLY_API_KEY`. It only reads active Datadog flags and the flags in the
+LaunchDarkly project supplied with `--project`. The comparison is written to a
+timestamped `flag-comparison-*.xlsx` report in the current directory.
 
 ### Datadog Application Key permissions
 
@@ -146,6 +156,16 @@ export DD_CLIENT_TOKEN=...
 export LAUNCHDARKLY_SDK_KEY=...   # server-side key, scoped to one environment
 
 npx @datadog/dd-flag-migration evaluate
+```
+
+**Export flag keys exclusive to Datadog or LaunchDarkly**
+
+```bash
+export DD_API_KEY=...
+export DD_APP_KEY=...
+export LAUNCHDARKLY_API_KEY=...
+
+npx @datadog/dd-flag-migration audit-orphans --project=my-ld-project
 ```
 
 ---

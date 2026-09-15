@@ -1,5 +1,34 @@
 import { describe, expect, it } from '@jest/globals';
-import { ArgParseError, parseMigrateArgs } from '../src/args.js';
+import {
+	ArgParseError,
+	parseAuditOrphansArgs,
+	parseMigrateArgs,
+} from '../src/args.js';
+
+describe('parseAuditOrphansArgs', () => {
+	it('parses the project and optional Datadog site', () => {
+		expect(
+			parseAuditOrphansArgs([
+				'--project=store',
+				'--datadog-site',
+				'us5.datadoghq.com',
+			]),
+		).toEqual({
+			projectKey: 'store',
+			datadogSite: 'us5.datadoghq.com',
+		});
+	});
+
+	it('requires a LaunchDarkly project', () => {
+		expect(() => parseAuditOrphansArgs([])).toThrow(/--project is required/);
+	});
+
+	it('rejects unknown options', () => {
+		expect(() => parseAuditOrphansArgs(['--project=store', '--bogus'])).toThrow(
+			/Unknown option/,
+		);
+	});
+});
 
 describe('parseMigrateArgs', () => {
 	it('defaults to interactive mode', () => {
