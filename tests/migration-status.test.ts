@@ -218,6 +218,20 @@ describe('migration status comparison', () => {
 		);
 		expect(matching.flags[0].status).toBe('in-sync');
 
+		const missingTargeting = structuredClone(targetedDetail);
+		missingTargeting.environments[0].allocations = null;
+		const missing = compareMigrationStatus(
+			input({
+				sourceFlags: [targetedSource],
+				datadogDetails: new Map([['dd-flag', missingTargeting]]),
+			}),
+		);
+		expect(missing.flags[0].environments[0]).toMatchObject({
+			status: 'out-of-sync',
+			changes: ['targeting'],
+			details: 'Targeting filters or rollout weights differ.',
+		});
+
 		const changed = structuredClone(targetedDetail);
 		const condition =
 			changed.environments[0].allocations?.[0].targeting_rules?.[0]
@@ -350,7 +364,7 @@ describe('migration status comparison', () => {
 		});
 	});
 
-	it('treats null allocations as not migrated when the source is enabled', () => {
+	it('treats null allocations as no explicit targeting filters', () => {
 		const result = compareMigrationStatus(
 			input({
 				datadogDetails: new Map([
@@ -370,8 +384,8 @@ describe('migration status comparison', () => {
 			}),
 		);
 		expect(result.flags[0]).toMatchObject({
-			status: 'partially-migrated',
-			environments: [{ status: 'not-migrated' }],
+			status: 'in-sync',
+			environments: [{ status: 'in-sync', changes: [] }],
 		});
 	});
 

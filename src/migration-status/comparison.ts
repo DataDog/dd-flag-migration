@@ -256,19 +256,6 @@ function compareEnvironments(
 				});
 				continue;
 			}
-			if (actualEnvironment.allocations === null) {
-				output.push({
-					...base,
-					status: 'not-migrated',
-					changes: [...changes, 'targeting'],
-					details: [
-						...details,
-						'No Datadog configuration exists for this environment mapping.',
-					].join(' '),
-				});
-				continue;
-			}
-
 			const skip = shouldSkipFlag(source, [sourceEnvironment.key]);
 			if (skip.skip || skip.hasProgressiveRollout || skip.warn) {
 				const reason =
@@ -321,8 +308,10 @@ function compareEnvironments(
 				remapped,
 				variantAliases,
 			);
+			// Datadog returns null when an environment has no explicit targeting
+			// filters. The environment itself still exists and may have a default.
 			const actualTargeting = canonicalActualTargeting(
-				actualEnvironment.allocations,
+				actualEnvironment.allocations ?? [],
 				actualVariantsById,
 				expectedDefault,
 			);
