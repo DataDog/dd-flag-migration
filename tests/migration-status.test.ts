@@ -507,9 +507,37 @@ describe('Datadog migration status detail reader', () => {
 			detail.environments[0].allocations?.[0].targeting_rules?.[0]
 				.conditions?.[0].value,
 		).toEqual(['private-user']);
+		expect(detail.environments[0].defaultVariantKey).toBe('true');
 		expect(mock.history.get).toHaveLength(1);
 		expect(mock.history.post).toHaveLength(0);
 		expect(mock.history.put).toHaveLength(0);
+	});
+
+	it('resolves the live default_variant_id response shape', async () => {
+		mock
+			.onGet('https://api.datadoghq.com/api/v2/feature-flags/dd-flag')
+			.reply(200, {
+				data: {
+					id: 'dd-flag',
+					attributes: {
+						key: 'checkout',
+						name: 'Checkout',
+						variants: datadogDetail.variants,
+						feature_flag_environments: [
+							{
+								environment_id: 'dd-production',
+								status: 'ENABLED',
+								default_variant_id: 'dd-false',
+								allocations: [],
+							},
+						],
+					},
+				},
+			});
+
+		const detail = await fetchDatadogStatusFlagDetail('api', 'app', 'dd-flag');
+
+		expect(detail.environments[0].defaultVariantKey).toBe('false');
 	});
 });
 

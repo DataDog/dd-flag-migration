@@ -576,6 +576,8 @@ type JsonApiFlagDetail = {
 		feature_flag_environments: Array<{
 			environment_id: string;
 			status: 'ENABLED' | 'DISABLED';
+			default_variant_id?: string | null;
+			default_variant_key?: string;
 			allocations: Array<{ id: string; key: string }> | null;
 		}>;
 	};
@@ -668,10 +670,15 @@ export async function fetchDatadogStatusFlagDetail(
 							environment.environment_id,
 							environment.allocations,
 						);
+			const declaredDefaultVariantId =
+				typeof environment.default_variant_id === 'string'
+					? environment.default_variant_id
+					: undefined;
 			const declaredDefaultVariantKey =
 				typeof environment.default_variant_key === 'string'
 					? environment.default_variant_key
-					: undefined;
+					: variants.find((variant) => variant.id === declaredDefaultVariantId)
+							?.key;
 			return {
 				environmentId: environment.environment_id,
 				status: environment.status as DatadogEnvironmentStatus,
