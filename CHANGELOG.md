@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.0] — 2026-09-16
+
+### Migration — LaunchDarkly
+
+- Feat: add LaunchDarkly migration status report with per-environment workbook sections (#154)
+- Fix: sync flag names on re-migration (#146)
+- Fix: strip slashes from LaunchDarkly built-in attributes (#151)
+
 ## [1.4.0] — 2026-09-10
 
 ### Migration — Eppo & LaunchDarkly
