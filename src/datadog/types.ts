@@ -19,6 +19,40 @@ export interface DatadogFlagEntry {
 	environmentStatuses?: Map<string, DatadogEnvironmentStatus>;
 }
 
+/** Complete read model used by migration status comparisons. */
+export interface DatadogStatusAllocation {
+	id?: string;
+	key: string;
+	name?: string;
+	targeting_rules?: Array<{
+		conditions?: Array<{
+			operator?: string;
+			attribute?: string;
+			value?: unknown;
+			saved_filter_id?: string;
+		}>;
+	}>;
+	variant_weights?: Array<{
+		variant_id?: string;
+		variant_key?: string;
+		value: number;
+	}>;
+}
+
+export interface DatadogStatusFlagDetail {
+	id: string;
+	key: string;
+	name: string;
+	migrationMetadata?: MigrationMetadata;
+	variants: DatadogVariantDetail[];
+	environments: Array<{
+		environmentId: string;
+		status: DatadogEnvironmentStatus;
+		defaultVariantKey?: string;
+		allocations: DatadogStatusAllocation[] | null;
+	}>;
+}
+
 export interface DatadogEnvironment {
 	id: string;
 	name: string;

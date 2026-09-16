@@ -49,6 +49,16 @@ export function HelpScreen(): JSX.Element {
 			),
 		},
 		{
+			id: 'migration-status-command',
+			render: () => (
+				<Text>
+					{'  '}
+					<Text color="cyan">migration-status</Text>
+					{'   Check LaunchDarkly migration coverage and sync status'}
+				</Text>
+			),
+		},
+		{
 			id: 'migrate-tags-command',
 			render: () => (
 				<Text>
@@ -382,6 +392,15 @@ export function HelpScreen(): JSX.Element {
 				<Text>
 					{'  '}
 					<Text color="gray">$</Text> dd-flag-migration migrate --dry-run
+				</Text>
+			),
+		},
+		{
+			id: 'example-migration-status',
+			render: () => (
+				<Text>
+					{'  '}
+					<Text color="gray">$</Text> dd-flag-migration migration-status
 				</Text>
 			),
 		},

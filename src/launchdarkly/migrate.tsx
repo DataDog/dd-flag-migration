@@ -93,6 +93,7 @@ import {
 	hasSemverConditions,
 	mapFlagType,
 	remapAllocationKeys,
+	resolveDatadogFlagName,
 	resolveDefaultVariantKey,
 	resolveEditorTeams,
 	shouldSkipFlag,
@@ -519,6 +520,7 @@ function flagLabel(
 
 export async function selectProject(
 	projects: LDProject[],
+	message = 'Select a LaunchDarkly project to migrate:',
 ): Promise<LDProject | null> {
 	console.log();
 	console.log(
@@ -540,15 +542,16 @@ export async function selectProject(
 	}));
 
 	return filterableSelect<LDProject>({
-		message: 'Select a LaunchDarkly project to migrate:',
+		message,
 		choices,
 		pageSize,
 	});
 }
 
-async function selectLDEnvironments(
+export async function selectLDEnvironments(
 	ldEnvs: LDEnvironment[],
 	previouslySelected: string[] = [],
+	message = 'Select LaunchDarkly environments to migrate:',
 ): Promise<LDEnvironment[] | null> {
 	const activeEnvs = ldEnvs.filter((env) => !env.archived);
 	const archivedCount = ldEnvs.length - activeEnvs.length;
@@ -572,7 +575,7 @@ async function selectLDEnvironments(
 	);
 
 	return filterableCheckbox<LDEnvironment>({
-		message: 'Select LaunchDarkly environments to migrate:',
+		message,
 		choices: activeEnvs.map((env) => {
 			const label =
 				env.name !== env.key
@@ -588,7 +591,7 @@ async function selectLDEnvironments(
 	});
 }
 
-async function linkEnvironments(
+export async function linkEnvironments(
 	ldEnvs: LDEnvironment[],
 	ddEnvs: DatadogEnvironment[],
 	previousMapping: EnvironmentMapping<string>,
@@ -864,14 +867,6 @@ interface MigrationOptions {
 	doExport?: boolean;
 	targetKeyBySource?: Map<string, string>;
 	distributionChannelMode?: DistributionChannelMode;
-}
-
-function resolveDatadogFlagName(
-	sourceName: string,
-	sourceKey: string,
-	datadogKey: string,
-): string {
-	return sourceName === sourceKey ? datadogKey : sourceName;
 }
 
 async function executeMigration(
