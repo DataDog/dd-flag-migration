@@ -100,9 +100,16 @@ interface EnvironmentSheetRow {
 	sourceEnvironmentName: string;
 	datadogEnvironmentName: string;
 	details: string;
+	hasIdentityWarning: boolean;
 }
 
-function environmentNextAction(status: EnvironmentSheetStatus): string {
+function environmentNextAction(
+	status: EnvironmentSheetStatus,
+	hasIdentityWarning: boolean,
+): string {
+	if (hasIdentityWarning) {
+		return 'Flag was created independently of migration tooling. Archive flag in Datadog, then re-run migration.';
+	}
 	switch (status) {
 		case 'not-yet-migrated':
 			return 'Migrate this flag.';
@@ -186,7 +193,7 @@ function environmentSheetStatus(
 		return flag.status === 'needs-review' ? 'needs-review' : 'not-yet-migrated';
 	}
 	const statuses: EnvironmentSheetStatus[] = [];
-	if (flag.flagWideChanges.length > 0) {
+	if (flag.flagWideChanges.some((change) => change !== 'identity')) {
 		statuses.push(
 			flag.status === 'needs-review' ? 'needs-review' : 'out-of-sync',
 		);
@@ -229,6 +236,7 @@ function environmentSheetRows(
 				sourceEnvironmentName: environment.sourceEnvironmentNames.join(', '),
 				datadogEnvironmentName: environment.name,
 				details: environmentSheetDetails(flag),
+				hasIdentityWarning: flag.flagWideChanges.includes('identity'),
 			});
 			continue;
 		}
@@ -241,6 +249,7 @@ function environmentSheetRows(
 				sourceEnvironmentName: environmentResult.sourceEnvironmentName,
 				datadogEnvironmentName: environmentResult.datadogEnvironmentName,
 				details: environmentSheetDetails(flag, environmentResult),
+				hasIdentityWarning: flag.flagWideChanges.includes('identity'),
 			});
 		}
 	}
@@ -370,7 +379,7 @@ export async function writeMigrationStatusWorkbook(
 					statusRow.sourceEnvironmentName,
 					statusRow.datadogEnvironmentName,
 					statusRow.details,
-					environmentNextAction(statusRow.status),
+					environmentNextAction(statusRow.status, statusRow.hasIdentityWarning),
 				].map(safeCell),
 			);
 			colorEnvironmentSheetRow(row, statusRow.status);

@@ -142,7 +142,6 @@ function compareFlag(
 	const flagWideDetails: string[] = [];
 	if (link.identityProblem) {
 		flagWideChanges.push('identity');
-		flagWideDetails.push(link.identityProblem);
 	}
 	const expectedName = resolveDatadogFlagName(
 		source.name,

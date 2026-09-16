@@ -369,9 +369,7 @@ describe('migration status comparison', () => {
 			flagWideChanges: ['identity'],
 			environments: [{ status: 'in-sync' }],
 		});
-		expect(result.flags[0].flagWideDetails).toContain(
-			'A same-key Datadog flag exists without matching migration metadata.',
-		);
+		expect(result.flags[0].flagWideDetails).toEqual([]);
 	});
 
 	it('compares enablement for a disabled environment with null allocations', () => {
@@ -726,6 +724,63 @@ describe('migration status workbook', () => {
 			expect(alphaValues).toContain('Out of sync: 1');
 			expect(alphaValues).toContain('Out of sync');
 			expect(alphaValues).toContain('Default variant differs.');
+		} finally {
+			fs.rmSync(directory, { recursive: true, force: true });
+		}
+	});
+
+	it('recommends archiving for same-key flags without migration metadata', async () => {
+		const result: MigrationStatusResult = {
+			projectKey: 'project',
+			projectName: 'Project',
+			generatedAt: new Date('2026-09-16T12:00:00Z'),
+			mappings: [
+				{
+					sourceEnvironmentKey: 'production',
+					sourceEnvironmentName: 'Production',
+					datadogEnvironmentId: 'dd-production',
+					datadogEnvironmentName: 'Production',
+				},
+			],
+			flags: [
+				{
+					flagKey: 'checkout',
+					flagName: 'Checkout',
+					datadogFlagKey: 'checkout',
+					status: 'in-sync',
+					flagWideChanges: ['identity'],
+					flagWideDetails: [],
+					environments: [
+						{
+							sourceEnvironmentKey: 'production',
+							sourceEnvironmentName: 'Production',
+							datadogEnvironmentId: 'dd-production',
+							datadogEnvironmentName: 'Production',
+							status: 'in-sync',
+							changes: [],
+							details: 'Configuration matches.',
+						},
+					],
+				},
+			],
+			limitations: [],
+		};
+		const directory = fs.mkdtempSync(
+			path.join(os.tmpdir(), 'migration-status-'),
+		);
+		const output = path.join(directory, 'status.xlsx');
+		try {
+			await writeMigrationStatusWorkbook(result, output);
+			const workbook = new ExcelJS.Workbook();
+			await workbook.xlsx.readFile(output);
+			const productionValues = (
+				workbook.getWorksheet('Production')?.getSheetValues() as unknown[]
+			).flatMap((row) =>
+				Array.isArray(row) ? row.map((cell) => String(cell ?? '')) : [],
+			);
+			expect(productionValues).toContain(
+				'Flag was created independently of migration tooling. Archive flag in Datadog, then re-run migration.',
+			);
 		} finally {
 			fs.rmSync(directory, { recursive: true, force: true });
 		}
