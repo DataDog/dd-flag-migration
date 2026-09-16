@@ -16,7 +16,10 @@ import {
 	compareMigrationStatus,
 	linkLaunchDarklyFlags,
 } from '../src/migration-status/comparison.js';
-import type { MigrationStatusComparisonInput } from '../src/migration-status/types.js';
+import type {
+	MigrationStatusComparisonInput,
+	MigrationStatusResult,
+} from '../src/migration-status/types.js';
 import { writeMigrationStatusWorkbook } from '../src/migration-status/xlsx.js';
 
 const sourceEnvironment: LDEnvironment = {
@@ -542,7 +545,7 @@ describe('Datadog migration status detail reader', () => {
 });
 
 describe('migration status workbook', () => {
-	it('writes two scoped sheets without exporting variant values', async () => {
+	it('writes environment-scoped sheets without exporting variant values', async () => {
 		const formulaSourceEnvironment = {
 			...sourceEnvironment,
 			name: '=Production',
@@ -572,7 +575,7 @@ describe('migration status workbook', () => {
 			await workbook.xlsx.readFile(output);
 			expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual([
 				'Summary',
-				'Flag Status',
+				'+prod',
 			]);
 			const values = workbook.worksheets.flatMap((sheet) =>
 				(sheet.getSheetValues() as unknown[]).flatMap((row) =>
@@ -582,6 +585,92 @@ describe('migration status workbook', () => {
 			expect(values).toContain("'=Checkout");
 			expect(values).toContain("'=Production (LaunchDarkly) → +prod (DD)");
 			expect(values.join('\n')).not.toContain('private-user');
+		} finally {
+			fs.rmSync(directory, { recursive: true, force: true });
+		}
+	});
+
+	it('separates status and summary counts by Datadog environment', async () => {
+		const result: MigrationStatusResult = {
+			projectKey: 'project',
+			projectName: 'Project',
+			generatedAt: new Date('2026-09-16T12:00:00Z'),
+			mappings: [
+				{
+					sourceEnvironmentKey: 'production',
+					sourceEnvironmentName: 'Production',
+					datadogEnvironmentId: 'dd-production',
+					datadogEnvironmentName: 'Production',
+				},
+				{
+					sourceEnvironmentKey: 'alpha',
+					sourceEnvironmentName: 'Alpha',
+					datadogEnvironmentId: 'dd-alpha',
+					datadogEnvironmentName: 'Alpha',
+				},
+			],
+			flags: [
+				{
+					flagKey: 'checkout',
+					flagName: 'Checkout',
+					datadogFlagKey: 'checkout',
+					status: 'out-of-sync',
+					flagWideChanges: [],
+					flagWideDetails: [],
+					environments: [
+						{
+							sourceEnvironmentKey: 'production',
+							sourceEnvironmentName: 'Production',
+							datadogEnvironmentId: 'dd-production',
+							datadogEnvironmentName: 'Production',
+							status: 'in-sync',
+							changes: [],
+							details: 'Configuration matches.',
+						},
+						{
+							sourceEnvironmentKey: 'alpha',
+							sourceEnvironmentName: 'Alpha',
+							datadogEnvironmentId: 'dd-alpha',
+							datadogEnvironmentName: 'Alpha',
+							status: 'out-of-sync',
+							changes: ['default'],
+							details: 'Default variant differs.',
+						},
+					],
+				},
+			],
+			limitations: [],
+		};
+		const directory = fs.mkdtempSync(
+			path.join(os.tmpdir(), 'migration-status-'),
+		);
+		const output = path.join(directory, 'status.xlsx');
+		try {
+			await writeMigrationStatusWorkbook(result, output);
+			const workbook = new ExcelJS.Workbook();
+			await workbook.xlsx.readFile(output);
+			expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual([
+				'Summary',
+				'Production',
+				'Alpha',
+			]);
+			const productionValues = (
+				workbook.getWorksheet('Production')?.getSheetValues() as unknown[]
+			).flatMap((row) =>
+				Array.isArray(row) ? row.map((cell) => String(cell ?? '')) : [],
+			);
+			const alphaValues = (
+				workbook.getWorksheet('Alpha')?.getSheetValues() as unknown[]
+			).flatMap((row) =>
+				Array.isArray(row) ? row.map((cell) => String(cell ?? '')) : [],
+			);
+			expect(productionValues).toContain('In sync: 1');
+			expect(productionValues).toContain('In sync');
+			expect(productionValues).not.toContain('Out of sync');
+			expect(productionValues).not.toContain('Default variant differs.');
+			expect(alphaValues).toContain('Out of sync: 1');
+			expect(alphaValues).toContain('Out of sync');
+			expect(alphaValues).toContain('Default variant differs.');
 		} finally {
 			fs.rmSync(directory, { recursive: true, force: true });
 		}

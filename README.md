@@ -321,7 +321,7 @@ The interactive workflow uses the same environment selection and one-to-many map
 3. Map each selected LaunchDarkly environment to one or more Datadog environments.
 4. Confirm the analysis scope.
 
-The command reports flags as **Not yet migrated**, **Partially migrated**, **Out of sync**, **In sync**, or **Needs review**. Environment sync is calculated only for the selected mappings; unselected Datadog environments do not affect the result. A two-sheet `migration-status-launchdarkly-<project>-<timestamp>.xlsx` workbook is written automatically to the current directory.
+The command reports flags as **Not yet migrated**, **Partially migrated**, **Out of sync**, **In sync**, or **Needs review**. Environment sync is calculated only for the selected mappings; unselected Datadog environments do not affect the result. A `migration-status-launchdarkly-<project>-<timestamp>.xlsx` workbook is written automatically to the current directory with a global summary and one status tab per selected Datadog environment. Each environment tab includes scoped status counts at the top.
 
 The report compares current configuration and does not identify which platform changed after migration. Tags, permissions, restriction policies, and saved-filter contents are not assessed.
 
