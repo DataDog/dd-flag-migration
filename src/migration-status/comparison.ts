@@ -52,6 +52,7 @@ export function linkLaunchDarklyFlags(
 		if (sameKeyMatches.length > 0) {
 			return {
 				source,
+				datadog: sameKeyMatches[0],
 				identityProblem:
 					'A same-key Datadog flag exists without matching migration metadata.',
 			};
@@ -96,7 +97,7 @@ function compareFlag(
 	input: MigrationStatusComparisonInput,
 ): FlagStatusResult {
 	const source = link.source;
-	if (link.identityProblem) {
+	if (link.identityProblem && !link.datadog) {
 		return baseFlagResult(source, 'needs-review', {
 			details: link.identityProblem,
 			flagWideChanges: ['identity'],
@@ -139,6 +140,10 @@ function compareFlag(
 
 	const flagWideChanges: ChangeKind[] = [];
 	const flagWideDetails: string[] = [];
+	if (link.identityProblem) {
+		flagWideChanges.push('identity');
+		flagWideDetails.push(link.identityProblem);
+	}
 	const expectedName = resolveDatadogFlagName(
 		source.name,
 		source.key,
@@ -257,10 +262,9 @@ function compareEnvironments(
 				continue;
 			}
 			const skip = shouldSkipFlag(source, [sourceEnvironment.key]);
-			if (skip.skip || skip.hasProgressiveRollout || skip.warn) {
+			if (skip.skip || skip.hasProgressiveRollout) {
 				const reason =
 					skip.reason ??
-					skip.warn ??
 					'Progressive rollout state could not be compared safely.';
 				output.push({
 					...base,
@@ -270,6 +274,11 @@ function compareEnvironments(
 					details: [...details, reason].join(' '),
 				});
 				continue;
+			}
+			// Prerequisites are not enforced in Datadog, but they do not block
+			// targeting comparison. Surface the warning and continue.
+			if (skip.warn) {
+				details.push(skip.warn);
 			}
 
 			const singleMapping = new Map([
@@ -499,7 +508,7 @@ function overallStatus(
 		return 'partially-migrated';
 	}
 	if (
-		flagWideChanges.length > 0 ||
+		flagWideChanges.some((change) => change !== 'identity') ||
 		environments.some((environment) => environment.status === 'out-of-sync')
 	) {
 		return 'out-of-sync';

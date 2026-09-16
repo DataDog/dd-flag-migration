@@ -252,6 +252,28 @@ describe('migration status comparison', () => {
 		);
 	});
 
+	it('labels flags with prerequisites as in sync when targeting matches', () => {
+		const prereqSource: LDFlag = structuredClone(sourceFlag);
+		if (prereqSource.environments?.production) {
+			prereqSource.environments.production.prerequisites = [
+				{ key: 'other-flag', variation: 1 },
+			];
+		}
+		const result = compareMigrationStatus(
+			input({
+				sourceFlags: [prereqSource],
+				datadogDetails: new Map([['dd-flag', datadogDetail]]),
+			}),
+		);
+		expect(result.flags[0]).toMatchObject({
+			status: 'in-sync',
+			environments: [{ status: 'in-sync' }],
+		});
+		expect(result.flags[0].environments[0].details).toContain(
+			'prerequisites which are not enforced in Datadog',
+		);
+	});
+
 	it('uses stable source IDs when variant renames preserve Datadog keys', () => {
 		const renamedSource: LDFlag = {
 			...sourceFlag,
@@ -301,7 +323,7 @@ describe('migration status comparison', () => {
 		});
 	});
 
-	it('requires review for any occupied same key without an exact metadata match', () => {
+	it('links and warns for any occupied same key without an exact metadata match', () => {
 		for (const conflicting of [
 			{ id: 'manual', key: 'checkout' },
 			{
@@ -327,10 +349,29 @@ describe('migration status comparison', () => {
 				'project',
 			);
 			expect(links[0]).toMatchObject({
+				datadog: conflicting,
 				identityProblem:
 					'A same-key Datadog flag exists without matching migration metadata.',
 			});
 		}
+	});
+
+	it('labels same-key flags as in sync when targeting matches despite identity warning', () => {
+		const conflicting = { id: 'manual', key: 'checkout' };
+		const result = compareMigrationStatus(
+			input({
+				datadogFlags: [conflicting],
+				datadogDetails: new Map([['manual', datadogDetail]]),
+			}),
+		);
+		expect(result.flags[0]).toMatchObject({
+			status: 'in-sync',
+			flagWideChanges: ['identity'],
+			environments: [{ status: 'in-sync' }],
+		});
+		expect(result.flags[0].flagWideDetails).toContain(
+			'A same-key Datadog flag exists without matching migration metadata.',
+		);
 	});
 
 	it('compares enablement for a disabled environment with null allocations', () => {
