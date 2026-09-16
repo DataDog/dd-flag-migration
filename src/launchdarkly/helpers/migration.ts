@@ -283,6 +283,15 @@ export function shouldSkipFlag(flag: LDFlag, envNames: string[]): SkipResult {
 
 // ─── Variant Building ────────────────────────────────────────────────────────
 
+/** Preserve the migration naming behavior when a flag key is remapped. */
+export function resolveDatadogFlagName(
+	sourceName: string,
+	sourceKey: string,
+	datadogKey: string,
+): string {
+	return sourceName === sourceKey ? datadogKey : sourceName;
+}
+
 /** Convert LD variations → DD variant list */
 export function buildVariants(
 	flag: LDFlag,

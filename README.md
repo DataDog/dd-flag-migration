@@ -20,6 +20,9 @@ Run without installing using `npx`:
 # migrate flags
 npx @datadog/dd-flag-migration migrate
 
+# check migration coverage and sync status
+npx @datadog/dd-flag-migration migration-status
+
 # evaluate migrated flags
 npx @datadog/dd-flag-migration evaluate
 
@@ -41,7 +44,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Credentials you'll need
 
-Credentials are read from environment variables. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running `migrate`, `evaluate`, `bulk-permissions`, `bulk-enable`, or `sync-tags`. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1.
+Credentials are read from environment variables. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running `migrate`, `migration-status`, `evaluate`, `bulk-permissions`, `bulk-enable`, or `sync-tags`. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1.
 
 `DD_SITE` is optional for interactive commands and pre-fills the Datadog site prompt when set. For non-interactive `migrate` runs, use either `DD_SITE` or `--datadog-site`; the explicit CLI option takes precedence. The standalone `scripts/get-datadog-flag.sh` script requires `DD_SITE` and does not accept a site argument.
 
@@ -57,6 +60,14 @@ Credentials are read from environment variables. Set them in your shell (or `.en
 Your LaunchDarkly access token needs **Reader** role permissions (or a custom role with `viewProject` access) to read projects, environments, and flag configurations.
 
 `EPPO_*` variables are checked only when you select Eppo as the source provider. `LAUNCHDARKLY_*` variables are checked only when you select LaunchDarkly. You don't need to set both.
+
+### Required for `migration-status`
+
+| Variable | Required when | Where to find it |
+|---|---|---|
+| `DD_API_KEY` | always | Datadog → Organization Settings → API Keys |
+| `DD_APP_KEY` | always | Datadog → Organization Settings → Application Keys |
+| `LAUNCHDARKLY_API_KEY` | always | LaunchDarkly → Account settings → Authorization → Access tokens |
 
 ### Required for `evaluate`
 
@@ -82,9 +93,9 @@ Enable the scopes required for the command you are running:
 | Scope | Required by | Description |
 |---|---|---|
 | `feature_flag_approvals_override` | Optional for `bulk-enable` | Bypasses Feature Flag approval requirements. Without it, approval-protected changes are submitted as approval requests and reported as such. |
-| `feature_flag_config_read` | `migrate`, `bulk-permissions`, `bulk-enable`, `sync-tags` | View Feature Flag Configurations |
+| `feature_flag_config_read` | `migrate`, `migration-status`, `bulk-permissions`, `bulk-enable`, `sync-tags` | View Feature Flag Configurations |
 | `feature_flag_config_write` | `migrate`, `bulk-enable`, `sync-tags` | Edit Feature Flag Configurations |
-| `feature_flag_environment_config_read` | `migrate`, `bulk-enable`, `sync-tags` | View Feature Flag Environment settings |
+| `feature_flag_environment_config_read` | `migrate`, `migration-status`, `bulk-enable`, `sync-tags` | View Feature Flag Environment settings |
 | `teams_read` | `migrate`, `bulk-permissions`, `sync-tags` | View Teams for team-based access controls |
 | `restriction_policies_read` | `bulk-permissions` | View restriction policies |
 | `restriction_policies_write` | `bulk-permissions` | Edit restriction policies |
@@ -289,6 +300,30 @@ npx @datadog/dd-flag-migration migrate --dry-run
 ```
 
 This writes the full list of API requests that would be sent to a `dry-run-<timestamp>.json` file in the current directory.
+
+---
+
+## Migration Status
+
+Generate a read-only LaunchDarkly migration status report with:
+
+```bash
+npx @datadog/dd-flag-migration migration-status
+
+# When running from this repository:
+yarn migration-status
+```
+
+The interactive workflow uses the same environment selection and one-to-many mapping experience as migration:
+
+1. Select a LaunchDarkly project.
+2. Select the LaunchDarkly environments to analyze.
+3. Map each selected LaunchDarkly environment to one or more Datadog environments.
+4. Confirm the analysis scope.
+
+The command reports flags as **Not yet migrated**, **Partially migrated**, **Out of sync**, **In sync**, or **Needs review**. Environment sync is calculated only for the selected mappings; unselected Datadog environments do not affect the result. A `migration-status-launchdarkly-<project>-<timestamp>.xlsx` workbook is written automatically to the current directory with a global summary and one status tab per selected Datadog environment. Each environment tab includes scoped status counts at the top.
+
+The report compares current configuration and does not identify which platform changed after migration. Tags, permissions, restriction policies, and saved-filter contents are not assessed.
 
 ---
 

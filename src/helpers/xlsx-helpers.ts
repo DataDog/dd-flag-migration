@@ -43,6 +43,22 @@ export function colorRow(row: ExcelJS.Row, argb: string): void {
 	});
 }
 
+/** Prevent customer-controlled spreadsheet cells from becoming formulas. */
+export function safeCell(
+	value: unknown,
+): string | number | boolean | Date | null {
+	if (
+		value === null ||
+		typeof value === 'number' ||
+		typeof value === 'boolean' ||
+		value instanceof Date
+	) {
+		return value;
+	}
+	const text = String(value);
+	return /^[=+\-@]/.test(text) ? `'${text}` : text;
+}
+
 // ─── Shared Sheet Setup ───────────────────────────────────────────────────────
 
 export function addSheetHeader(
@@ -96,7 +112,9 @@ export function addEnvironmentMappingSection(
 
 	for (const { sourceLabel, datadogLabel } of mappings) {
 		const row = ws.addRow([
-			`${sourceLabel} (${sourceProviderLabel}) → ${datadogLabel} (DD)`,
+			safeCell(
+				`${sourceLabel} (${sourceProviderLabel}) → ${datadogLabel} (DD)`,
+			),
 		]);
 		ws.mergeCells(row.number, 1, row.number, numCols);
 		const cell = row.getCell(1);

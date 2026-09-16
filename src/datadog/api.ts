@@ -13,6 +13,8 @@ import type {
 	DatadogEnvironment,
 	DatadogEnvironmentStatus,
 	DatadogFlagEntry,
+	DatadogStatusAllocation,
+	DatadogStatusFlagDetail,
 	DatadogTeam,
 	DatadogVariantDetail,
 	DDRestrictionBinding,
@@ -574,10 +576,197 @@ type JsonApiFlagDetail = {
 		feature_flag_environments: Array<{
 			environment_id: string;
 			status: 'ENABLED' | 'DISABLED';
+			default_variant_id?: string | null;
+			default_variant_key?: string;
 			allocations: Array<{ id: string; key: string }> | null;
 		}>;
 	};
 };
+
+/**
+ * Fetch the complete flag state needed for a read-only migration status
+ * comparison. Unlike fetchFlagDetail, this preserves targeting filter bodies.
+ */
+export async function fetchDatadogStatusFlagDetail(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	site = 'datadoghq.com',
+): Promise<DatadogStatusFlagDetail> {
+	const baseUrl = `https://api.${site}`;
+	const response = await ddClient.get<{
+		data: { id: string; attributes: Record<string, unknown> };
+	}>(`${baseUrl}/api/v2/feature-flags/${flagId}`, {
+		headers: ddHeaders(apiKey, appKey),
+	});
+	const data = response.data.data;
+	if (!isRecord(data) || !isRecord(data.attributes)) {
+		throw new DatadogStatusDetailError(
+			flagId,
+			'flag response has no object attributes',
+		);
+	}
+	const attributes = data.attributes;
+	if (
+		typeof attributes.key !== 'string' ||
+		typeof attributes.name !== 'string'
+	) {
+		throw new DatadogStatusDetailError(flagId, 'flag key or name is missing');
+	}
+	if (!Array.isArray(attributes.variants)) {
+		throw new DatadogStatusDetailError(flagId, 'variants is not an array');
+	}
+	if (!Array.isArray(attributes.feature_flag_environments)) {
+		throw new DatadogStatusDetailError(
+			flagId,
+			'feature_flag_environments is not an array',
+		);
+	}
+
+	const variants = attributes.variants.map((variant) => {
+		if (
+			!isRecord(variant) ||
+			typeof variant.id !== 'string' ||
+			typeof variant.key !== 'string' ||
+			typeof variant.name !== 'string' ||
+			typeof variant.value !== 'string'
+		) {
+			throw new DatadogStatusDetailError(
+				flagId,
+				'a variant has an invalid shape',
+			);
+		}
+		return {
+			id: variant.id,
+			key: variant.key,
+			name: variant.name,
+			value: variant.value,
+			migration_metadata: isRecord(variant.migration_metadata)
+				? variant.migration_metadata
+				: undefined,
+		};
+	});
+
+	const environments = attributes.feature_flag_environments.map(
+		(environment) => {
+			if (
+				!isRecord(environment) ||
+				typeof environment.environment_id !== 'string' ||
+				(environment.status !== 'ENABLED' &&
+					environment.status !== 'DISABLED') ||
+				(environment.allocations !== null &&
+					!Array.isArray(environment.allocations))
+			) {
+				throw new DatadogStatusDetailError(
+					flagId,
+					'an environment has an invalid shape',
+				);
+			}
+			const allocations =
+				environment.allocations === null
+					? null
+					: parseDatadogStatusAllocations(
+							flagId,
+							environment.environment_id,
+							environment.allocations,
+						);
+			const declaredDefaultVariantId =
+				typeof environment.default_variant_id === 'string'
+					? environment.default_variant_id
+					: undefined;
+			const declaredDefaultVariantKey =
+				typeof environment.default_variant_key === 'string'
+					? environment.default_variant_key
+					: variants.find((variant) => variant.id === declaredDefaultVariantId)
+							?.key;
+			return {
+				environmentId: environment.environment_id,
+				status: environment.status as DatadogEnvironmentStatus,
+				defaultVariantKey:
+					declaredDefaultVariantKey ??
+					inferStatusDefaultVariantKey(allocations, variants),
+				allocations,
+			};
+		},
+	);
+
+	return {
+		id: data.id,
+		key: attributes.key,
+		name: attributes.name,
+		migrationMetadata: isRecord(attributes.migration_metadata)
+			? (attributes.migration_metadata as MigrationMetadata)
+			: undefined,
+		variants,
+		environments,
+	};
+}
+
+function parseDatadogStatusAllocations(
+	flagId: string,
+	environmentId: string,
+	allocations: unknown[],
+): DatadogStatusAllocation[] {
+	return allocations.map((item) => {
+		if (!isRecord(item)) {
+			throw new DatadogStatusDetailError(
+				flagId,
+				`a targeting filter for ${environmentId} has an invalid shape`,
+			);
+		}
+		const attributes = isRecord(item.attributes) ? item.attributes : item;
+		if (
+			typeof attributes.key !== 'string' ||
+			(attributes.targeting_rules !== undefined &&
+				!Array.isArray(attributes.targeting_rules)) ||
+			(attributes.variant_weights !== undefined &&
+				!Array.isArray(attributes.variant_weights))
+		) {
+			throw new DatadogStatusDetailError(
+				flagId,
+				`a targeting filter for ${environmentId} is malformed`,
+			);
+		}
+		return {
+			...attributes,
+			...(typeof item.id === 'string' ? { id: item.id } : {}),
+		} as unknown as DatadogStatusAllocation;
+	});
+}
+
+function inferStatusDefaultVariantKey(
+	allocations: DatadogStatusAllocation[] | null,
+	variants: DatadogVariantDetail[],
+): string | undefined {
+	if (allocations === null) return undefined;
+	const fallthroughs = allocations.filter(
+		(allocation) =>
+			allocation.key.endsWith('-fallthrough') &&
+			(allocation.targeting_rules?.length ?? 0) === 0 &&
+			allocation.variant_weights?.length === 1 &&
+			allocation.variant_weights[0]?.value === 100,
+	);
+	if (fallthroughs.length !== 1) return undefined;
+	const weight = fallthroughs[0].variant_weights?.[0];
+	if (!weight) return undefined;
+	if (weight.variant_key) {
+		return variants.some((variant) => variant.key === weight.variant_key)
+			? weight.variant_key
+			: undefined;
+	}
+	return variants.find((variant) => variant.id === weight.variant_id)?.key;
+}
+
+export class DatadogStatusDetailError extends Error {
+	constructor(flagId: string, reason: string) {
+		super(`Could not verify Datadog flag ${flagId}: ${reason}`);
+		this.name = 'DatadogStatusDetailError';
+	}
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 export async function fetchFeatureFlagEnvironmentStatuses(
 	apiKey: string,
