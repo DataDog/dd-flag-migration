@@ -11,6 +11,7 @@ import { PromptCancelledError, renderStatic } from './components/mount.js';
 import { PermissionsError } from './components/PermissionsError.js';
 import { select } from './components/Select.js';
 import { fetchCurrentUserPermissions } from './datadog/api.js';
+import { getDatadogCredentials } from './datadog/auth.js';
 import { requireEnvVars } from './helpers/env.js';
 import { withConsoleLogToStderr } from './helpers/output.js';
 import { promptForDatadogSite } from './helpers/prompt-for-datadog-site.js';
@@ -99,9 +100,7 @@ async function main(): Promise<void> {
 	// Validate Datadog env vars up front. Provider-specific env vars are
 	// validated after the provider is known so that, e.g., a LaunchDarkly tag
 	// sync doesn't require EPPO_API_KEY to be set.
-	const ddEnv = requireEnvVars(['DD_API_KEY', 'DD_APP_KEY']);
-	const ddApiKey = ddEnv.DD_API_KEY;
-	const ddAppKey = ddEnv.DD_APP_KEY;
+	const { apiKey: ddApiKey, appKey: ddAppKey } = getDatadogCredentials();
 
 	if (!args.interactive) {
 		const ni = args.nonInteractive;
