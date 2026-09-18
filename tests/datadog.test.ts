@@ -146,6 +146,28 @@ describe('fetchDatadogEnvironments', () => {
 		await fetchDatadogEnvironments(API_KEY, APP_KEY, SITE);
 	});
 
+	it('supports caller-provided headers and a custom base URL', async () => {
+		process.env.DD_HTTP_HEADERS = JSON.stringify({
+			'X-Custom-Authentication': 'secret',
+		});
+		process.env.DD_BASE_URL = 'https://example.test/proxy';
+		mock
+			.onGet('https://example.test/proxy/api/v2/feature-flags/environments')
+			.reply((config) => {
+				expect(config.headers?.['X-Custom-Authentication']).toBe('secret');
+				expect(config.headers?.['dd-api-key']).toBeUndefined();
+				expect(config.headers?.['dd-application-key']).toBeUndefined();
+				return [200, { data: [] }];
+			});
+
+		try {
+			await fetchDatadogEnvironments('', '', SITE);
+		} finally {
+			delete process.env.DD_HTTP_HEADERS;
+			delete process.env.DD_BASE_URL;
+		}
+	});
+
 	it('throws on HTTP error', async () => {
 		mock.onGet(`${BASE}/api/v2/feature-flags/environments`).reply(403);
 
@@ -2037,6 +2059,33 @@ describe('Datadog client rate-limit handling', () => {
 		});
 		expect(mock.history.put).toHaveLength(1);
 		expect(warnSpy).not.toHaveBeenCalled();
+	});
+
+	it('redacts standard and caller-provided credentials from thrown errors', async () => {
+		process.env.DD_HTTP_HEADERS = JSON.stringify({
+			'X-Private-Header': 'custom-secret',
+		});
+		mock.onGet(`${BASE}/private`).reply(403);
+
+		try {
+			await client.get(`${BASE}/private`, {
+				headers: {
+					'dd-api-key': 'api-secret',
+					'dd-application-key': 'app-secret',
+					'X-Private-Header': 'custom-secret',
+					'X-Safe-Header': 'safe-value',
+				},
+			});
+			throw new Error('Expected request to fail');
+		} catch (error) {
+			const serialized = JSON.stringify(error);
+			expect(serialized).not.toContain('api-secret');
+			expect(serialized).not.toContain('app-secret');
+			expect(serialized).not.toContain('custom-secret');
+			expect(serialized).toContain('safe-value');
+		} finally {
+			delete process.env.DD_HTTP_HEADERS;
+		}
 	});
 
 	it('stops retrying a persistent feature flag contribution denial', async () => {

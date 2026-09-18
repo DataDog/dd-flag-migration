@@ -19,6 +19,7 @@ import {
 	RestrictionPolicyTeamUpdateError,
 	updateRestrictionPolicyTeams,
 } from './datadog/api.js';
+import { getDatadogCredentials } from './datadog/auth.js';
 import type {
 	DatadogFlagEntry,
 	DatadogTeam,
@@ -28,7 +29,6 @@ import {
 	loadMigratedFlagsWithTags,
 	selectMigratedFlags,
 } from './helpers/bulk-flags.js';
-import { requireEnvVars } from './helpers/env.js';
 import { formatAxiosError } from './helpers/format-axios-error.js';
 import { checkRequiredPermissions } from './helpers/permissions.js';
 import { promptForDatadogSite } from './helpers/prompt-for-datadog-site.js';
@@ -98,9 +98,7 @@ function resultForTeam(
 }
 
 async function main(): Promise<void> {
-	const env = requireEnvVars(['DD_API_KEY', 'DD_APP_KEY']);
-	const apiKey = env.DD_API_KEY;
-	const appKey = env.DD_APP_KEY;
+	const { apiKey, appKey } = getDatadogCredentials();
 
 	process.stdout.write('\x1Bc');
 	await renderStatic(<Header subtitle={HEADER_SUBTITLES.bulkPermissions} />);

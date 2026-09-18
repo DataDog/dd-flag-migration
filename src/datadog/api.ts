@@ -1,5 +1,10 @@
 import axios, { type AxiosInstance } from 'axios';
 import {
+	datadogBaseUrl,
+	datadogHeaders,
+	datadogSensitiveHeaderNames,
+} from './auth.js';
+import {
 	eppoSourceIdLookupKey,
 	FEATURE_FLAG_PAGE_LIMIT,
 	nextFeatureFlagOffset,
@@ -67,6 +72,22 @@ function isFeatureFlagPermissionPropagationError(error: unknown): boolean {
 	);
 }
 
+function redactRequestCredentials(error: unknown): void {
+	if (!axios.isAxiosError(error) || !error.config?.headers) return;
+	const sensitiveNames = datadogSensitiveHeaderNames();
+	for (const name of Object.keys(error.config.headers)) {
+		if (sensitiveNames.has(name.toLowerCase())) {
+			delete error.config.headers[name];
+		}
+	}
+
+	// Node's ClientRequest retains a fully rendered raw header string. It is not
+	// part of AxiosError#toJSON, but it can appear when an error is inspected or
+	// logged directly, so do not expose the request object on terminal errors.
+	error.request = undefined;
+	if (error.response) error.response.request = undefined;
+}
+
 export function createDDClient(): AxiosInstance {
 	// Earliest epoch-ms at which the next request may be sent. Scoped per client
 	// so tests (and any callers that build their own client) get isolated state.
@@ -119,7 +140,10 @@ export function createDDClient(): AxiosInstance {
 			if (isFeatureFlagPermissionPropagationError(error)) {
 				const permissionRetryCount: number =
 					(configAny.__permissionRetryCount as number) ?? 0;
-				if (permissionRetryCount >= DD_MAX_RETRIES) throw error;
+				if (permissionRetryCount >= DD_MAX_RETRIES) {
+					redactRequestCredentials(error);
+					throw error;
+				}
 
 				const delayMs = ddBackoffDelayMs(permissionRetryCount);
 				console.warn(
@@ -130,7 +154,10 @@ export function createDDClient(): AxiosInstance {
 				return client.request(config);
 			}
 
-			if (error.response?.status !== 429) throw error;
+			if (error.response?.status !== 429) {
+				redactRequestCredentials(error);
+				throw error;
+			}
 
 			const retryCount: number = (configAny.__retryCount as number) ?? 0;
 			if (retryCount >= DD_MAX_RETRIES) {
@@ -167,12 +194,7 @@ export const ddClient = createDDClient();
 
 // ────────────────────────────────────────────────────────────────────────────
 
-function ddHeaders(apiKey: string, appKey: string) {
-	return {
-		'dd-api-key': apiKey,
-		'dd-application-key': appKey,
-	};
-}
+const ddHeaders = datadogHeaders;
 
 type JsonApiEnvironment = {
 	id: string;
@@ -190,7 +212,7 @@ export async function fetchDatadogEnvironments(
 	appKey: string,
 	site = 'datadoghq.com',
 ): Promise<DatadogEnvironment[]> {
-	const baseUrl = `https://api.${site}`;
+	const baseUrl = datadogBaseUrl(site);
 	const response = await ddClient.get<{ data: JsonApiEnvironment[] }>(
 		`${baseUrl}/api/v2/feature-flags/environments`,
 		{ headers: ddHeaders(apiKey, appKey) },
@@ -236,7 +258,7 @@ export async function fetchDatadogFlagKeys(
 	appKey: string,
 	site = 'datadoghq.com',
 ): Promise<Map<string, string>> {
-	const baseUrl = `https://api.${site}`;
+	const baseUrl = datadogBaseUrl(site);
 	const keys = new Map<string, string>();
 	let offset = 0;
 	while (true) {
@@ -278,7 +300,7 @@ export async function fetchDatadogFlags(
 	appKey: string,
 	site = 'datadoghq.com',
 ): Promise<DatadogFlagEntry[]> {
-	const baseUrl = `https://api.${site}`;
+	const baseUrl = datadogBaseUrl(site);
 	const allFlags: DatadogFlagEntry[] = [];
 	let offset = 0;
 	while (true) {
@@ -330,7 +352,7 @@ export async function createFeatureFlag(
 	request: DatadogCreateFlagRequest,
 	site = 'datadoghq.com',
 ): Promise<DatadogCreatedFlag> {
-	const baseUrl = `https://api.${site}`;
+	const baseUrl = datadogBaseUrl(site);
 	let attempt = 0;
 	for (;;) {
 		const name = attempt === 0 ? request.name : `${request.name} (${attempt})`;
@@ -373,7 +395,7 @@ export async function fetchFlagTags(
 	flagId: string,
 	site = 'datadoghq.com',
 ): Promise<string[]> {
-	const baseUrl = `https://api.${site}`;
+	const baseUrl = datadogBaseUrl(site);
 	const response = await ddClient.get<{
 		data: { attributes: { tags?: string[] } };
 	}>(`${baseUrl}/api/v2/feature-flags/${flagId}`, {
@@ -389,7 +411,7 @@ export async function updateFlagTags(
 	tags: string[],
 	site = 'datadoghq.com',
 ): Promise<void> {
-	const baseUrl = `https://api.${site}`;
+	const baseUrl = datadogBaseUrl(site);
 	const body = {
 		data: { type: 'feature-flags', attributes: { tags } },
 	};
@@ -408,7 +430,7 @@ export async function updateFlagName(
 	name: string,
 	site = 'datadoghq.com',
 ): Promise<void> {
-	const baseUrl = `https://api.${site}`;
+	const baseUrl = datadogBaseUrl(site);
 	const body = {
 		data: { type: 'feature-flags', attributes: { name } },
 	};
@@ -427,7 +449,7 @@ export async function updateFlagDistributionChannel(
 	distributionChannel: 'CLIENT' | 'SERVER' | 'BOTH',
 	site = 'datadoghq.com',
 ): Promise<void> {
-	const baseUrl = `https://api.${site}`;
+	const baseUrl = datadogBaseUrl(site);
 	const body = {
 		data: {
 			type: 'feature-flags',
@@ -447,7 +469,7 @@ export async function fetchDatadogTeams(
 	appKey: string,
 	site = 'datadoghq.com',
 ): Promise<DatadogTeam[]> {
-	const baseUrl = `https://api.${site}`;
+	const baseUrl = datadogBaseUrl(site);
 	const teams: DatadogTeam[] = [];
 	let pageNumber = 0;
 	const pageSize = 100;
@@ -489,7 +511,7 @@ export async function enableFeatureFlagEnvironmentWithOutcome(
 	environmentId: string,
 	site = 'datadoghq.com',
 ): Promise<FeatureFlagEnvironmentEnableOutcome> {
-	const baseUrl = `https://api.${site}`;
+	const baseUrl = datadogBaseUrl(site);
 	const response = await ddClient.post(
 		`${baseUrl}/api/v2/feature-flags/${flagId}/environments/${environmentId}/enable`,
 		{},
@@ -530,7 +552,7 @@ export async function disableFeatureFlagEnvironmentWithOutcome(
 	environmentId: string,
 	site = 'datadoghq.com',
 ): Promise<FeatureFlagEnvironmentDisableOutcome> {
-	const baseUrl = `https://api.${site}`;
+	const baseUrl = datadogBaseUrl(site);
 	const response = await ddClient.post(
 		`${baseUrl}/api/v2/feature-flags/${flagId}/environments/${environmentId}/disable`,
 		{},
@@ -774,7 +796,7 @@ export async function fetchFeatureFlagEnvironmentStatuses(
 	flagId: string,
 	site = 'datadoghq.com',
 ): Promise<Map<string, 'ENABLED' | 'DISABLED'>> {
-	const baseUrl = `https://api.${site}`;
+	const baseUrl = datadogBaseUrl(site);
 	const response = await ddClient.get<{ data: JsonApiFlagDetail }>(
 		`${baseUrl}/api/v2/feature-flags/${flagId}`,
 		{ headers: ddHeaders(apiKey, appKey) },
@@ -796,7 +818,7 @@ export async function fetchFlagDetail(
 	variants: DatadogVariantDetail[];
 	allocationKeyToIdByEnv: Map<string, Map<string, string>>;
 }> {
-	const baseUrl = `https://api.${site}`;
+	const baseUrl = datadogBaseUrl(site);
 	const response = await ddClient.get<{ data: JsonApiFlagDetail }>(
 		`${baseUrl}/api/v2/feature-flags/${flagId}`,
 		{ headers: ddHeaders(apiKey, appKey) },
@@ -846,7 +868,7 @@ export async function createVariant(
 	},
 	site = 'datadoghq.com',
 ): Promise<DatadogVariantDetail> {
-	const baseUrl = `https://api.${site}`;
+	const baseUrl = datadogBaseUrl(site);
 	const body = {
 		data: {
 			type: 'variants',
@@ -891,7 +913,7 @@ export async function updateVariant(
 	},
 	site = 'datadoghq.com',
 ): Promise<void> {
-	const baseUrl = `https://api.${site}`;
+	const baseUrl = datadogBaseUrl(site);
 	const body = {
 		data: {
 			type: 'variants',
@@ -924,7 +946,7 @@ export async function deleteVariant(
 	variantId: string,
 	site = 'datadoghq.com',
 ): Promise<void> {
-	const baseUrl = `https://api.${site}`;
+	const baseUrl = datadogBaseUrl(site);
 	await ddClient.delete(
 		`${baseUrl}/api/v2/feature-flags/${flagId}/variants/${variantId}`,
 		{ headers: ddHeaders(apiKey, appKey) },
@@ -1081,7 +1103,7 @@ export async function syncAllocationsForEnvironment(
 	defaultVariantKey?: string,
 	variantKeyToIdAliases?: ReadonlyMap<string, string>,
 ): Promise<void> {
-	const baseUrl = `https://api.${site}`;
+	const baseUrl = datadogBaseUrl(site);
 
 	// Fetch flag detail to get existing allocation IDs (so the sync endpoint
 	// treats them as updates) and variant key→UUID mapping
@@ -1146,7 +1168,7 @@ export async function fetchCurrentUserIdentity(
 	appKey: string,
 	site = 'datadoghq.com',
 ): Promise<{ userId: string; orgId: string }> {
-	const baseUrl = `https://api.${site}`;
+	const baseUrl = datadogBaseUrl(site);
 	const response = await ddClient.get<{
 		data: {
 			id: string;
@@ -1175,7 +1197,7 @@ export async function fetchRestrictionPolicy(
 	flagId: string,
 	site = 'datadoghq.com',
 ): Promise<DDRestrictionBinding[]> {
-	const baseUrl = `https://api.${site}`;
+	const baseUrl = datadogBaseUrl(site);
 	try {
 		const response = await ddClient.get<{
 			data: { attributes: { bindings: DDRestrictionBinding[] } };
@@ -1386,7 +1408,7 @@ export async function updateRestrictionPolicyTeams(
 					uniqueTeamIds,
 					existingBindings,
 				);
-	const baseUrl = `https://api.${site}`;
+	const baseUrl = datadogBaseUrl(site);
 	const resourceId = `feature-flag:${flagId}`;
 	try {
 		await ddClient.post(
@@ -1441,7 +1463,7 @@ export async function applyRestrictionPolicy(
 ): Promise<void> {
 	if (editorTeamIds.length === 0) return;
 
-	const baseUrl = `https://api.${site}`;
+	const baseUrl = datadogBaseUrl(site);
 	const resourceId = `feature-flag:${flagId}`;
 	// GET → merge → POST is not atomic; a concurrent writer between the GET and POST would
 	// cause last-writer-wins. Safe for the expected single in-flight sequential migration.
@@ -1521,7 +1543,7 @@ export async function fetchCurrentUserPermissions(
 	appKey: string,
 	site = 'datadoghq.com',
 ): Promise<string[]> {
-	const baseUrl = `https://api.${site}`;
+	const baseUrl = datadogBaseUrl(site);
 	const results = await Promise.all(
 		[...PROBABLE_PERMISSIONS].map(async ([permission, path]) => {
 			const accessible = await probePermission(
@@ -1543,7 +1565,7 @@ export async function createSavedFilter(
 	request: CreateSavedFilterRequest,
 	site = 'datadoghq.com',
 ): Promise<{ id: string }> {
-	const baseUrl = `https://api.${site}`;
+	const baseUrl = datadogBaseUrl(site);
 	const body = { data: { type: 'saved-filters', attributes: request } };
 	const response = await ddClient.post<{ data: { id: string } }>(
 		`${baseUrl}/api/v2/feature-flags/saved-filters`,
@@ -1571,7 +1593,7 @@ export async function updateSavedFilter(
 	request: CreateSavedFilterRequest,
 	site = 'datadoghq.com',
 ): Promise<void> {
-	const baseUrl = `https://api.${site}`;
+	const baseUrl = datadogBaseUrl(site);
 	const body = { data: { type: 'saved-filters', id, attributes: request } };
 	await ddClient.put(
 		`${baseUrl}/api/v2/feature-flags/saved-filters/${id}`,
@@ -1599,7 +1621,7 @@ export async function listSavedFilters(
 	} = {},
 	site = 'datadoghq.com',
 ): Promise<{ data: SavedFilterSummary[]; total: number }> {
-	const baseUrl = `https://api.${site}`;
+	const baseUrl = datadogBaseUrl(site);
 	const response = await ddClient.get<{
 		data: Array<{
 			id: string;
