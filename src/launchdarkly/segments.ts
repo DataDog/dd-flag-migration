@@ -19,6 +19,7 @@ import { fetchSegment, fetchSegments } from './api.js';
 import {
 	mapOperator,
 	normalizeLaunchDarklyAttribute,
+	targetKeyAttribute,
 } from './helpers/migration.js';
 import { negateTargetingRules } from './helpers/negation.js';
 import type { LDFlag, LDSegment } from './types.js';
@@ -177,7 +178,10 @@ export function buildNonNegatedRules(
 			const mapped = mapOperator(clause.op, clause.negate, clause.values);
 			if ('skip' in mapped) return null;
 			const ck = clause.contextKind ?? 'user';
-			const attribute = normalizeLaunchDarklyAttribute(clause.attribute, ck);
+			const attribute =
+				clause.attribute === 'key'
+					? targetKeyAttribute(ck)
+					: normalizeLaunchDarklyAttribute(clause.attribute, ck);
 			conditions.push({
 				operator: mapped.operator,
 				attribute,
@@ -191,7 +195,11 @@ export function buildNonNegatedRules(
 	if (segment.included.length > 0) {
 		groups.push({
 			conditions: [
-				{ operator: 'ONE_OF', attribute: 'key', value: segment.included },
+				{
+					operator: 'ONE_OF',
+					attribute: targetKeyAttribute('user'),
+					value: segment.included,
+				},
 			],
 		});
 	}
@@ -200,7 +208,7 @@ export function buildNonNegatedRules(
 	if (segment.excluded.length > 0) {
 		const excludeCondition: DatadogCondition = {
 			operator: 'NOT_ONE_OF',
-			attribute: 'key',
+			attribute: targetKeyAttribute('user'),
 			value: [...segment.excluded],
 		};
 		for (const group of groups) {
@@ -244,7 +252,10 @@ export function buildNegatedRules(
 				const mapped = mapOperator(clause.op, clause.negate, clause.values);
 				if ('skip' in mapped) return null;
 				const ck = clause.contextKind ?? 'user';
-				const attribute = normalizeLaunchDarklyAttribute(clause.attribute, ck);
+				const attribute =
+					clause.attribute === 'key'
+						? targetKeyAttribute(ck)
+						: normalizeLaunchDarklyAttribute(clause.attribute, ck);
 				conditions.push({
 					operator: mapped.operator,
 					attribute,
@@ -262,11 +273,11 @@ export function buildNegatedRules(
 		negatedRulesGroups = [{ conditions: [] }];
 	}
 
-	// AND key NOT_ONE_OF included into every ¬rules group
+	// AND user identity NOT_ONE_OF included into every ¬rules group
 	if (segment.included.length > 0) {
 		const notIncluded: DatadogCondition = {
 			operator: 'NOT_ONE_OF',
-			attribute: 'key',
+			attribute: targetKeyAttribute('user'),
 			value: [...segment.included],
 		};
 		for (const group of negatedRulesGroups) {
@@ -274,11 +285,15 @@ export function buildNegatedRules(
 		}
 	}
 
-	// OR group: key ONE_OF excluded
+	// OR group: user identity ONE_OF excluded
 	if (segment.excluded.length > 0) {
 		negatedRulesGroups.push({
 			conditions: [
-				{ operator: 'ONE_OF', attribute: 'key', value: segment.excluded },
+				{
+					operator: 'ONE_OF',
+					attribute: targetKeyAttribute('user'),
+					value: segment.excluded,
+				},
 			],
 		});
 	}

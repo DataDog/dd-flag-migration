@@ -1,12 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import AxiosMockAdapter from 'axios-mock-adapter';
+import { ddClient } from '../../src/datadog/api.js';
 import type { DatadogEnvironment } from '../../src/datadog/types.js';
 import { ldClient } from '../../src/launchdarkly/api.js';
+import { buildTargetingRules } from '../../src/launchdarkly/helpers/migration.js';
 import {
 	buildNegatedRules,
 	buildNonNegatedRules,
 	discoverSegmentRefs,
 	getCreationType,
+	migrateSegments,
 	planDryRunSegments,
 	renderSavedFilterName,
 } from '../../src/launchdarkly/segments.js';
@@ -330,6 +333,31 @@ describe('renderSavedFilterName', () => {
 	});
 });
 
+describe('segment attribute compatibility with flag targeting', () => {
+	it.each([
+		['user', 'key', 'id'],
+		[undefined, 'key', 'id'],
+		['ld_device', 'key', 'ld_device.key'],
+		['org', 'key', 'org.key'],
+		['user', '/key', '/key'],
+		['org', '/key', 'org./key'],
+		['ld_device', '/key', 'ld_device.key'],
+		['ld_device', '/os/name', 'ld_device.osname'],
+		['user', 'id', 'id'],
+	])('%s + %s remains consistent with flag targeting', (contextKind, attribute, expected) => {
+		const clause = makeClause({ contextKind, attribute });
+		const segment = makeSegment({ key: 's', rules: [makeRule([clause])] });
+		const conditions = [
+			{ operator: 'ONE_OF', attribute: expected, value: ['user-1'] },
+		];
+		expect(buildTargetingRules([clause])).toEqual([{ conditions }]);
+		expect(buildNonNegatedRules(segment)).toEqual([{ conditions }]);
+		expect(buildNegatedRules(segment)).toEqual([
+			{ conditions: [{ ...conditions[0], operator: 'NOT_ONE_OF' }] },
+		]);
+	});
+});
+
 // ─── buildNonNegatedRules ─────────────────────────────────────────────────────
 
 describe('buildNonNegatedRules', () => {
@@ -434,19 +462,19 @@ describe('buildNonNegatedRules', () => {
 		expect(result).toHaveLength(2);
 	});
 
-	it('included list adds an extra OR group with ONE_OF on key', () => {
+	it('included list adds an extra OR group with ONE_OF on id', () => {
 		const seg = makeSegment({ key: 's', included: ['u1', 'u2'] });
 		const result = buildNonNegatedRules(seg);
 		expect(result).not.toBeNull();
 		expect(result).toHaveLength(1);
 		expect(result?.[0].conditions[0]).toEqual({
 			operator: 'ONE_OF',
-			attribute: 'key',
+			attribute: 'id',
 			value: ['u1', 'u2'],
 		});
 	});
 
-	it('excluded adds NOT_ONE_OF on key into every group', () => {
+	it('excluded adds NOT_ONE_OF on id into every group', () => {
 		const seg = makeSegment({
 			key: 's',
 			rules: [
@@ -462,7 +490,7 @@ describe('buildNonNegatedRules', () => {
 		expect(result?.[0].conditions).toHaveLength(2);
 		expect(result?.[0].conditions[1]).toEqual({
 			operator: 'NOT_ONE_OF',
-			attribute: 'key',
+			attribute: 'id',
 			value: ['bad-user'],
 		});
 	});
@@ -484,7 +512,7 @@ describe('buildNonNegatedRules', () => {
 		if (!result) return;
 		for (const r of result) {
 			const notOneOf = r.conditions.find(
-				(c) => c.operator === 'NOT_ONE_OF' && c.attribute === 'key',
+				(c) => c.operator === 'NOT_ONE_OF' && c.attribute === 'id',
 			);
 			expect(notOneOf).toBeDefined();
 			expect(notOneOf?.value).toEqual(['banned']);
@@ -625,7 +653,7 @@ describe('buildNegatedRules', () => {
 		expect(result?.[0].conditions).toHaveLength(1);
 		expect(result?.[0].conditions[0]).toEqual({
 			operator: 'NOT_ONE_OF',
-			attribute: 'key',
+			attribute: 'id',
 			value: ['u1', 'u2'],
 		});
 	});
@@ -640,6 +668,7 @@ describe('buildNegatedRules', () => {
 		expect(result).not.toBeNull();
 		if (!result) return;
 		expect(result).toHaveLength(2);
+		expect(result.map((r) => r.conditions[0].attribute)).toEqual(['id', 'id']);
 		const hasNotOneOf = result.some(
 			(r) =>
 				r.conditions[0].operator === 'NOT_ONE_OF' &&
@@ -666,7 +695,7 @@ describe('buildNegatedRules', () => {
 		});
 		const result = buildNegatedRules(seg);
 		expect(result).not.toBeNull();
-		// ¬rules = 1 group (NOT_ONE_OF plan pro); + excluded group (ONE_OF key banned)
+		// ¬rules = 1 group (NOT_ONE_OF plan pro); + excluded group (ONE_OF id banned)
 		expect(result).toHaveLength(2);
 	});
 
@@ -716,6 +745,116 @@ describe('buildNegatedRules', () => {
 });
 
 // ─── planDryRunSegments ───────────────────────────────────────────────────────
+
+describe('segment re-migration compatibility', () => {
+	let ldMock: AxiosMockAdapter;
+	let ddMock: AxiosMockAdapter;
+
+	beforeEach(() => {
+		ldMock = new AxiosMockAdapter(ldClient as never);
+		ddMock = new AxiosMockAdapter(ddClient as never);
+	});
+
+	afterEach(() => {
+		ldMock.restore();
+		ddMock.restore();
+	});
+
+	it.each([
+		{ attribute: 'key', negated: false, creationType: 'LIST', expected: 'id' },
+		{ attribute: 'key', negated: true, creationType: 'LIST', expected: 'id' },
+		{
+			attribute: '/key',
+			negated: false,
+			creationType: 'RULES',
+			expected: '/key',
+		},
+		{
+			attribute: '/key',
+			negated: true,
+			creationType: 'RULES',
+			expected: '/key',
+		},
+	])('updates $attribute (negated=$negated) in place on repeated migrations', async ({
+		attribute,
+		negated,
+		creationType,
+		expected,
+	}) => {
+		const segment = makeSegment({
+			key: 's',
+			rules: [makeRule([makeClause({ attribute })])],
+		});
+		const metadata = {
+			provider: 'launchdarkly',
+			project_key: 'project',
+			segment_key: 's',
+			environment_key: 'prod',
+			negated,
+		};
+		const operator = negated ? 'NOT_ONE_OF' : 'ONE_OF';
+		const stored = {
+			id: 'existing-filter-id',
+			attributes: {
+				name: `${negated ? 'NOT ' : ''}s (prod)`,
+				creation_type: creationType,
+				migration_metadata: metadata,
+				targeting_rules: [
+					{ conditions: [{ operator, attribute, value: ['user-1'] }] },
+				],
+			},
+		};
+		ldMock
+			.onGet(
+				'https://app.launchdarkly.com/api/v2/segments/project/prod?limit=50',
+			)
+			.reply(200, { items: [segment] });
+		const url = 'https://api.datadoghq.com/api/v2/feature-flags/saved-filters';
+		ddMock
+			.onGet(url)
+			.reply(() => [200, { data: [stored], meta: { total: 1 } }]);
+		ddMock.onPut(`${url}/${stored.id}`).reply((config) => {
+			const body = JSON.parse(config.data);
+			expect(body.data.id).toBe(stored.id);
+			expect(body.data.attributes).toEqual({
+				...stored.attributes,
+				...(negated ? { description: 'Inverse of s' } : {}),
+				targeting_rules: [
+					{
+						conditions: [{ operator, attribute: expected, value: ['user-1'] }],
+					},
+				],
+			});
+			stored.attributes = body.data.attributes;
+			return [200, {}];
+		});
+		for (let run = 0; run < 2; run++) {
+			const result = await migrateSegments({
+				ldApiKey: 'test-ld-key',
+				projectKey: 'project',
+				selectedFlags: [
+					makeFlag('f1', 'prod', [
+						makeClause({ op: 'segmentMatch', values: ['s'], negate: negated }),
+					]),
+				],
+				envMapping: new Map([['prod', ddProd]]),
+				ddApiKey: 'test-dd-key',
+				ddAppKey: 'test-dd-app-key',
+				ddSite: 'datadoghq.com',
+			});
+			expect(result.savedFilterLookup.get(`s:prod:${negated}`)).toBe(stored.id);
+			expect(result.stats).toMatchObject({
+				created: 0,
+				reused: 1,
+				updated: 1,
+				failures: [],
+			});
+		}
+		expect(ddMock.history.put).toHaveLength(2);
+		expect(ddMock.history.post).toHaveLength(0);
+		expect(ddMock.history.delete).toHaveLength(0);
+	});
+});
 
 describe('planDryRunSegments', () => {
 	let mock: AxiosMockAdapter;

@@ -41,7 +41,7 @@ export function mapFlagType(
  * user-kind contexts (and as `${ck}.key` for non-user kinds, which DD looks up
  * from the attribute bag as-is).
  */
-function targetKeyAttribute(contextKind: string | undefined): string {
+export function targetKeyAttribute(contextKind: string | undefined): string {
 	const ck = contextKind ?? 'user';
 	return ck === 'user' ? 'id' : `${ck}.key`;
 }
