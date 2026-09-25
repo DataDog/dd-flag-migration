@@ -63,6 +63,37 @@ describe('parseMigrateArgs', () => {
 		});
 	});
 
+	it('accepts explicit overwrite for non-interactive LaunchDarkly migrations', () => {
+		const args = parseMigrateArgs([
+			'--interactive=false',
+			'--provider=LaunchDarkly',
+			'--project=health-app',
+			'--env-map=Production,production',
+			'--feature-flag=existing',
+			'--overwrite-existing',
+			'--dry-run',
+			'--export=true',
+		]);
+		expect(args.nonInteractive?.overwriteExisting).toBe(true);
+		expect(args.dryRun).toBe(true);
+		expect(args.doExport).toBe(true);
+	});
+
+	it.each([
+		['--overwrite-existing'],
+		['--overwrite-existing', '--interactive=false', '--provider=Eppo'],
+	])('rejects overwrite outside non-interactive LaunchDarkly: %j', (...argv) => {
+		expect(() => parseMigrateArgs(argv)).toThrow(
+			/--overwrite-existing requires/,
+		);
+	});
+
+	it('rejects a value for the overwrite switch', () => {
+		expect(() => parseMigrateArgs(['--overwrite-existing=false'])).toThrow(
+			/does not take a value/,
+		);
+	});
+
 	it('accepts provider names case-insensitively', () => {
 		const args = parseMigrateArgs([
 			'--interactive=false',
@@ -89,6 +120,39 @@ describe('parseMigrateArgs', () => {
 			`--distribution-channel=${distributionChannelMode}`,
 		]);
 		expect(args.distributionChannelMode).toBe(distributionChannelMode);
+	});
+
+	it.each([
+		['merge', 'additive'],
+		['additive', 'additive'],
+		['replace', 'replace'],
+		['full', 'replace'],
+	] as const)('accepts tag mode %s for both providers', (input, expected) => {
+		for (const provider of ['launchdarkly', 'eppo']) {
+			const args = parseMigrateArgs([
+				'--interactive=false',
+				'--provider',
+				provider,
+				...(provider === 'launchdarkly' ? ['--project=health-app'] : []),
+				'--env-map=Production,production',
+				'--feature-flag=flag',
+				'--tag-mode',
+				input,
+			]);
+			expect(args.tagMode).toBe(expected);
+		}
+	});
+
+	it('allows an explicit tag mode in interactive mode', () => {
+		expect(parseMigrateArgs(['--tag-mode=replace']).tagMode).toBe('replace');
+		expect(parseMigrateArgs([]).tagMode).toBeUndefined();
+	});
+
+	it('rejects unknown or missing tag modes', () => {
+		expect(() => parseMigrateArgs(['--tag-mode=unknown'])).toThrow(
+			/--tag-mode must be/,
+		);
+		expect(() => parseMigrateArgs(['--tag-mode'])).toThrow(ArgParseError);
 	});
 
 	it('rejects an unknown distribution channel', () => {

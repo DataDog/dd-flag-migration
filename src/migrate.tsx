@@ -127,12 +127,14 @@ async function main(): Promise<void> {
 					args.dryRun,
 					{
 						doExport: args.doExport,
+						tagMode: args.tagMode,
 						distributionChannelMode: args.distributionChannelMode,
 						nonInteractive: {
 							// biome-ignore lint/style/noNonNullAssertion: validated for LD
 							projectKey: ni.projectKey!,
 							envMap: ni.envMap,
 							flagKeys: ni.flagKeys,
+							overwriteExisting: ni.overwriteExisting,
 						},
 					},
 				);
@@ -140,6 +142,7 @@ async function main(): Promise<void> {
 				const { runEppoMigration } = await import('./eppo/migrate.js');
 				await runEppoMigration(ddApiKey, ddAppKey, ddSite, args.dryRun, {
 					doExport: args.doExport,
+					tagMode: args.tagMode,
 					nonInteractive: {
 						envMap: ni.envMap,
 						flagKeys: ni.flagKeys,
@@ -182,10 +185,13 @@ async function main(): Promise<void> {
 		);
 		await runLaunchDarklyMigration(ddApiKey, ddAppKey, ddSite, args.dryRun, {
 			distributionChannelMode: args.distributionChannelMode,
+			tagMode: args.tagMode,
 		});
 	} else {
 		const { runEppoMigration } = await import('./eppo/migrate.js');
-		await runEppoMigration(ddApiKey, ddAppKey, ddSite, args.dryRun);
+		await runEppoMigration(ddApiKey, ddAppKey, ddSite, args.dryRun, {
+			tagMode: args.tagMode,
+		});
 	}
 }
 

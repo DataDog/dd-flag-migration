@@ -147,12 +147,33 @@ export function HelpScreen(): JSX.Element {
 				</Text>
 			),
 		},
+
+		{
+			id: 'migrate-tag-mode',
+			render: () => (
+				<Text>
+					{
+						'  --tag-mode <merge|replace>    Tag sync behavior (non-interactive default: merge; otherwise prompt)'
+					}
+				</Text>
+			),
+		},
 		{
 			id: 'distribution-channel',
 			render: () => (
 				<Text>
 					{
 						'  --distribution-channel <mode>  LaunchDarkly: auto|client|server|all (default: prompt; non-interactive: auto)'
+					}
+				</Text>
+			),
+		},
+		{
+			id: 'overwrite-existing',
+			render: () => (
+				<Text>
+					{
+						'  --overwrite-existing        Non-interactive LaunchDarkly: sync existing flags without migration metadata'
 					}
 				</Text>
 			),

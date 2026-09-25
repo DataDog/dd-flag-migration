@@ -176,6 +176,46 @@ describe('classifyNonInteractiveConflict', () => {
 		expect(result.existingFlag?.id).toBe('dd-manual');
 	});
 
+	it('allows adopting the exact target flag without metadata only when overwrite is enabled', () => {
+		const existing = { id: 'dd-manual', key: targetKey };
+		expect(
+			classifyNonInteractiveConflict(
+				[existing],
+				projectKey,
+				sourceKey,
+				targetKey,
+				true,
+			),
+		).toEqual({ type: 'manual', existingFlag: existing });
+		expect(
+			classifyNonInteractiveConflict(
+				[existing],
+				projectKey,
+				sourceKey,
+				'unrelated-key',
+				true,
+			),
+		).toEqual({ type: 'none' });
+	});
+
+	it.each([
+		{ project_key: 'other-project', flag_key: sourceKey },
+		{ project_key: projectKey, flag_key: 'other-flag' },
+		{ provider: 'eppo' as const, flag_key: sourceKey },
+		{},
+	])('does not overwrite conflicting metadata: %j', (migration_metadata) => {
+		const existing = { id: 'dd-conflict', key: targetKey, migration_metadata };
+		expect(
+			classifyNonInteractiveConflict(
+				[existing],
+				projectKey,
+				sourceKey,
+				targetKey,
+				true,
+			),
+		).toEqual({ type: 'duplicate', existingFlag: existing });
+	});
+
 	it('returns duplicate when the target key was migrated from another project', () => {
 		const result = classifyNonInteractiveConflict(
 			[

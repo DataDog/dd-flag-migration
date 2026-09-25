@@ -39,6 +39,7 @@ import {
 	updateFlagName,
 	updateFlagTags,
 } from '../datadog/api.js';
+import { resolveFlagNameForSync } from '../datadog/flag-names.js';
 import {
 	buildVariantKeyToIdAliases,
 	buildVariantSyncDryRunRequests,
@@ -247,7 +248,11 @@ export interface LDFlagMigrationSpec {
 	datadogKey: string;
 }
 
-export type NonInteractiveConflictType = 'none' | 'same_project' | 'duplicate';
+export type NonInteractiveConflictType =
+	| 'none'
+	| 'same_project'
+	| 'manual'
+	| 'duplicate';
 
 export interface NonInteractiveConflictClassification {
 	type: NonInteractiveConflictType;
@@ -283,6 +288,7 @@ export function classifyNonInteractiveConflict(
 	projectKey: string,
 	sourceFlagKey: string,
 	datadogFlagKey: string,
+	overwriteExisting = false,
 ): NonInteractiveConflictClassification {
 	const keyMatch = datadogFlags.find((f) => f.key === datadogFlagKey);
 	if (!keyMatch) return { type: 'none' };
@@ -293,6 +299,10 @@ export function classifyNonInteractiveConflict(
 		metadata.flag_key === sourceFlagKey
 	) {
 		return { type: 'same_project', existingFlag: keyMatch };
+	}
+
+	if (overwriteExisting && !metadata) {
+		return { type: 'manual', existingFlag: keyMatch };
 	}
 
 	return { type: 'duplicate', existingFlag: keyMatch };
@@ -855,6 +865,7 @@ async function loadFlagDetails(
 type ConfirmAction = 'migrate' | 'select-more' | 'cancel';
 
 interface MigrationOptions {
+	tagMode?: TagSyncMode;
 	ldApiKey: string;
 	projectKey: string;
 	projectName: string;
@@ -864,6 +875,7 @@ interface MigrationOptions {
 	dryRun: boolean;
 	conflictResolution?: ConflictResolution;
 	nonInteractive?: boolean;
+	overwriteExisting?: boolean;
 	doExport?: boolean;
 	targetKeyBySource?: Map<string, string>;
 	distributionChannelMode?: DistributionChannelMode;
@@ -878,6 +890,7 @@ async function executeMigration(
 	opts: MigrationOptions,
 ): Promise<ConfirmAction> {
 	const {
+		tagMode: configuredTagMode,
 		ldApiKey,
 		projectKey,
 		projectName,
@@ -887,6 +900,7 @@ async function executeMigration(
 		dryRun,
 		conflictResolution,
 		nonInteractive,
+		overwriteExisting,
 		doExport,
 		targetKeyBySource,
 		distributionChannelMode: configuredDistributionChannelMode,
@@ -939,8 +953,10 @@ async function executeMigration(
 		if (action === 'select-more') return 'select-more';
 	}
 
-	let tagSyncMode: TagSyncMode = 'replace';
+	let tagSyncMode: TagSyncMode =
+		configuredTagMode ?? (nonInteractive ? 'additive' : 'replace');
 	if (
+		configuredTagMode === undefined &&
 		!nonInteractive &&
 		flags.some((flag) => {
 			const conflict = classifyConflict(datadogFlags, projectKey, flag.key);
@@ -1509,6 +1525,7 @@ async function executeMigration(
 							projectKey,
 							flag.key,
 							targetKey,
+							overwriteExisting,
 						)
 					: classifyConflict(datadogFlags, projectKey, flag.key);
 
@@ -1538,7 +1555,8 @@ async function executeMigration(
 				let resolvedDdKey = targetKey;
 				let appliedPrefix: string | undefined;
 				let existingFlagId =
-					nonInteractive && conflict.type === 'same_project'
+					nonInteractive &&
+					(conflict.type === 'same_project' || conflict.type === 'manual')
 						? conflict.existingFlag?.id
 						: undefined;
 				if (!nonInteractive) {
@@ -1579,10 +1597,9 @@ async function executeMigration(
 				// resolution. This ensures sync re-runs can match existing
 				// allocations by key (preserving UUIDs).
 				allocations = remapAllocationKeys(allocations, flag.key, resolvedDdKey);
-				const targetName = resolveDatadogFlagName(
-					flag.name,
-					flag.key,
-					resolvedDdKey,
+				const targetName = resolveFlagNameForSync(
+					resolveDatadogFlagName(flag.name, flag.key, resolvedDdKey),
+					datadogFlags.find((existing) => existing.id === existingFlagId)?.name,
 				);
 				const hasSemverTargeting = hasSemverConditions(
 					allocations,
@@ -2299,6 +2316,36 @@ async function executeMigration(
 	const timestamp = new Date().toISOString();
 	let outputData: unknown;
 
+	const migrationData: LDMigrationFile = {
+		provider: 'launchdarkly',
+		projectKey,
+		projectName,
+		migratedAt: timestamp,
+		success: errored === 0,
+		summary: {
+			created,
+			synced,
+			skipped,
+			errored,
+			enabled: totalEnabled,
+			disabled: totalDisabled,
+		},
+		failures,
+		enableFailures,
+		disableFailures,
+		disableApprovalRequests,
+		skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
+		syncedFlagKeys: syncedFlagKeys.length > 0 ? syncedFlagKeys : undefined,
+		semverForcedClientKeys:
+			semverForcedClientKeys.length > 0 ? semverForcedClientKeys : undefined,
+		jsonArrayWrappedKeys:
+			jsonArrayWrappedKeys.length > 0 ? jsonArrayWrappedKeys : undefined,
+		flagKeyMapping: flagKeyMappingsForReport(),
+		segmentMigration: segmentMigrationStats,
+		flags: detailedFlags,
+		environmentMapping: environmentMappingArr,
+	};
+
 	if (dryRun) {
 		const dryRunData = {
 			provider: 'launchdarkly',
@@ -2328,35 +2375,6 @@ async function executeMigration(
 	}
 
 	if (!dryRun) {
-		const migrationData: LDMigrationFile = {
-			provider: 'launchdarkly',
-			projectKey,
-			projectName,
-			migratedAt: timestamp,
-			success: errored === 0,
-			summary: {
-				created,
-				synced,
-				skipped,
-				errored,
-				enabled: totalEnabled,
-				disabled: totalDisabled,
-			},
-			failures,
-			enableFailures,
-			disableFailures,
-			disableApprovalRequests,
-			skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
-			syncedFlagKeys: syncedFlagKeys.length > 0 ? syncedFlagKeys : undefined,
-			semverForcedClientKeys:
-				semverForcedClientKeys.length > 0 ? semverForcedClientKeys : undefined,
-			jsonArrayWrappedKeys:
-				jsonArrayWrappedKeys.length > 0 ? jsonArrayWrappedKeys : undefined,
-			flagKeyMapping: flagKeyMappingsForReport(),
-			segmentMigration: segmentMigrationStats,
-			flags: detailedFlags,
-			environmentMapping: environmentMappingArr,
-		};
 		outputData = migrationData;
 		if (created > 0 || synced > 0 || errored > 0) {
 			const filename = `migration-${timestamp}.json`;
@@ -2383,6 +2401,11 @@ async function executeMigration(
 		}
 	}
 
+	if (dryRun && nonInteractive && doExport) {
+		const { exportLDMigrationToXlsx } = await import('./helpers/xlsx.js');
+		await exportLDMigrationToXlsx(migrationData, true);
+	}
+
 	if (nonInteractive && outputData) {
 		writeJsonOutput(outputData);
 	}
@@ -2398,9 +2421,11 @@ export interface LDNonInteractiveOptions {
 	projectKey: string;
 	envMap: Array<[string, string]>;
 	flagKeys: string[];
+	overwriteExisting?: boolean;
 }
 
 export interface RunLaunchDarklyMigrationOptions {
+	tagMode?: TagSyncMode;
 	nonInteractive?: LDNonInteractiveOptions;
 	doExport?: boolean;
 	distributionChannelMode?: DistributionChannelMode;
@@ -2427,6 +2452,7 @@ export async function runLaunchDarklyMigration(
 			options.nonInteractive,
 			options.doExport ?? false,
 			options.distributionChannelMode ?? 'auto',
+			options.tagMode,
 		);
 		return;
 	}
@@ -2705,6 +2731,7 @@ export async function runLaunchDarklyMigration(
 						dryRun,
 						conflictResolution,
 						distributionChannelMode: options?.distributionChannelMode,
+						tagMode: options?.tagMode,
 					},
 				);
 				if (action === 'cancel') break outer;
@@ -2777,6 +2804,7 @@ async function runLaunchDarklyMigrationNonInteractive(
 	ni: LDNonInteractiveOptions,
 	doExport: boolean,
 	distributionChannelMode: DistributionChannelMode,
+	tagMode?: TagSyncMode,
 ): Promise<void> {
 	console.log(chalk.gray('  Running in non-interactive mode\n'));
 	if (dryRun) {
@@ -2885,9 +2913,11 @@ async function runLaunchDarklyMigrationNonInteractive(
 			// Default to skip for cross-project conflicts in non-interactive mode.
 			conflictResolution: { action: 'skip' },
 			nonInteractive: true,
+			overwriteExisting: ni.overwriteExisting,
 			doExport,
 			targetKeyBySource,
 			distributionChannelMode,
+			tagMode,
 		},
 	);
 }
