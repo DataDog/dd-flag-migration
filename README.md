@@ -187,6 +187,16 @@ For large flag sets, the tool supports splitting work across multiple runs:
 - **Tab to filter** — during flag selection, press **Tab** to open the advanced-filter screen and narrow the list by category, such as `not-yet-migrated`. Combined with **Ctrl+A**, this makes it easy to select only the remaining flags for the next run. See [Advanced filtering](#advanced-filtering)
 - **Ctrl+C to save progress** — pressing **Ctrl+C** during migration saves a partial migration file (`~/.dd-flag-migration/migration-<timestamp>.json`) with all flags that completed successfully before the interruption. You can resume later by filtering to `not-yet-migrated` with **Tab**
 
+### Display names on re-migration
+
+Both providers preserve existing collision suffixes such as `Flag name (1)`
+through `Flag name (9)` when they match the source display name. Genuine
+source-side renames still sync. If the new name is taken, live updates try the
+same numbered suffixes as flag creation, without changing the flag key or ID.
+LaunchDarkly migration-status comparisons also recognize these suffixed names.
+Dry runs preserve existing suffixes but cannot validate new name collisions
+against the backend.
+
 ### Advanced filtering
 
 During flag selection, press **Tab** to open a multi-select filter screen. Categories start unchecked, which means no category filter is applied and all flags remain visible. Check one or more categories to narrow the flag list, then press **Enter** to apply the filter selection and return to flag selection, or **Escape** to cancel filter changes. Checking every category is equivalent to applying no category filter. Any selected flags that no longer match the applied filters are automatically unselected on return.
@@ -223,6 +233,8 @@ modes set the corresponding channel on every selected flag.
 
 Pass `--interactive=false` to run the migration entirely from CLI arguments, with no prompts. This is useful for scripted or CI environments. Set `DD_SITE` in the job environment or pass `--datadog-site`; you do not need to provide both.
 
+Non-interactive migrations default to `--tag-mode merge`, preserving Datadog-only tags (including `team:*` tags). Use `--tag-mode replace` to make tags match the source-derived set; empty source tags clear existing tags (LaunchDarkly still includes its `project:<key>` tag). The aliases `additive` and `full` are accepted for merge and replace. In interactive mode, an explicit `--tag-mode` skips the tag-mode prompt.
+
 Non-interactive migrations write a JSON result document to stdout. Status messages, progress output, and export messages are written to stderr so stdout can be piped into tools such as `jq`.
 
 **Required flags**
@@ -240,8 +252,14 @@ Non-interactive migrations write a JSON result document to stdout. Status messag
 | Flag | Description |
 |---|---|
 | `--dry-run` | Preview changes without writing to Datadog |
-| `--export=<bool>` | Export results to an `.xlsx` file after migration (default: `false`) |
-| `--distribution-channel <auto\|client\|server\|all>` | LaunchDarkly distribution-channel behavior (default: `auto`) |
+| `--overwrite-existing` | LaunchDarkly non-interactive only: sync existing target flags without migration metadata, preserving their keys and IDs. Flags linked to another source remain conflicts. |
+| `--export=<bool>` | Export results to an `.xlsx` file in the current directory (default: `false`). LaunchDarkly dry runs also export, with planned changes labeled “Would create” / “Would sync”. |
+| `--distribution-channel <auto\|client\|server\|all>` | LaunchDarkly distribution-channel behavior (default: `auto`); applies to new and existing flags in non-interactive mode |
+| `--tag-mode <merge\|replace>` | Tag sync behavior for both providers (non-interactive default: `merge`) |
+
+For example, add `--tag-mode merge --distribution-channel client` to a
+non-interactive LaunchDarkly command to preserve existing tags and make every
+selected flag available to client SDKs. Both options also apply to dry runs.
 
 **Examples**
 

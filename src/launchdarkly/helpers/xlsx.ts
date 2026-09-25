@@ -133,6 +133,7 @@ function mapLDFlagKind(flag: LDFlag): string {
 
 export async function exportLDMigrationToXlsx(
 	migration: LDMigrationFile,
+	dryRun = false,
 ): Promise<void> {
 	const workbook = new ExcelJS.Workbook();
 	const ws = workbook.addWorksheet('Migration Results');
@@ -174,8 +175,12 @@ export async function exportLDMigrationToXlsx(
 	addSheetHeader(
 		ws,
 		headers.length,
-		'Flag Migration Report — LaunchDarkly → Datadog',
-		`Migration completed on ${dateLabel} for project ${projectLabel}. Flags with status 'Created' require a code change: update your flag evaluation calls to reference the Datadog flag key shown in the 'Action Required' column. Flags with status 'Skipped' were not migrated (unsupported operator or archived).`,
+		dryRun
+			? 'Dry Run Migration Report — LaunchDarkly → Datadog'
+			: 'Flag Migration Report — LaunchDarkly → Datadog',
+		dryRun
+			? `Dry run on ${dateLabel} for project ${projectLabel}. No changes were written to Datadog. 'Would create' and 'Would sync' describe planned changes.`
+			: `Migration completed on ${dateLabel} for project ${projectLabel}. Flags with status 'Created' require a code change: update your flag evaluation calls to reference the Datadog flag key shown in the 'Action Required' column. Flags with status 'Skipped' were not migrated (unsupported operator or archived).`,
 	);
 	addEnvironmentMappingSection(
 		ws,
@@ -193,7 +198,7 @@ export async function exportLDMigrationToXlsx(
 	for (const { flag, status, errorOrWarn, datadogKey } of rows) {
 		const actionRequired =
 			status === 'Created'
-				? `Update your code to reference Datadog flag key: ${datadogKey}`
+				? `${dryRun ? 'After migration: ' : ''}Update your code to reference Datadog flag key: ${datadogKey}`
 				: '';
 
 		const dataRow = ws.addRow([
@@ -204,7 +209,11 @@ export async function exportLDMigrationToXlsx(
 			formatLDMaintainer(flag),
 			flag.tags.join(', '),
 			flag.temporary ? 'Yes' : 'No',
-			status,
+			dryRun && status === 'Created'
+				? 'Would create'
+				: dryRun && status === 'Synced'
+					? 'Would sync'
+					: status,
 			errorOrWarn,
 			actionRequired,
 		]);
@@ -215,7 +224,7 @@ export async function exportLDMigrationToXlsx(
 	}
 
 	const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-	const filename = `migration-export-${timestamp}.xlsx`;
+	const filename = `migration-${dryRun ? 'dry-run-' : ''}export-${timestamp}.xlsx`;
 	const filepath = path.join(process.cwd(), filename);
 	await workbook.xlsx.writeFile(filepath);
 
@@ -231,7 +240,7 @@ export async function exportLDMigrationToXlsx(
 	console.log(`  ${chalk.cyan(filepath)}`);
 	console.log(
 		chalk.gray(
-			`  ${rows.length} flag${rows.length === 1 ? '' : 's'} exported (${counts.created} created, ${counts.synced} synced, ${counts.failed} failed, ${counts.skipped} skipped)`,
+			`  ${rows.length} flag${rows.length === 1 ? '' : 's'} exported (${counts.created} ${dryRun ? 'would create' : 'created'}, ${counts.synced} ${dryRun ? 'would sync' : 'synced'}, ${counts.failed} failed, ${counts.skipped} skipped)`,
 		),
 	);
 	console.log();

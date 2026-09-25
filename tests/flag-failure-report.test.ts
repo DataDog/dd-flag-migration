@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import {
 	afterEach,
 	beforeEach,
@@ -8,6 +9,7 @@ import {
 	jest,
 } from '@jest/globals';
 import AxiosMockAdapter from 'axios-mock-adapter';
+import ExcelJS from 'exceljs';
 import { ddClient } from '../src/datadog/api.js';
 import { eppoClient } from '../src/eppo/api.js';
 import { runEppoMigration } from '../src/eppo/migrate.js';
@@ -349,6 +351,10 @@ describe('flag-level migration failures', () => {
 			)
 			.reply(202, {});
 
+		ddMock
+			.onGet(`${DD_BASE}/api/v2/feature-flags/dd-flag-1`)
+			.reply(200, ddFlagDetail());
+
 		await runLaunchDarklyMigration('dd-api-key', 'dd-app-key', DD_SITE, false, {
 			nonInteractive: {
 				projectKey: 'proj',
@@ -424,6 +430,285 @@ describe('flag-level migration failures', () => {
 		);
 	});
 
+	it.each([
+		{
+			existing: false,
+			active: true,
+			exportReport: true,
+			conflict: false,
+			status: 'Would create',
+		},
+		{
+			existing: true,
+			active: true,
+			exportReport: true,
+			conflict: false,
+			status: 'Would sync',
+		},
+		{
+			existing: true,
+			active: false,
+			exportReport: true,
+			conflict: false,
+			status: 'Would sync',
+		},
+		{
+			existing: true,
+			active: true,
+			exportReport: true,
+			conflict: true,
+			status: 'Failed',
+		},
+		{
+			existing: false,
+			active: true,
+			exportReport: false,
+			conflict: false,
+			status: '',
+		},
+	])('exports dry-run Excel results only when requested: %j', async ({
+		existing,
+		active,
+		exportReport,
+		conflict,
+		status,
+	}) => {
+		const flag = ldFlag();
+		const environment = flag.environments?.production;
+		if (!environment) throw new Error('Test flag is missing production');
+		environment.on = active;
+		mockLaunchDarklyNewFlag(flag);
+		if (existing) {
+			ddMock.onGet(`${DD_BASE}/api/v2/feature-flags`).reply(200, {
+				data: [
+					{
+						id: 'dd-flag-1',
+						type: 'feature-flags',
+						attributes: {
+							key: flag.key,
+							...(conflict
+								? {
+										migration_metadata: {
+											project_key: 'another-project',
+											flag_key: flag.key,
+										},
+									}
+								: {}),
+						},
+					},
+				],
+				meta: { page: { total: 1 } },
+			});
+		}
+		let exportedWorkbook: ExcelJS.Workbook | undefined;
+		const writeFile = jest
+			.fn<ExcelJS.Xlsx['writeFile']>()
+			.mockResolvedValue(undefined);
+		jest
+			.spyOn(ExcelJS.Workbook.prototype, 'xlsx', 'get')
+			.mockImplementation(function (this: ExcelJS.Workbook) {
+				exportedWorkbook = this;
+				return { writeFile } as unknown as ExcelJS.Xlsx;
+			});
+
+		ddMock
+			.onGet(`${DD_BASE}/api/v2/feature-flags/dd-flag-1`)
+			.reply(200, ddFlagDetail());
+
+		await runLaunchDarklyMigration('dd-api-key', 'dd-app-key', DD_SITE, true, {
+			nonInteractive: {
+				projectKey: 'proj',
+				envMap: [['production', 'Production']],
+				flagKeys: [flag.key],
+				overwriteExisting: true,
+			},
+			doExport: exportReport,
+		});
+
+		expect(ddMock.history.post).toHaveLength(0);
+		expect(ddMock.history.put).toHaveLength(0);
+		expect(ddMock.history.delete).toHaveLength(0);
+		expect(parseLastJsonOutput(stdoutWrites).summary).toEqual({
+			created: existing ? 0 : 1,
+			synced: existing && !conflict ? 1 : 0,
+			skipped: 0,
+			errored: conflict ? 1 : 0,
+			enabled: 0,
+			disabled: 0,
+		});
+		if (!exportReport) {
+			expect(writeFile).not.toHaveBeenCalled();
+			return;
+		}
+		expect(writeFile).toHaveBeenCalledTimes(1);
+		const filename = writeFile.mock.calls[0][0];
+		expect(path.dirname(filename)).toBe(process.cwd());
+		expect(path.basename(filename)).toMatch(
+			/^migration-dry-run-export-.*\.xlsx$/,
+		);
+		const sheet = exportedWorkbook?.getWorksheet('Migration Results');
+		if (!sheet) throw new Error('Missing migration sheet');
+		const rows: unknown[][] = [];
+		sheet.eachRow((row) => rows.push(row.values as unknown[]));
+		expect(
+			rows.some((row) =>
+				row.some((cell) =>
+					String(cell).includes('No changes were written to Datadog'),
+				),
+			),
+		).toBe(true);
+		const flagRow = rows.find((row) => row[2] === flag.key);
+		expect(flagRow?.[8]).toBe(status);
+	});
+
+	describe.each([
+		'launchdarkly',
+		'eppo',
+	] as const)('%s collision-resolved name re-sync', (provider) => {
+		it.each([
+			{ active: true, dryRun: false },
+			{ active: false, dryRun: false },
+			{ active: true, dryRun: true },
+			{ active: false, dryRun: true },
+		])('preserves the name and continues syncing: %j', async ({
+			active,
+			dryRun,
+		}) => {
+			const ld = ldFlag();
+			if (!ld.environments?.production) throw new Error('Missing environment');
+			ld.environments.production.on = active;
+			const eppo = eppoFlag();
+			if (!eppo.environments?.[0]) throw new Error('Missing environment');
+			eppo.environments[0].active = active;
+			const name = `${ld.name} (2)`;
+			if (provider === 'launchdarkly') mockLaunchDarklySource(ld);
+			else {
+				eppoMock.onGet(`${EPPO_BASE}/api/v1/feature-flags`).reply(200, [eppo]);
+				eppoMock.onGet(`${EPPO_BASE}/api/v1/audiences`).reply(200, []);
+			}
+			ddMock.onGet(`${DD_BASE}/api/v2/feature-flags`).reply(200, {
+				data: [
+					{
+						id: 'dd-flag-1',
+						type: 'feature-flags',
+						attributes: {
+							key: ld.key,
+							name,
+							migration_metadata:
+								provider === 'launchdarkly'
+									? { project_key: 'proj', flag_key: ld.key }
+									: { provider: 'eppo', source_id: '1', source_key: eppo.key },
+						},
+					},
+				],
+				meta: { page: { total: 1 } },
+			});
+			ddMock.onGet(`${DD_BASE}/api/v2/feature-flags/environments`).reply(200, {
+				data: [ddEnvironment('dd-prod', 'Production', true)],
+			});
+			ddMock.onGet(`${DD_BASE}/api/v2/feature-flags/dd-flag-1`).reply(
+				200,
+				ddFlagDetail(
+					provider === 'launchdarkly'
+						? [
+								{ id: 'true-id', key: 'true', name: 'true', value: 'true' },
+								{ id: 'false-id', key: 'false', name: 'false', value: 'false' },
+							]
+						: [
+								{
+									id: 'on-id',
+									key: 'on',
+									name: 'On',
+									value: 'on',
+									migration_metadata: { provider: 'eppo', source_id: '10' },
+								},
+								{
+									id: 'off-id',
+									key: 'off',
+									name: 'Off',
+									value: 'off',
+									migration_metadata: { provider: 'eppo', source_id: '20' },
+								},
+							],
+				),
+			);
+			ddMock
+				.onPut(`${DD_BASE}/api/v2/feature-flags/dd-flag-1`)
+				.reply((request) =>
+					JSON.parse(request.data).data.attributes.name === ld.name
+						? [
+								409,
+								{
+									errors: [
+										{ detail: 'a feature flag with this name already exists' },
+									],
+								},
+							]
+						: [200, {}],
+				);
+			ddMock
+				.onPut(
+					`${DD_BASE}/api/v2/feature-flags/dd-flag-1/environments/dd-prod/allocations`,
+				)
+				.reply(200, {});
+			ddMock
+				.onPost(
+					`${DD_BASE}/api/v2/feature-flags/dd-flag-1/environments/dd-prod/enable`,
+				)
+				.reply(200, {});
+			ddMock
+				.onPost(
+					`${DD_BASE}/api/v2/feature-flags/dd-flag-1/environments/dd-prod/disable`,
+				)
+				.reply(200, {});
+			if (provider === 'launchdarkly')
+				await runLaunchDarklyMigration(
+					'dd-api-key',
+					'dd-app-key',
+					DD_SITE,
+					dryRun,
+					{
+						nonInteractive: {
+							projectKey: 'proj',
+							envMap: [['production', 'Production']],
+							flagKeys: [ld.key],
+						},
+					},
+				);
+			else
+				await runEppoMigration('dd-api-key', 'dd-app-key', DD_SITE, dryRun, {
+					nonInteractive: {
+						envMap: [['Production', 'Production']],
+						flagKeys: [eppo.key],
+					},
+				});
+			const report = parseLastJsonOutput(stdoutWrites);
+			expect(report.failures).toEqual([]);
+			expect(report.summary.synced).toBe(1);
+			if (dryRun) {
+				expect(report.requests).toContainEqual(
+					expect.objectContaining({
+						method: 'PUT',
+						path: '/api/v2/feature-flags/dd-flag-1',
+						body: { data: { type: 'feature-flags', attributes: { name } } },
+					}),
+				);
+				expect(ddMock.history.put).toHaveLength(0);
+				expect(ddMock.history.post).toHaveLength(0);
+			} else {
+				expect(flagUpdateAttributes(ddMock, 'dd-flag-1')).toContainEqual({
+					name,
+				});
+				expect(flagUpdateAttributes(ddMock, 'dd-flag-1')).toContainEqual(
+					expect.objectContaining({ tags: expect.any(Array) }),
+				);
+				expect(
+					ddMock.history.put.filter((r) => r.url?.endsWith('/allocations')),
+				).toHaveLength(active ? 1 : 0);
+			}
+		});
+	});
+
 	it('includes a LaunchDarkly name update in a full-sync dry run', async () => {
 		const flag = ldFlag();
 		flag.name = 'Renamed LaunchDarkly flag';
@@ -451,6 +736,10 @@ describe('flag-level migration failures', () => {
 		ddMock.onGet(`${DD_BASE}/api/v2/feature-flags/environments`).reply(200, {
 			data: [ddEnvironment('dd-prod', 'Production', true)],
 		});
+
+		ddMock
+			.onGet(`${DD_BASE}/api/v2/feature-flags/dd-flag-1`)
+			.reply(200, ddFlagDetail());
 
 		await runLaunchDarklyMigration('dd-api-key', 'dd-app-key', DD_SITE, true, {
 			nonInteractive: {

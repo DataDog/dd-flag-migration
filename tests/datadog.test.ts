@@ -343,6 +343,7 @@ describe('fetchDatadogFlags', () => {
 			{
 				id: 'uuid-1',
 				key: 'flag-a',
+				name: 'Flag A',
 				tags: ['project:health-100'],
 				migration_metadata: { project_key: 'proj-1', flag_key: 'flag-a' },
 				environmentStatuses: new Map([
@@ -353,6 +354,7 @@ describe('fetchDatadogFlags', () => {
 			{
 				id: 'uuid-2',
 				key: 'flag-b',
+				name: 'Flag B',
 				migration_metadata: undefined,
 			},
 		]);
@@ -382,6 +384,7 @@ describe('fetchDatadogFlags', () => {
 			{
 				id: 'uuid-p',
 				key: 'mobile-flag-a',
+				name: 'Flag A',
 				migration_metadata: {
 					project_key: 'proj-1',
 					flag_key: 'flag-a',
@@ -1297,6 +1300,48 @@ describe('updateFlagName', () => {
 		);
 	});
 
+	it('resolves a name collision on the same UUID without changing the key', async () => {
+		const url = `${BASE}/api/v2/feature-flags/flag-123`;
+		mock.onPut(url).replyOnce(409, {
+			errors: [{ detail: 'a feature flag with this name already exists' }],
+		});
+		mock.onPut(url).replyOnce(409, {
+			errors: [{ detail: 'a feature flag with this name already exists' }],
+		});
+		mock.onPut(url).reply(200, {});
+		await updateFlagName(API_KEY, APP_KEY, 'flag-123', 'Checkout', SITE);
+		expect(
+			mock.history.put.map((r) => JSON.parse(r.data).data.attributes),
+		).toEqual([
+			{ name: 'Checkout' },
+			{ name: 'Checkout (1)' },
+			{ name: 'Checkout (2)' },
+		]);
+		expect(mock.history.post).toHaveLength(0);
+	});
+
+	it('stops after the same nine suffix attempts used by creation', async () => {
+		mock.onPut(`${BASE}/api/v2/feature-flags/flag-123`).reply(409, {
+			errors: [{ detail: 'a feature flag with this name already exists' }],
+		});
+		await expect(
+			updateFlagName(API_KEY, APP_KEY, 'flag-123', 'Checkout', SITE),
+		).rejects.toThrow();
+		expect(mock.history.put).toHaveLength(10);
+		expect(JSON.parse(mock.history.put[9].data).data.attributes).toEqual({
+			name: 'Checkout (9)',
+		});
+	});
+
+	it('does not treat a different conflict as a name collision', async () => {
+		mock.onPut(`${BASE}/api/v2/feature-flags/flag-123`).reply(409, {
+			errors: [{ detail: 'a feature flag with this key already exists' }],
+		});
+		await expect(
+			updateFlagName(API_KEY, APP_KEY, 'flag-123', 'Checkout', SITE),
+		).rejects.toThrow();
+		expect(mock.history.put).toHaveLength(1);
+	});
 	it('throws on error response', async () => {
 		mock.onPut(`${BASE}/api/v2/feature-flags/flag-123`).reply(409);
 
