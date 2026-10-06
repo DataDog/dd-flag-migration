@@ -47,14 +47,30 @@ export function targetKeyAttribute(contextKind: string | undefined): string {
 }
 
 /**
+ * Context-aware clauses can reference the identity as either `key` or `/key`.
+ * Without contextKind, LD uses legacy literal attribute names, so `/key` is
+ * a custom attribute rather than an identity reference.
+ */
+export function isLaunchDarklyKeyAttribute(
+	attribute: string,
+	contextKind: string | undefined,
+): boolean {
+	return attribute === 'key' || (attribute === '/key' && contextKind != null);
+}
+
+/**
  * Map an LD clause attribute to Datadog's flat attribute namespace.
- * Slash-delimited references are normalized only for `ld_` context kinds;
+ * Pass the original contextKind so legacy `/key` attributes remain literal.
+ * Other slash-delimited references are normalized only for `ld_` context kinds;
  * non-leading slashes are part of a literal LD attribute name.
  */
 export function normalizeLaunchDarklyAttribute(
 	attribute: string,
 	contextKind: string | undefined,
 ): string {
+	if (isLaunchDarklyKeyAttribute(attribute, contextKind)) {
+		return targetKeyAttribute(contextKind);
+	}
 	const ck = contextKind ?? 'user';
 	const normalizedAttribute =
 		ck.startsWith('ld_') && attribute.startsWith('/')
@@ -401,11 +417,10 @@ export function buildTargetingRules(
 		} else {
 			const result = mapOperator(clause.op, clause.negate, clause.values);
 			if ('skip' in result) return null; // unsupported non-segment op (safety net)
-			const ck = clause.contextKind ?? 'user';
-			const attribute =
-				clause.attribute === 'key'
-					? targetKeyAttribute(ck)
-					: normalizeLaunchDarklyAttribute(clause.attribute, ck);
+			const attribute = normalizeLaunchDarklyAttribute(
+				clause.attribute,
+				clause.contextKind,
+			);
 			inlineConditions.push({
 				operator: result.operator,
 				attribute,

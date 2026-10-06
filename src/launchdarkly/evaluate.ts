@@ -7,6 +7,7 @@ import type {
 	TestCase,
 } from '../types.js';
 import {
+	isLaunchDarklyKeyAttribute,
 	mapFlagType,
 	normalizeLaunchDarklyAttribute,
 } from './helpers/migration.js';
@@ -177,34 +178,48 @@ export function generateLDTestCases(flag: LDFlag, envKey: string): TestCase[] {
 				const mv = generateLDMatchingValue(clause);
 				const nv = generateLDNonMatchingValue(clause);
 				const ck = clause.contextKind ?? 'user';
+				const isKey = isLaunchDarklyKeyAttribute(
+					clause.attribute,
+					clause.contextKind,
+				);
+				const flatKey = normalizeLaunchDarklyAttribute(
+					clause.attribute,
+					clause.contextKind,
+				);
+				// The context builder accepts reference paths. Escape legacy literal
+				// names so `/key` does not overwrite the LD subject's identity.
+				const contextAttribute =
+					clause.contextKind == null && clause.attribute.startsWith('/')
+						? `/${clause.attribute.replaceAll('~', '~0').replaceAll('/', '~1')}`
+						: isKey
+							? 'key'
+							: clause.attribute;
 
 				if (mv === undefined) {
 					canMatch = false;
-				} else if (ck === 'user' && clause.attribute === 'key') {
+				} else if (ck === 'user' && isKey) {
 					matchSubjectIdOverride = String(mv);
 				} else {
-					const flatKey = normalizeLaunchDarklyAttribute(clause.attribute, ck);
 					matchAttrs[flatKey] = mv;
 					if (ck !== 'user') {
 						matchContextAttrs[ck] ??= {};
-						matchContextAttrs[ck][clause.attribute] = mv;
+						matchContextAttrs[ck][contextAttribute] = mv;
 					} else {
-						matchLdUserAttrs[clause.attribute] = mv;
+						matchLdUserAttrs[contextAttribute] = mv;
 					}
 				}
 
 				if (nv === undefined) {
 					canNonMatch = false;
-				} else if (ck === 'user' && clause.attribute === 'key') {
+				} else if (ck === 'user' && isKey) {
 					nonMatchSubjectIdOverride = String(nv);
 				} else {
-					const flatKey = normalizeLaunchDarklyAttribute(clause.attribute, ck);
 					nonMatchAttrs[flatKey] = nv;
 					if (ck !== 'user') {
 						nonMatchContextAttrs[ck] ??= {};
-						nonMatchContextAttrs[ck][clause.attribute] = nv;
+						nonMatchContextAttrs[ck][contextAttribute] = nv;
 					} else {
-						nonMatchLdUserAttrs[clause.attribute] = nv;
+						nonMatchLdUserAttrs[contextAttribute] = nv;
 					}
 				}
 			}

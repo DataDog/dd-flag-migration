@@ -339,9 +339,13 @@ describe('segment attribute compatibility with flag targeting', () => {
 		[undefined, 'key', 'id'],
 		['ld_device', 'key', 'ld_device.key'],
 		['org', 'key', 'org.key'],
-		['user', '/key', '/key'],
-		['org', '/key', 'org./key'],
+		['user', '/key', 'id'],
+		['org', '/key', 'org.key'],
 		['ld_device', '/key', 'ld_device.key'],
+		[undefined, '/key', '/key'],
+		['user', '/profile/key', '/profile/key'],
+		['user', '/~1key', '/~1key'],
+		['user', 'profile/key', 'profile/key'],
 		['ld_device', '/os/name', 'ld_device.osname'],
 		['user', 'id', 'id'],
 	])('%s + %s remains consistent with flag targeting', (contextKind, attribute, expected) => {
@@ -351,10 +355,21 @@ describe('segment attribute compatibility with flag targeting', () => {
 			{ operator: 'ONE_OF', attribute: expected, value: ['user-1'] },
 		];
 		expect(buildTargetingRules([clause])).toEqual([{ conditions }]);
+		expect(buildTargetingRules([{ ...clause, negate: true }])).toEqual([
+			{ conditions: [{ ...conditions[0], operator: 'NOT_ONE_OF' }] },
+		]);
 		expect(buildNonNegatedRules(segment)).toEqual([{ conditions }]);
 		expect(buildNegatedRules(segment)).toEqual([
 			{ conditions: [{ ...conditions[0], operator: 'NOT_ONE_OF' }] },
 		]);
+		const negatedClauseSegment = makeSegment({
+			key: 's',
+			rules: [makeRule([{ ...clause, negate: true }])],
+		});
+		expect(buildNonNegatedRules(negatedClauseSegment)).toEqual([
+			{ conditions: [{ ...conditions[0], operator: 'NOT_ONE_OF' }] },
+		]);
+		expect(buildNegatedRules(negatedClauseSegment)).toEqual([{ conditions }]);
 	});
 });
 
@@ -760,30 +775,46 @@ describe('segment re-migration compatibility', () => {
 		ddMock.restore();
 	});
 
-	it.each([
-		{ attribute: 'key', negated: false, creationType: 'LIST', expected: 'id' },
-		{ attribute: 'key', negated: true, creationType: 'LIST', expected: 'id' },
-		{
-			attribute: '/key',
-			negated: false,
-			creationType: 'RULES',
-			expected: '/key',
-		},
-		{
-			attribute: '/key',
-			negated: true,
-			creationType: 'RULES',
-			expected: '/key',
-		},
-	])('updates $attribute (negated=$negated) in place on repeated migrations', async ({
+	it.each(
+		[
+			{
+				attribute: 'key',
+				contextKind: 'user',
+				creationType: 'LIST',
+				expected: 'id',
+			},
+			{
+				attribute: '/key',
+				contextKind: 'user',
+				creationType: 'RULES',
+				expected: 'id',
+			},
+			{
+				attribute: '/key',
+				contextKind: 'org',
+				creationType: 'RULES',
+				expected: 'org.key',
+			},
+			{
+				attribute: '/key',
+				contextKind: undefined,
+				creationType: 'RULES',
+				expected: '/key',
+			},
+		].flatMap((testCase) => [
+			{ ...testCase, negated: false },
+			{ ...testCase, negated: true },
+		]),
+	)('updates $contextKind $attribute (negated=$negated) in place on repeated migrations', async ({
 		attribute,
+		contextKind,
 		negated,
 		creationType,
 		expected,
 	}) => {
 		const segment = makeSegment({
 			key: 's',
-			rules: [makeRule([makeClause({ attribute })])],
+			rules: [makeRule([makeClause({ attribute, contextKind })])],
 		});
 		const metadata = {
 			provider: 'launchdarkly',
@@ -800,7 +831,18 @@ describe('segment re-migration compatibility', () => {
 				creation_type: creationType,
 				migration_metadata: metadata,
 				targeting_rules: [
-					{ conditions: [{ operator, attribute, value: ['user-1'] }] },
+					{
+						conditions: [
+							{
+								operator,
+								attribute:
+									contextKind && contextKind !== 'user'
+										? `${contextKind}.${attribute}`
+										: attribute,
+								value: ['user-1'],
+							},
+						],
+					},
 				],
 			},
 		};
