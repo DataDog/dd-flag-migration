@@ -288,7 +288,6 @@ export function classifyNonInteractiveConflict(
 	projectKey: string,
 	sourceFlagKey: string,
 	datadogFlagKey: string,
-	overwriteExisting = false,
 ): NonInteractiveConflictClassification {
 	const keyMatch = datadogFlags.find((f) => f.key === datadogFlagKey);
 	if (!keyMatch) return { type: 'none' };
@@ -301,7 +300,7 @@ export function classifyNonInteractiveConflict(
 		return { type: 'same_project', existingFlag: keyMatch };
 	}
 
-	if (overwriteExisting && !metadata) {
+	if (!metadata) {
 		return { type: 'manual', existingFlag: keyMatch };
 	}
 
@@ -498,7 +497,7 @@ function flagLabel(
 		case 'same_project':
 		case 'manual':
 			indicator = chalk.green('✓');
-			badge = `  ${chalk.bgGreen.black(' In Datadog ')}`;
+			badge = `  ${chalk.bgGreen.black(' In Datadog — will sync from LaunchDarkly ')}`;
 			break;
 		case 'cross_project':
 			if (conflictResolution?.action === 'prefix') {
@@ -785,8 +784,9 @@ export async function selectFlags(
 	);
 	if (inDatadogCount > 0) {
 		console.log(
-			chalk.gray(`  ${inDatadogCount} flag(s) already exist in Datadog `) +
-				chalk.green('✓'),
+			chalk.gray(
+				`  ${inDatadogCount} flag(s) already exist in Datadog and will sync from LaunchDarkly if selected `,
+			) + chalk.green('✓'),
 		);
 	}
 	if (prefixedCount > 0) {
@@ -875,7 +875,6 @@ interface MigrationOptions {
 	dryRun: boolean;
 	conflictResolution?: ConflictResolution;
 	nonInteractive?: boolean;
-	overwriteExisting?: boolean;
 	doExport?: boolean;
 	targetKeyBySource?: Map<string, string>;
 	distributionChannelMode?: DistributionChannelMode;
@@ -900,7 +899,6 @@ async function executeMigration(
 		dryRun,
 		conflictResolution,
 		nonInteractive,
-		overwriteExisting,
 		doExport,
 		targetKeyBySource,
 		distributionChannelMode: configuredDistributionChannelMode,
@@ -1525,7 +1523,6 @@ async function executeMigration(
 							projectKey,
 							flag.key,
 							targetKey,
-							overwriteExisting,
 						)
 					: classifyConflict(datadogFlags, projectKey, flag.key);
 
@@ -1835,7 +1832,7 @@ async function executeMigration(
 					}
 
 					activeRunner.printMessage(
-						`⚠ ${chalk.cyan(flag.key)} exists in Datadog — targeting filters in ${envsToEnable.map((e) => e.name).join(', ')} will be overwritten`,
+						`⚠ ${chalk.cyan(flag.key)} exists in Datadog — syncing from LaunchDarkly will overwrite Datadog targeting edits in ${envsToEnable.map((e) => e.name).join(', ')}`,
 					);
 					activeRunner.beginFlag(flag.key);
 
@@ -2421,7 +2418,6 @@ export interface LDNonInteractiveOptions {
 	projectKey: string;
 	envMap: Array<[string, string]>;
 	flagKeys: string[];
-	overwriteExisting?: boolean;
 }
 
 export interface RunLaunchDarklyMigrationOptions {
@@ -2913,7 +2909,6 @@ async function runLaunchDarklyMigrationNonInteractive(
 			// Default to skip for cross-project conflicts in non-interactive mode.
 			conflictResolution: { action: 'skip' },
 			nonInteractive: true,
-			overwriteExisting: ni.overwriteExisting,
 			doExport,
 			targetKeyBySource,
 			distributionChannelMode,

@@ -9,7 +9,6 @@ export interface NonInteractiveArgs {
 	projectKey?: string;
 	envMap: Array<[string, string]>;
 	flagKeys: string[];
-	overwriteExisting?: boolean;
 }
 
 export interface MigrateArgs {
@@ -91,7 +90,6 @@ interface FlagDef {
 
 const FLAGS: FlagDef[] = [
 	{ name: '--dry-run', takesValue: false },
-	{ name: '--overwrite-existing', takesValue: false },
 	{ name: '--export', takesValue: true },
 	{ name: '--datadog-site', takesValue: true },
 	{ name: '--interactive', takesValue: true },
@@ -109,7 +107,6 @@ const FLAGS: FlagDef[] = [
  */
 export function parseMigrateArgs(argv: string[]): MigrateArgs {
 	let dryRun = false;
-	let overwriteExisting = false;
 	let doExport = false;
 	let datadogSite: string | undefined;
 	let interactive: boolean | undefined;
@@ -160,9 +157,6 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 			case '--dry-run':
 				dryRun = true;
 				break;
-			case '--overwrite-existing':
-				overwriteExisting = true;
-				break;
 			case '--export':
 				doExport = parseBool(value as string, name);
 				break;
@@ -207,11 +201,6 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 	}
 
 	const isInteractive = interactive ?? true;
-	if (overwriteExisting && (isInteractive || provider !== 'launchdarkly')) {
-		throw new ArgParseError(
-			'--overwrite-existing requires --interactive=false and --provider LaunchDarkly',
-		);
-	}
 
 	if (!isInteractive) {
 		if (!provider) {
@@ -249,7 +238,6 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 				projectKey,
 				envMap,
 				flagKeys,
-				...(overwriteExisting ? { overwriteExisting: true } : {}),
 			},
 		};
 	}

@@ -165,18 +165,18 @@ describe('classifyNonInteractiveConflict', () => {
 		expect(result.existingFlag?.id).toBe('dd-same');
 	});
 
-	it('returns duplicate when the target key exists without migration metadata', () => {
+	it('syncs the target key without migration metadata by default', () => {
 		const result = classifyNonInteractiveConflict(
 			[{ id: 'dd-manual', key: targetKey }],
 			projectKey,
 			sourceKey,
 			targetKey,
 		);
-		expect(result.type).toBe('duplicate');
+		expect(result.type).toBe('manual');
 		expect(result.existingFlag?.id).toBe('dd-manual');
 	});
 
-	it('allows adopting the exact target flag without metadata only when overwrite is enabled', () => {
+	it('only adopts the requested target flag without metadata', () => {
 		const existing = { id: 'dd-manual', key: targetKey };
 		expect(
 			classifyNonInteractiveConflict(
@@ -184,7 +184,6 @@ describe('classifyNonInteractiveConflict', () => {
 				projectKey,
 				sourceKey,
 				targetKey,
-				true,
 			),
 		).toEqual({ type: 'manual', existingFlag: existing });
 		expect(
@@ -193,7 +192,6 @@ describe('classifyNonInteractiveConflict', () => {
 				projectKey,
 				sourceKey,
 				'unrelated-key',
-				true,
 			),
 		).toEqual({ type: 'none' });
 	});
@@ -211,7 +209,6 @@ describe('classifyNonInteractiveConflict', () => {
 				projectKey,
 				sourceKey,
 				targetKey,
-				true,
 			),
 		).toEqual({ type: 'duplicate', existingFlag: existing });
 	});

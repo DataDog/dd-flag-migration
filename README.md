@@ -187,6 +187,36 @@ For large flag sets, the tool supports splitting work across multiple runs:
 - **Tab to filter** — during flag selection, press **Tab** to open the advanced-filter screen and narrow the list by category, such as `not-yet-migrated`. Combined with **Ctrl+A**, this makes it easy to select only the remaining flags for the next run. See [Advanced filtering](#advanced-filtering)
 - **Ctrl+C to save progress** — pressing **Ctrl+C** during migration saves a partial migration file (`~/.dd-flag-migration/migration-<timestamp>.json`) with all flags that completed successfully before the interruption. You can resume later by filtering to `not-yet-migrated` with **Tab**
 
+### Existing LaunchDarkly flags and re-sync
+
+Interactive and non-interactive migrations sync selected existing flags from
+LaunchDarkly, including flags created manually in Datadog:
+
+- Matching migration metadata identifies a flag eligible for re-sync.
+- A matching target key without migration metadata is also eligible for re-sync.
+- A target key linked to another source flag or project is a conflict and is
+  never overwritten automatically. Interactive users can skip it or choose
+  another key; non-interactive runs report it as a failure and continue.
+- If no existing target matches, the tool creates a new flag.
+
+Interactive selection finds prior migrations by source metadata, including
+prefixed keys. Non-interactive runs use the requested target key
+(`--feature-flag source-key,datadog-key` when the keys differ).
+The `--overwrite-existing` option has been removed; syncing flags without
+migration metadata is now the default in both modes.
+
+**Sync can overwrite edits made directly in Datadog**, whether the flag was
+created manually or by an earlier migration. It replaces targeting and default
+variants in mapped source-enabled environments, reconciles mapped environment
+enablement, and syncs names and non-boolean variants. Tags follow the selected
+merge/replace mode; permissions are merged. Distribution-channel settings
+follow the selected mode. Flag keys and IDs are preserved.
+
+Interactive selection labels existing flags “In Datadog — will sync from
+LaunchDarkly.” Exclude flags maintained in Datadog from the selection (or from
+non-interactive `--feature-flag` inputs) to preserve their settings.
+Use `--dry-run` to preview without modifying Datadog.
+
 ### Display names on re-migration
 
 Both providers preserve existing collision suffixes such as `Flag name (1)`
@@ -252,7 +282,6 @@ Non-interactive migrations write a JSON result document to stdout. Status messag
 | Flag | Description |
 |---|---|
 | `--dry-run` | Preview changes without writing to Datadog |
-| `--overwrite-existing` | LaunchDarkly non-interactive only: sync existing target flags without migration metadata, preserving their keys and IDs. Flags linked to another source remain conflicts. |
 | `--export=<bool>` | Export results to an `.xlsx` file in the current directory (default: `false`). LaunchDarkly dry runs also export, with planned changes labeled “Would create” / “Would sync”. |
 | `--distribution-channel <auto\|client\|server\|all>` | LaunchDarkly distribution-channel behavior (default: `auto`); applies to new and existing flags in non-interactive mode |
 | `--tag-mode <merge\|replace>` | Tag sync behavior for both providers (non-interactive default: `merge`) |
@@ -610,7 +639,7 @@ For each selected flag, the tool:
   variant; retains split or progressive fallthroughs as catch-all targeting
   filters
 - For flags that already exist in Datadog, synchronizes the LaunchDarkly display
-  name on every re-migration and syncs targeting for newly mapped environments
+  name on every re-migration and replaces targeting in mapped environments where the source flag is enabled
   instead of re-creating the flag
 - Enables the flag in Datadog environments where it was enabled (`on: true`) in LaunchDarkly
 

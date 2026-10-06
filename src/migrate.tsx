@@ -134,7 +134,6 @@ async function main(): Promise<void> {
 							projectKey: ni.projectKey!,
 							envMap: ni.envMap,
 							flagKeys: ni.flagKeys,
-							overwriteExisting: ni.overwriteExisting,
 						},
 					},
 				);

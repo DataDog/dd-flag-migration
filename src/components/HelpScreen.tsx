@@ -168,16 +168,6 @@ export function HelpScreen(): JSX.Element {
 				</Text>
 			),
 		},
-		{
-			id: 'overwrite-existing',
-			render: () => (
-				<Text>
-					{
-						'  --overwrite-existing        Non-interactive LaunchDarkly: sync existing flags without migration metadata'
-					}
-				</Text>
-			),
-		},
 		{ id: 'space-migrate', render: () => <Text> </Text> },
 		{
 			id: 'required-title',

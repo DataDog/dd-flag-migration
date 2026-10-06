@@ -63,34 +63,9 @@ describe('parseMigrateArgs', () => {
 		});
 	});
 
-	it('accepts explicit overwrite for non-interactive LaunchDarkly migrations', () => {
-		const args = parseMigrateArgs([
-			'--interactive=false',
-			'--provider=LaunchDarkly',
-			'--project=health-app',
-			'--env-map=Production,production',
-			'--feature-flag=existing',
-			'--overwrite-existing',
-			'--dry-run',
-			'--export=true',
-		]);
-		expect(args.nonInteractive?.overwriteExisting).toBe(true);
-		expect(args.dryRun).toBe(true);
-		expect(args.doExport).toBe(true);
-	});
-
-	it.each([
-		['--overwrite-existing'],
-		['--overwrite-existing', '--interactive=false', '--provider=Eppo'],
-	])('rejects overwrite outside non-interactive LaunchDarkly: %j', (...argv) => {
-		expect(() => parseMigrateArgs(argv)).toThrow(
-			/--overwrite-existing requires/,
-		);
-	});
-
-	it('rejects a value for the overwrite switch', () => {
-		expect(() => parseMigrateArgs(['--overwrite-existing=false'])).toThrow(
-			/does not take a value/,
+	it('rejects the removed overwrite-existing option', () => {
+		expect(() => parseMigrateArgs(['--overwrite-existing'])).toThrow(
+			/Unknown option/,
 		);
 	});
 

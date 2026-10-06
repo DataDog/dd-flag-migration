@@ -520,7 +520,6 @@ describe('flag-level migration failures', () => {
 				projectKey: 'proj',
 				envMap: [['production', 'Production']],
 				flagKeys: [flag.key],
-				overwriteExisting: true,
 			},
 			doExport: exportReport,
 		});
