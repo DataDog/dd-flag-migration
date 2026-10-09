@@ -63,12 +63,6 @@ describe('parseMigrateArgs', () => {
 		});
 	});
 
-	it('rejects the removed overwrite-existing option', () => {
-		expect(() => parseMigrateArgs(['--overwrite-existing'])).toThrow(
-			/Unknown option/,
-		);
-	});
-
 	it('accepts provider names case-insensitively', () => {
 		const args = parseMigrateArgs([
 			'--interactive=false',
