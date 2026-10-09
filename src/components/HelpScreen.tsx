@@ -147,6 +147,17 @@ export function HelpScreen(): JSX.Element {
 				</Text>
 			),
 		},
+
+		{
+			id: 'migrate-tag-mode',
+			render: () => (
+				<Text>
+					{
+						'  --tag-mode <merge|replace>    Tag sync behavior (non-interactive default: merge; otherwise prompt)'
+					}
+				</Text>
+			),
+		},
 		{
 			id: 'distribution-channel',
 			render: () => (

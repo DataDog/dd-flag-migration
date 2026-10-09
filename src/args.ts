@@ -12,6 +12,7 @@ export interface NonInteractiveArgs {
 }
 
 export interface MigrateArgs {
+	tagMode?: TagMode;
 	dryRun: boolean;
 	datadogSite: string | undefined;
 	interactive: boolean;
@@ -97,6 +98,7 @@ const FLAGS: FlagDef[] = [
 	{ name: '--env-map', takesValue: true },
 	{ name: '--feature-flag', takesValue: true },
 	{ name: '--distribution-channel', takesValue: true },
+	{ name: '--tag-mode', takesValue: true },
 ];
 
 /**
@@ -111,6 +113,7 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 	let provider: ProviderValue | undefined;
 	let projectKey: string | undefined;
 	let distributionChannelMode: DistributionChannelMode | undefined;
+	let tagMode: TagMode | undefined;
 	const envMap: Array<[string, string]> = [];
 	const flagKeys: string[] = [];
 
@@ -186,6 +189,9 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 			case '--feature-flag':
 				flagKeys.push((value as string).trim());
 				break;
+			case '--tag-mode':
+				tagMode = normalizeTagMode(value as string);
+				break;
 			case '--distribution-channel':
 				distributionChannelMode = normalizeDistributionChannelMode(
 					value as string,
@@ -226,6 +232,7 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 			interactive: false,
 			doExport,
 			distributionChannelMode,
+			tagMode,
 			nonInteractive: {
 				provider,
 				projectKey,
@@ -241,6 +248,7 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 		interactive: true,
 		doExport,
 		distributionChannelMode,
+		tagMode,
 	};
 }
 

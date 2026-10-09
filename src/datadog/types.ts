@@ -14,6 +14,7 @@ export type DatadogEnvironmentStatus = 'ENABLED' | 'DISABLED';
 export interface DatadogFlagEntry {
 	id: string;
 	key: string;
+	name?: string;
 	tags?: string[];
 	migration_metadata?: MigrationMetadata;
 	environmentStatuses?: Map<string, DatadogEnvironmentStatus>;

@@ -55,8 +55,9 @@ When introducing a new field in this tier: a missing value in the source must pr
   LaunchDarkly team tags are included only when the source team is matched to
   a Datadog team.
   Merge preserves Datadog-only tags; overwrite is Tier 1 full sync and an empty
-  source array clears all tags. Non-interactive migrations retain overwrite as
-  the backward-compatible default.
+  source array clears all tags. Non-interactive migrations default to additive merge, preserving Datadog-only
+  tags even when the source tag array is empty. Use `--tag-mode replace` to
+  explicitly select full replacement; `--tag-mode merge` selects additive merge.
 
 ### Tier 2 — Additive merge
 

@@ -128,6 +128,33 @@ describe('migration status comparison', () => {
 		});
 	});
 
+	it.each([
+		'Checkout (1)',
+		'Checkout (9)',
+	])('accepts a collision-resolved name: %s', (name) => {
+		const result = compareMigrationStatus(
+			input({
+				datadogDetails: new Map([['dd-flag', { ...datadogDetail, name }]]),
+			}),
+		);
+		expect(result.flags[0].status).toBe('in-sync');
+		expect(result.flags[0].flagWideChanges).not.toContain('name');
+	});
+
+	it.each([
+		'Old checkout (1)',
+		'Checkout (01)',
+		'Checkout (1) extra',
+	])('still reports unrelated name drift: %s', (name) => {
+		const result = compareMigrationStatus(
+			input({
+				datadogDetails: new Map([['dd-flag', { ...datadogDetail, name }]]),
+			}),
+		);
+		expect(result.flags[0].status).toBe('out-of-sync');
+		expect(result.flags[0].flagWideChanges).toContain('name');
+	});
+
 	it('uses the migrated Datadog key as the default display name after a key rename', () => {
 		const result = compareMigrationStatus(
 			input({

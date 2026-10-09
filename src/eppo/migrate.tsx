@@ -23,14 +23,16 @@ import {
 	disableFeatureFlagEnvironmentWithOutcome,
 	enableFeatureFlagEnvironment,
 	fetchDatadogEnvironments,
-	fetchDatadogFlagKeys,
+	fetchDatadogFlags,
 	fetchFlagDetail,
+	indexDatadogFlagKeys,
 	syncAllocationsForEnvironment,
 	syncVariantsCreatesAndUpdates,
 	updateFlagDistributionChannel,
 	updateFlagName,
 	updateFlagTags,
 } from '../datadog/api.js';
+import { resolveFlagNameForSync } from '../datadog/flag-names.js';
 import {
 	buildVariantSyncDryRunRequests,
 	eppoSourceIdLookupKey,
@@ -38,6 +40,7 @@ import {
 import type {
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,
+	DatadogFlagEntry,
 	EnvironmentMapping,
 	MigrationEnvironmentMapping,
 } from '../datadog/types.js';
@@ -315,8 +318,10 @@ async function confirmMigration(
 	provider: string,
 	site: string,
 	dryRun: boolean,
+	datadogFlags: DatadogFlagEntry[],
 	nonInteractive = false,
 	doExport = false,
+	configuredTagMode?: TagSyncMode,
 ): Promise<ConfirmAction> {
 	if (flags.length === 0) {
 		console.log(chalk.yellow('\nNo flags selected — nothing to migrate.'));
@@ -367,8 +372,10 @@ async function confirmMigration(
 		}
 	}
 
-	let tagSyncMode: TagSyncMode = 'replace';
+	let tagSyncMode: TagSyncMode =
+		configuredTagMode ?? (nonInteractive ? 'additive' : 'replace');
 	if (
+		configuredTagMode === undefined &&
 		!nonInteractive &&
 		flags.some((flag) => datadogIdForEppoFlag(flag, datadogKeys) !== undefined)
 	) {
@@ -613,6 +620,10 @@ async function confirmMigration(
 				const envsToEnable = getEnvsToEnable(flag, envMapping);
 				const envsToDisable = getEnvsToDisable(flag, envMapping);
 				const existingFlagId = datadogIdForEppoFlag(flag, datadogKeys);
+				const targetName = resolveFlagNameForSync(
+					flag.name,
+					datadogFlags.find((existing) => existing.id === existingFlagId)?.name,
+				);
 
 				// Count targeting rules for reporting (all environments — used for new-flag path)
 				const allRuleCount = allocations.reduce(
@@ -642,7 +653,7 @@ async function confirmMigration(
 							body: {
 								data: {
 									type: 'feature-flags',
-									attributes: { name: flag.name },
+									attributes: { name: targetName },
 								},
 							},
 						});
@@ -712,7 +723,7 @@ async function confirmMigration(
 								ddApiKey,
 								ddAppKey,
 								existingFlagId,
-								flag.name,
+								targetName,
 								site,
 							);
 							const result = await syncVariantsCreatesAndUpdates(
@@ -903,7 +914,7 @@ async function confirmMigration(
 								ddApiKey,
 								ddAppKey,
 								existingFlagId,
-								flag.name,
+								targetName,
 								site,
 							);
 							// Apply variant creates+updates first so allocation
@@ -1288,6 +1299,7 @@ export interface EppoNonInteractiveOptions {
 }
 
 export interface RunEppoMigrationOptions {
+	tagMode?: TagSyncMode;
 	nonInteractive?: EppoNonInteractiveOptions;
 	doExport?: boolean;
 }
@@ -1312,6 +1324,7 @@ export async function runEppoMigration(
 			dryRun,
 			options.nonInteractive,
 			options.doExport ?? false,
+			options.tagMode,
 		);
 		return;
 	}
@@ -1321,18 +1334,20 @@ export async function runEppoMigration(
 	const spinner = createSpinner('Loading data…').start();
 	let flags: EppoFlag[] = [];
 	let datadogKeys: Map<string, string> = new Map();
+	let datadogFlags: DatadogFlagEntry[] = [];
 	let datadogEnvs: DatadogEnvironment[] = [];
 
 	try {
-		[flags, datadogKeys, datadogEnvs] = await Promise.all([
+		[flags, datadogFlags, datadogEnvs] = await Promise.all([
 			fetchEppoFlags(apiKey, {
 				onProgress: (fetched) => {
 					spinner.text = `Loading data… (${fetched} Eppo flag${fetched === 1 ? '' : 's'} fetched)`;
 				},
 			}),
-			fetchDatadogFlagKeys(ddApiKey, ddAppKey, ddSite),
+			fetchDatadogFlags(ddApiKey, ddAppKey, ddSite),
 			fetchDatadogEnvironments(ddApiKey, ddAppKey, ddSite),
 		]);
+		datadogKeys = indexDatadogFlagKeys(datadogFlags);
 		spinner.succeed(
 			`Loaded ${flags.length} Eppo flag(s) · ${datadogEnvs.length} Datadog environment(s)`,
 		);
@@ -1423,6 +1438,10 @@ export async function runEppoMigration(
 					'eppo',
 					ddSite,
 					dryRun,
+					datadogFlags,
+					false,
+					false,
+					options?.tagMode,
 				);
 				if (action === 'cancel') break outer;
 				if (action === 'migrate') break outer;
@@ -1522,6 +1541,7 @@ async function runEppoMigrationNonInteractive(
 	dryRun: boolean,
 	ni: EppoNonInteractiveOptions,
 	doExport: boolean,
+	tagMode?: TagSyncMode,
 ): Promise<void> {
 	console.log();
 	console.log(chalk.gray('  Running in non-interactive mode'));
@@ -1533,18 +1553,20 @@ async function runEppoMigrationNonInteractive(
 	const spinner = createSpinner('Loading data…').start();
 	let flags: EppoFlag[] = [];
 	let datadogKeys: Map<string, string> = new Map();
+	let datadogFlags: DatadogFlagEntry[] = [];
 	let datadogEnvs: DatadogEnvironment[] = [];
 
 	try {
-		[flags, datadogKeys, datadogEnvs] = await Promise.all([
+		[flags, datadogFlags, datadogEnvs] = await Promise.all([
 			fetchEppoFlags(apiKey, {
 				onProgress: (fetched) => {
 					spinner.text = `Loading data… (${fetched} Eppo flag${fetched === 1 ? '' : 's'} fetched)`;
 				},
 			}),
-			fetchDatadogFlagKeys(ddApiKey, ddAppKey, ddSite),
+			fetchDatadogFlags(ddApiKey, ddAppKey, ddSite),
 			fetchDatadogEnvironments(ddApiKey, ddAppKey, ddSite),
 		]);
+		datadogKeys = indexDatadogFlagKeys(datadogFlags);
 		spinner.succeed(
 			`Loaded ${flags.length} Eppo flag(s) · ${datadogEnvs.length} Datadog environment(s)`,
 		);
@@ -1586,7 +1608,9 @@ async function runEppoMigrationNonInteractive(
 		'eppo',
 		ddSite,
 		dryRun,
+		datadogFlags,
 		true,
 		doExport,
+		tagMode,
 	);
 }
