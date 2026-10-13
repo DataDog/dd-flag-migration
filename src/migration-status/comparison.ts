@@ -1,3 +1,4 @@
+import { resolveFlagNameForSync } from '../datadog/flag-names.js';
 import type {
 	DatadogAllocationForFlagCreation,
 	DatadogStatusAllocation,
@@ -148,7 +149,7 @@ function compareFlag(
 		source.key,
 		actual.key,
 	);
-	if (expectedName !== actual.name) {
+	if (resolveFlagNameForSync(expectedName, actual.name) !== actual.name) {
 		flagWideChanges.push('name');
 		flagWideDetails.push('Flag name differs.');
 	}

@@ -4,6 +4,7 @@ import {
 	datadogHeaders,
 	datadogSensitiveHeaderNames,
 } from './auth.js';
+import { flagNameCandidate, MAX_FLAG_NAME_SUFFIX } from './flag-names.js';
 import {
 	eppoSourceIdLookupKey,
 	FEATURE_FLAG_PAGE_LIMIT,
@@ -258,39 +259,21 @@ export async function fetchDatadogFlagKeys(
 	appKey: string,
 	site = 'datadoghq.com',
 ): Promise<Map<string, string>> {
-	const baseUrl = datadogBaseUrl(site);
+	return indexDatadogFlagKeys(await fetchDatadogFlags(apiKey, appKey, site));
+}
+
+export function indexDatadogFlagKeys(
+	flags: DatadogFlagEntry[],
+): Map<string, string> {
 	const keys = new Map<string, string>();
-	let offset = 0;
-	while (true) {
-		const response = await ddClient.get<JsonApiFlagListResponse>(
-			`${baseUrl}/api/v2/feature-flags`,
-			{
-				headers: ddHeaders(apiKey, appKey),
-				params: {
-					limit: FEATURE_FLAG_PAGE_LIMIT,
-					offset,
-					is_archived: false,
-				},
-			},
-		);
-		const flags = response.data.data ?? [];
-		for (const f of flags) {
-			keys.set(f.attributes.key, f.id);
-			const metadata = f.attributes.migration_metadata;
-			if (metadata?.provider === 'eppo') {
-				if (metadata.source_key) keys.set(metadata.source_key, f.id);
-				if (metadata.source_id) {
-					keys.set(eppoSourceIdLookupKey(metadata.source_id), f.id);
-				}
-			}
+	for (const flag of flags) {
+		keys.set(flag.key, flag.id);
+		const metadata = flag.migration_metadata;
+		if (metadata?.provider === 'eppo') {
+			if (metadata.source_key) keys.set(metadata.source_key, flag.id);
+			if (metadata.source_id)
+				keys.set(eppoSourceIdLookupKey(metadata.source_id), flag.id);
 		}
-		const nextOffset = nextFeatureFlagOffset(
-			response.data,
-			offset,
-			flags.length,
-		);
-		if (nextOffset === undefined) break;
-		offset = nextOffset;
 	}
 	return keys;
 }
@@ -321,6 +304,7 @@ export async function fetchDatadogFlags(
 			allFlags.push({
 				id: f.id,
 				key: f.attributes.key,
+				...(f.attributes.name !== undefined ? { name: f.attributes.name } : {}),
 				...(f.attributes.tags !== undefined ? { tags: f.attributes.tags } : {}),
 				migration_metadata: f.attributes.migration_metadata,
 				...(flagEnvironments !== undefined
@@ -346,6 +330,16 @@ export async function fetchDatadogFlags(
 	return allFlags;
 }
 
+function isFlagNameConflict(error: unknown): boolean {
+	return (
+		axios.isAxiosError(error) &&
+		error.response?.status === 409 &&
+		JSON.stringify(error.response.data)?.includes(
+			'a feature flag with this name already exists',
+		) === true
+	);
+}
+
 export async function createFeatureFlag(
 	apiKey: string,
 	appKey: string,
@@ -355,7 +349,7 @@ export async function createFeatureFlag(
 	const baseUrl = datadogBaseUrl(site);
 	let attempt = 0;
 	for (;;) {
-		const name = attempt === 0 ? request.name : `${request.name} (${attempt})`;
+		const name = flagNameCandidate(request.name, attempt);
 		const body = {
 			data: { type: 'feature-flags', attributes: { ...request, name } },
 		};
@@ -373,14 +367,7 @@ export async function createFeatureFlag(
 				key: response.data.data.attributes.key,
 			};
 		} catch (err) {
-			if (
-				attempt < 9 &&
-				axios.isAxiosError(err) &&
-				err.response?.status === 409 &&
-				JSON.stringify(err.response.data).includes(
-					'a feature flag with this name already exists',
-				)
-			) {
+			if (attempt < MAX_FLAG_NAME_SUFFIX && isFlagNameConflict(err)) {
 				attempt++;
 				continue;
 			}
@@ -431,15 +418,26 @@ export async function updateFlagName(
 	site = 'datadoghq.com',
 ): Promise<void> {
 	const baseUrl = datadogBaseUrl(site);
-	const body = {
-		data: { type: 'feature-flags', attributes: { name } },
-	};
-	await ddClient.put(`${baseUrl}/api/v2/feature-flags/${flagId}`, body, {
-		headers: {
-			...ddHeaders(apiKey, appKey),
-			'Content-Type': 'application/json',
-		},
-	});
+	for (let attempt = 0; ; attempt++) {
+		const body = {
+			data: {
+				type: 'feature-flags',
+				attributes: { name: flagNameCandidate(name, attempt) },
+			},
+		};
+		try {
+			await ddClient.put(`${baseUrl}/api/v2/feature-flags/${flagId}`, body, {
+				headers: {
+					...ddHeaders(apiKey, appKey),
+					'Content-Type': 'application/json',
+				},
+			});
+			return;
+		} catch (error) {
+			if (attempt >= MAX_FLAG_NAME_SUFFIX || !isFlagNameConflict(error))
+				throw error;
+		}
+	}
 }
 
 export async function updateFlagDistributionChannel(

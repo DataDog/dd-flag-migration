@@ -91,6 +91,39 @@ describe('parseMigrateArgs', () => {
 		expect(args.distributionChannelMode).toBe(distributionChannelMode);
 	});
 
+	it.each([
+		['merge', 'additive'],
+		['additive', 'additive'],
+		['replace', 'replace'],
+		['full', 'replace'],
+	] as const)('accepts tag mode %s for both providers', (input, expected) => {
+		for (const provider of ['launchdarkly', 'eppo']) {
+			const args = parseMigrateArgs([
+				'--interactive=false',
+				'--provider',
+				provider,
+				...(provider === 'launchdarkly' ? ['--project=health-app'] : []),
+				'--env-map=Production,production',
+				'--feature-flag=flag',
+				'--tag-mode',
+				input,
+			]);
+			expect(args.tagMode).toBe(expected);
+		}
+	});
+
+	it('allows an explicit tag mode in interactive mode', () => {
+		expect(parseMigrateArgs(['--tag-mode=replace']).tagMode).toBe('replace');
+		expect(parseMigrateArgs([]).tagMode).toBeUndefined();
+	});
+
+	it('rejects unknown or missing tag modes', () => {
+		expect(() => parseMigrateArgs(['--tag-mode=unknown'])).toThrow(
+			/--tag-mode must be/,
+		);
+		expect(() => parseMigrateArgs(['--tag-mode'])).toThrow(ArgParseError);
+	});
+
 	it('rejects an unknown distribution channel', () => {
 		expect(() => parseMigrateArgs(['--distribution-channel=mobile'])).toThrow(
 			/--distribution-channel must be one of/,

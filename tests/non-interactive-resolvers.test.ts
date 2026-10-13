@@ -165,15 +165,52 @@ describe('classifyNonInteractiveConflict', () => {
 		expect(result.existingFlag?.id).toBe('dd-same');
 	});
 
-	it('returns duplicate when the target key exists without migration metadata', () => {
+	it('syncs the target key without migration metadata by default', () => {
 		const result = classifyNonInteractiveConflict(
 			[{ id: 'dd-manual', key: targetKey }],
 			projectKey,
 			sourceKey,
 			targetKey,
 		);
-		expect(result.type).toBe('duplicate');
+		expect(result.type).toBe('manual');
 		expect(result.existingFlag?.id).toBe('dd-manual');
+	});
+
+	it('only adopts the requested target flag without metadata', () => {
+		const existing = { id: 'dd-manual', key: targetKey };
+		expect(
+			classifyNonInteractiveConflict(
+				[existing],
+				projectKey,
+				sourceKey,
+				targetKey,
+			),
+		).toEqual({ type: 'manual', existingFlag: existing });
+		expect(
+			classifyNonInteractiveConflict(
+				[existing],
+				projectKey,
+				sourceKey,
+				'unrelated-key',
+			),
+		).toEqual({ type: 'none' });
+	});
+
+	it.each([
+		{ project_key: 'other-project', flag_key: sourceKey },
+		{ project_key: projectKey, flag_key: 'other-flag' },
+		{ provider: 'eppo' as const, flag_key: sourceKey },
+		{},
+	])('does not overwrite conflicting metadata: %j', (migration_metadata) => {
+		const existing = { id: 'dd-conflict', key: targetKey, migration_metadata };
+		expect(
+			classifyNonInteractiveConflict(
+				[existing],
+				projectKey,
+				sourceKey,
+				targetKey,
+			),
+		).toEqual({ type: 'duplicate', existingFlag: existing });
 	});
 
 	it('returns duplicate when the target key was migrated from another project', () => {
