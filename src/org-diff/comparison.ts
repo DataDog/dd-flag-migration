@@ -135,7 +135,15 @@ export function hasSavedFilterReferences(
 
 // ─── Canonical Forms ──────────────────────────────────────────────────────────
 
-function normalizeVariantValue(value: string): string {
+function normalizeVariantValue(
+	value: string,
+	valueType: string | undefined,
+): string {
+	if (valueType === 'STRING' || valueType === undefined) return value;
+	return normalizeJson(value);
+}
+
+function normalizeJson(value: string): string {
 	try {
 		return stableJson(JSON.parse(value));
 	} catch {
@@ -260,6 +268,13 @@ function compareFlagAttributes(
 		changes.push('value-type');
 		details.push('Value type differs.');
 	}
+	if (
+		normalizeJson(source.jsonSchema ?? '') !==
+		normalizeJson(target.jsonSchema ?? '')
+	) {
+		changes.push('json-schema');
+		details.push('JSON schema differs.');
+	}
 	if (source.distributionChannel !== target.distributionChannel) {
 		changes.push('distribution-channel');
 		details.push('Distribution channel differs.');
@@ -287,8 +302,8 @@ function compareFlagAttributes(
 		}
 		if (
 			counterpart.name !== variant.name ||
-			normalizeVariantValue(counterpart.value) !==
-				normalizeVariantValue(variant.value)
+			normalizeVariantValue(counterpart.value, target.valueType) !==
+				normalizeVariantValue(variant.value, source.valueType)
 		) {
 			variantDetails.push(`Variant "${variant.key}" differs.`);
 		}

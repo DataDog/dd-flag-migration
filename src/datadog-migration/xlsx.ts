@@ -30,6 +30,8 @@ export function buildDatadogMigrationRows(
 	const environmentIssues = new Map<string, string[]>();
 	const addIssue = (key: string, issue: string) =>
 		environmentIssues.set(key, [...(environmentIssues.get(key) ?? []), issue]);
+	for (const f of migration.enableApprovalRequests ?? [])
+		addIssue(f.key, `Enable in ${f.env} is awaiting approval`);
 	for (const f of migration.enableFailures)
 		addIssue(f.key, `Could not enable in ${f.env}: ${f.error}`);
 	for (const f of migration.disableFailures)

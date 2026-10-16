@@ -44,6 +44,9 @@ The source platform owns these end-to-end. On re-migration, make Datadog match e
 
 - Targeting rules / allocations (PUT-replace per environment)
 - Default variant (per environment)
+- **JSON schema** for JSON flags: replace the source schema, including removal.
+  LaunchDarkly and Eppo expose no flag schema, so JSON re-migrations clear the
+  target schema.
 - Environment state (enablement and disablement)
 - **Variants** (POST/PUT/DELETE via the `/feature-flags/{id}/variants` sub-resource)
 

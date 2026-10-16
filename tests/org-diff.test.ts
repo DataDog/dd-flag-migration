@@ -208,6 +208,7 @@ describe('compareOrgs', () => {
 		['name', { name: 'Renamed Flag' }],
 		['description', { description: 'Different' }],
 		['value-type', { valueType: 'STRING' }],
+		['json-schema', { jsonSchema: '{"type":"object"}' }],
 		['distribution-channel', { distributionChannel: 'CLIENT' }],
 		['tags', { tags: ['team:example'] }],
 	])('detects a %s difference', (change, overrides) => {
@@ -218,6 +219,64 @@ describe('compareOrgs', () => {
 		});
 		expect(flag.status).toBe('differs');
 		expect(flag.flagWideChanges).toEqual([change]);
+	});
+
+	it.each([
+		['1', '1.0'],
+		['true', ' true '],
+		['{"a":1,"b":2}', '{"b":2,"a":1}'],
+	])('compares STRING variant values literally: %s / %s', (sourceValue, targetValue) => {
+		const source = flagDetail('source', { valueType: 'STRING' });
+		const target = flagDetail('target', { valueType: 'STRING' });
+		source.variants[0].value = sourceValue;
+		target.variants[0].value = targetValue;
+		const flag = onlyFlag({
+			sourceDetails: new Map([[source.id, source]]),
+			targetDetails: new Map([[target.id, target]]),
+		});
+		expect(flag.status).toBe('differs');
+		expect(flag.flagWideChanges).toEqual(['variants']);
+	});
+
+	it('ignores JSON formatting in schemas and JSON variants', () => {
+		const source = flagDetail('source', {
+			valueType: 'JSON',
+			jsonSchema: '{"type":"object","required":["a"]}',
+		});
+		const target = flagDetail('target', {
+			valueType: 'JSON',
+			jsonSchema: '{ "required": ["a"], "type": "object" }',
+		});
+		source.variants[0].value = '{"a":1,"b":2}';
+		target.variants[0].value = '{"b":2, "a":1}';
+		expect(
+			onlyFlag({
+				sourceDetails: new Map([[source.id, source]]),
+				targetDetails: new Map([[target.id, target]]),
+			}).status,
+		).toBe('in-sync');
+	});
+
+	it('reports schema removal even when both environments are disabled', () => {
+		const source = flagDetail(
+			'source',
+			{ valueType: 'JSON' },
+			{ status: 'DISABLED' },
+		);
+		const target = flagDetail(
+			'target',
+			{
+				valueType: 'JSON',
+				jsonSchema: '{"type":"object"}',
+			},
+			{ status: 'DISABLED' },
+		);
+		expect(
+			onlyFlag({
+				sourceDetails: new Map([[source.id, source]]),
+				targetDetails: new Map([[target.id, target]]),
+			}),
+		).toMatchObject({ status: 'differs', flagWideChanges: ['json-schema'] });
 	});
 
 	it('ignores tag order and collision-suffixed names', () => {

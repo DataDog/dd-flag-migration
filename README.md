@@ -279,13 +279,15 @@ Choose **Datadog → Datadog** to copy flags from one Datadog org (the source) t
 
 Before copying flags, the tool copies the saved filters that the selected flags reference, following the same rules as LaunchDarkly segments. A saved filter that was copied before is updated in place, so edits in the source org carry over. A new saved filter is created with migration metadata that points back to its source filter. If a target org filter without that metadata already has the same name, you can skip the conflicting filter or add a prefix to its name. Non-interactive runs skip conflicts. Saved filters are never deleted from the target org.
 
-Flags are matched by key. Variant keys are copied as-is. Name, description, distribution channel, and tags sync on every run; tags follow `--tag-mode` or the tag prompt. Targeting and default variants sync in each mapped environment where the source flag is enabled, and each mapped target environment is enabled or disabled to match its source environment. Flags whose targeting uses a progressive rollout, scheduled rollout, experiment, or environment override are skipped with an explanation, because that state can't be copied between orgs. Restriction policies and team permissions aren't copied.
+Flags are matched by key. Variant keys are copied as-is. Name, description, JSON schema (including removal), distribution channel, and tags sync on every run; tags follow `--tag-mode` or the tag prompt. Targeting and default variants sync in each mapped environment where the source flag is enabled, and each mapped target environment is enabled or disabled to match its source environment. Flags whose targeting uses a progressive rollout, scheduled rollout, experiment, or environment override are skipped with an explanation, because that state can't be copied between orgs. Restriction policies and team permissions aren't copied.
 
 ### Non-interactive mode
 
 Pass `--interactive=false` to run the migration entirely from CLI arguments, with no prompts. This is useful for scripted or CI environments. Set `DD_SITE` in the job environment or pass `--datadog-site`; you do not need to provide both.
 
 Non-interactive migrations use `--tag-mode merge` by default, preserving tags that exist only in Datadog. Use `--tag-mode replace` to replace existing tags with the source-derived tags, including LaunchDarkly's `project:<key>` tag. In interactive mode, specifying `--tag-mode` skips the tag-mode prompt.
+
+JSON flag schemas follow the source on re-migration. LaunchDarkly and Eppo expose no flag schema, so re-migrating their JSON flags clears any schema in Datadog. Environments awaiting enable approval are reported separately and do not count as enabled.
 
 Non-interactive migrations write a JSON result document to stdout. Status messages, progress output, and export messages are written to stderr so stdout can be piped into tools such as `jq`.
 

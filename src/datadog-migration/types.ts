@@ -23,6 +23,7 @@ export interface DatadogMigrationFile {
 		disabled: number;
 	};
 	failures: Array<{ key: string; error: string }>;
+	enableApprovalRequests?: Array<{ key: string; env: string }>;
 	enableFailures: Array<{ key: string; env: string; error: string }>;
 	disableFailures: Array<{ key: string; env: string; error: string }>;
 	disableApprovalRequests: Array<{ key: string; env: string }>;

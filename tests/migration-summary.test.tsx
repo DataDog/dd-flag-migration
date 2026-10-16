@@ -10,6 +10,19 @@ import { EppoMigrationSummary } from '../src/eppo/components/EppoMigrationSummar
 import { LDMigrationSummary } from '../src/launchdarkly/components/LDMigrationSummary.js';
 
 describe('migration summary views', () => {
+	it('shows pending enable approvals without claiming the environments are enabled', () => {
+		const { lastFrame } = render(
+			<MigrationSummary
+				dryRun={false}
+				counts={{ created: 1, synced: 0, skipped: 0, errored: 0, enabled: 0 }}
+				enableApprovalRequests={[{ key: 'pending-flag', env: 'Production' }]}
+			/>,
+		);
+		const output = stripAnsi(lastFrame() ?? '');
+		expect(output).toContain('Enable approval requested in some environments:');
+		expect(output).toContain('pending-flag / Production');
+		expect(output).not.toContain('1 enabled');
+	});
 	it('renders the shared migration summary sections', () => {
 		const { lastFrame } = render(
 			<MigrationSummary

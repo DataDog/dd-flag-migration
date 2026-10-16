@@ -20,13 +20,14 @@ import {
 	applyVariantDeletes,
 	createFeatureFlag,
 	disableFeatureFlagEnvironmentWithOutcome,
-	enableFeatureFlagEnvironment,
+	enableFeatureFlagEnvironmentWithOutcome,
 	fetchDatadogEnvironments,
 	fetchDatadogFlags,
 	fetchDatadogStatusFlagDetail,
 	syncAllocationsForEnvironment,
 	updateFlagDescription,
 	updateFlagDistributionChannel,
+	updateFlagJsonSchema,
 	updateFlagName,
 	updateFlagTags,
 } from '../datadog/api.js';
@@ -207,6 +208,7 @@ type DryRunRequest = { method: string; path: string; body: unknown };
 
 interface MigrationReport {
 	dryRunRequests: DryRunRequest[];
+	enableApprovalRequests: Array<{ key: string; env: string }>;
 	enableFailures: Array<{ key: string; env: string; error: string }>;
 	disableFailures: Array<{ key: string; env: string; error: string }>;
 	disableApprovalRequests: Array<{ key: string; env: string }>;
@@ -294,14 +296,19 @@ async function enableEnvironments(
 	let enabled = 0;
 	for (const environment of environments) {
 		try {
-			await enableFeatureFlagEnvironment(
+			const outcome = await enableFeatureFlagEnvironmentWithOutcome(
 				target.apiKey,
 				target.appKey,
 				flagId,
 				environment.id,
 				target.site,
 			);
-			enabled++;
+			if (outcome === 'enabled') enabled++;
+			else
+				report.enableApprovalRequests.push({
+					key: flagKey,
+					env: environment.name,
+				});
 		} catch (error) {
 			report.enableFailures.push({
 				key: flagKey,
@@ -350,7 +357,7 @@ async function disableEnvironments(
 /**
  * Sync an existing target flag from the source org.
  *
- * Name, description, distribution channel, and tags always sync. When no
+ * Name, description, JSON schema, distribution channel, and tags always sync. When no
  * mapped source environment is enabled, targeting is not rewritten, so
  * variant deletes are skipped (targeting references variants by UUID) and the
  * mapped target environments are disabled. Otherwise targeting and the
@@ -373,6 +380,8 @@ async function syncExistingFlag(
 	const targetName = resolveFlagNameForSync(detail.name, existing.name);
 	const description = detail.description;
 	const channel = datadogDistributionChannel(detail);
+	const jsonSchema = detail.jsonSchema ?? null;
+	const schemaLabel = plan.valueType === 'JSON' ? ', 1 JSON schema' : '';
 	const syncTags = await resolveMigrationTargetTags(
 		tagSyncMode,
 		detail.tags ?? [],
@@ -399,6 +408,11 @@ async function syncExistingFlag(
 		if (channel !== undefined) {
 			report.dryRunRequests.push(
 				flagPutRequest(flagId, { distribution_channel: channel }),
+			);
+		}
+		if (plan.valueType === 'JSON') {
+			report.dryRunRequests.push(
+				flagPutRequest(flagId, { json_schema: jsonSchema }),
 			);
 		}
 		report.dryRunRequests.push(...createUpdateRequests);
@@ -435,8 +449,8 @@ async function syncExistingFlag(
 		});
 		const prefix = `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(detail.key)}`;
 		const changes = fullSync
-			? `${targetingLabel(targeting)}${variantLabel}${tagLabel}, 1 name${environmentsLabel('would enable in', envsToEnable)}${environmentsLabel('would disable in', envsToDisable)}`
-			: `1 name${tagLabel}${variantLabel}${environmentsLabel('would disable in', envsToDisable)}`;
+			? `${targetingLabel(targeting)}${variantLabel}${tagLabel}, 1 name${schemaLabel}${environmentsLabel('would enable in', envsToEnable)}${environmentsLabel('would disable in', envsToDisable)}`
+			: `1 name${tagLabel}${variantLabel}${schemaLabel}${environmentsLabel('would disable in', envsToDisable)}`;
 		return { message: `${prefix} (${changes})`, enabled: 0, disabled: 0 };
 	}
 
@@ -462,6 +476,15 @@ async function syncExistingFlag(
 			target.appKey,
 			flagId,
 			channel,
+			target.site,
+		);
+	}
+	if (plan.valueType === 'JSON') {
+		await updateFlagJsonSchema(
+			target.apiKey,
+			target.appKey,
+			flagId,
+			jsonSchema,
 			target.site,
 		);
 	}
@@ -515,8 +538,8 @@ async function syncExistingFlag(
 	const enableLabel = enabled > 0 ? `, enabled in ${enabled} env(s)` : '';
 	const disableLabel = disabled > 0 ? `, disabled in ${disabled} env(s)` : '';
 	const changes = fullSync
-		? `${targetingLabel(targeting)}${variantLabel}${tagLabel}, 1 name${enableLabel}${disableLabel}`
-		: `1 name${tagLabel}${variantLabel}${disableLabel}`;
+		? `${targetingLabel(targeting)}${variantLabel}${tagLabel}, 1 name${schemaLabel}${enableLabel}${disableLabel}`
+		: `1 name${tagLabel}${variantLabel}${schemaLabel}${disableLabel}`;
 	return {
 		message: `${chalk.green('✓')} Synced ${chalk.cyan(detail.key)} (${changes})`,
 		enabled,
@@ -547,6 +570,7 @@ async function createTargetFlag(
 		filters: allocations.length,
 		rules: ruleCount,
 	});
+	const schemaLabel = valueType === 'JSON' ? ', 1 JSON schema' : '';
 
 	if (dryRun) {
 		report.dryRunRequests.push({
@@ -573,7 +597,7 @@ async function createTargetFlag(
 			});
 		}
 		return {
-			message: `${chalk.dim('[dry run]')} Would create ${chalk.cyan(detail.key)} (${filterLabel}${environmentsLabel('would enable in', envsToEnable)})`,
+			message: `${chalk.dim('[dry run]')} Would create ${chalk.cyan(detail.key)} (${filterLabel}${schemaLabel}${environmentsLabel('would enable in', envsToEnable)})`,
 			enabled: 0,
 			disabled: 0,
 		};
@@ -605,7 +629,7 @@ async function createTargetFlag(
 	);
 	const enableLabel = enabled > 0 ? `, enabled in ${enabled} env(s)` : '';
 	return {
-		message: `${chalk.green('✓')} Created ${chalk.cyan(detail.key)} (${filterLabel}${enableLabel})`,
+		message: `${chalk.green('✓')} Created ${chalk.cyan(detail.key)} (${filterLabel}${schemaLabel}${enableLabel})`,
 		enabled,
 		disabled: 0,
 	};
@@ -726,6 +750,7 @@ async function executeDatadogMigration(
 
 	const report: MigrationReport = {
 		dryRunRequests: [],
+		enableApprovalRequests: [],
 		enableFailures: [],
 		disableFailures: [],
 		disableApprovalRequests: [],
@@ -811,6 +836,7 @@ async function executeDatadogMigration(
 			disabled: totalDisabled,
 		},
 		failures,
+		enableApprovalRequests: report.enableApprovalRequests,
 		enableFailures: report.enableFailures,
 		disableFailures: report.disableFailures,
 		disableApprovalRequests: report.disableApprovalRequests,
@@ -979,6 +1005,7 @@ async function executeDatadogMigration(
 				disabled: totalDisabled,
 			}}
 			failures={failures}
+			enableApprovalRequests={report.enableApprovalRequests}
 			enableFailures={report.enableFailures}
 			disableFailures={report.disableFailures}
 			disableApprovalRequests={report.disableApprovalRequests}

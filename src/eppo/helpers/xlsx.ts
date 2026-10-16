@@ -68,7 +68,17 @@ function buildMigrationRows(migration: MigrationFile): MigrationSheetRow[] {
 			rows.push({
 				flag,
 				status: 'Created',
-				errorOrWarn: buildWarnings(flag.key, semverKeys, jsonArrayKeys),
+				errorOrWarn: [
+					buildWarnings(flag.key, semverKeys, jsonArrayKeys),
+					...(migration.enableApprovalRequests ?? [])
+						.filter((request) => request.key === flag.key)
+						.map(
+							(request) =>
+								`Warning: Enable in ${request.env} is awaiting approval`,
+						),
+				]
+					.filter(Boolean)
+					.join('\n'),
 			});
 		}
 	}

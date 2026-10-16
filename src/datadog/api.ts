@@ -481,6 +481,28 @@ export async function updateFlagDescription(
 	});
 }
 
+/** Full replacement; null removes a JSON flag's schema. */
+export async function updateFlagJsonSchema(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	jsonSchema: string | null,
+	site = 'datadoghq.com',
+): Promise<void> {
+	await ddClient.put(
+		`${datadogBaseUrl(site)}/api/v2/feature-flags/${flagId}`,
+		{
+			data: { type: 'feature-flags', attributes: { json_schema: jsonSchema } },
+		},
+		{
+			headers: {
+				...ddHeaders(apiKey, appKey),
+				'Content-Type': 'application/json',
+			},
+		},
+	);
+}
+
 export async function fetchDatadogTeams(
 	apiKey: string,
 	appKey: string,

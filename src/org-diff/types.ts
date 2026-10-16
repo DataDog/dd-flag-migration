@@ -19,6 +19,7 @@ export type OrgDiffChangeKind =
 	| 'name'
 	| 'description'
 	| 'value-type'
+	| 'json-schema'
 	| 'distribution-channel'
 	| 'tags'
 	| 'variants'
