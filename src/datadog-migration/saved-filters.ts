@@ -368,11 +368,13 @@ export async function migrateDatadogSavedFilters(params: {
 	}
 
 	for (const { source, target: existing } of plan.reused) {
-		savedFilterIdMap.set(source.id, existing.id);
 		stats.reused++;
 		const namePrefix = datadogMetadata(existing)?.name_prefix;
 		const name = renderDatadogSavedFilterName(source.name, namePrefix);
-		if (name === null || (source.targeting_rules ?? []).length === 0) continue;
+		if (name === null || (source.targeting_rules ?? []).length === 0) {
+			stats.skipped++;
+			continue;
+		}
 		const request = buildSavedFilterRequest(
 			source,
 			name,
@@ -387,6 +389,7 @@ export async function migrateDatadogSavedFilters(params: {
 					data: { type: 'saved-filters', id: existing.id, attributes: request },
 				},
 			});
+			savedFilterIdMap.set(source.id, existing.id);
 			stats.updated++;
 			continue;
 		}
@@ -398,6 +401,9 @@ export async function migrateDatadogSavedFilters(params: {
 				request,
 				target.site,
 			);
+			// Only expose filters whose source targeting was successfully copied.
+			// Otherwise dependent flags would be migrated using stale targeting.
+			savedFilterIdMap.set(source.id, existing.id);
 			stats.updated++;
 		} catch (error) {
 			const message = formatAxiosError(error);

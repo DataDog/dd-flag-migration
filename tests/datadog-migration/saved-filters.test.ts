@@ -3,6 +3,7 @@ import AxiosMockAdapter from 'axios-mock-adapter';
 import { ddClient } from '../../src/datadog/api.js';
 import type { DatadogOrgPair } from '../../src/datadog/orgs.js';
 import type { SavedFilterSummary } from '../../src/datadog/types.js';
+import { buildDatadogAllocations } from '../../src/datadog-migration/helpers/migration.js';
 import {
 	migrateDatadogSavedFilters,
 	planSavedFilterTargets,
@@ -263,6 +264,93 @@ describe('migrateDatadogSavedFilters', () => {
 			'target-existing',
 		);
 		expect(result.savedFilterIdMap.has('source-conflict')).toBe(false);
+	});
+
+	it('skips dependent flags when a reused filter update is denied', async () => {
+		mock.onPut(`${TARGET_LIST}/target-existing`).reply(403, {
+			errors: ['permission denied'],
+		});
+
+		const result = await migrateDatadogSavedFilters({
+			pair,
+			refs: ['source-existing'],
+			dryRun: false,
+			nonInteractive: true,
+		});
+
+		expect(result.savedFilterIdMap.has('source-existing')).toBe(false);
+		expect(result.stats.updated).toBe(0);
+		expect(result.stats.failures).toEqual([
+			expect.objectContaining({ savedFilterId: 'source-existing' }),
+		]);
+		expect(
+			buildDatadogAllocations(
+				{
+					id: 'flag',
+					key: 'flag',
+					name: 'Flag',
+					variants: [{ id: 'on', key: 'on', name: 'On', value: 'true' }],
+					environments: [
+						{
+							environmentId: 'source-prod',
+							status: 'ENABLED',
+							allocations: [
+								{
+									key: 'beta',
+									variant_weights: [{ variant_id: 'on', value: 100 }],
+									targeting_rules: [
+										{ conditions: [{ saved_filter_id: 'source-existing' }] },
+									],
+								},
+							],
+						},
+					],
+				},
+				new Map([
+					[
+						'source-prod',
+						[
+							{
+								id: 'target-prod',
+								name: 'Production',
+								queries: ['prod'],
+								is_production: true,
+							},
+						],
+					],
+				]),
+				result.savedFilterIdMap,
+			),
+		).toEqual({
+			flagSkip: 'Saved filter source-existing could not be migrated',
+		});
+	});
+
+	it.each([
+		false,
+		true,
+	])('does not reuse stale targeting when source rules are unavailable (dryRun=%s)', async (dryRun) => {
+		mock.onGet(SOURCE_LIST).reply(200, {
+			data: [
+				jsonApiFilter({
+					id: 'source-existing',
+					name: 'Internal users',
+					targeting_rules: [],
+				}),
+			],
+			meta: { total: 1 },
+		});
+		const result = await migrateDatadogSavedFilters({
+			pair,
+			refs: ['source-existing'],
+			dryRun,
+			nonInteractive: true,
+		});
+
+		expect(result.savedFilterIdMap.has('source-existing')).toBe(false);
+		expect(result.stats).toMatchObject({ updated: 0, skipped: 1 });
+		expect(mock.history.put).toHaveLength(0);
+		expect(result.dryRunRequests).toHaveLength(0);
 	});
 
 	it('returns an empty result when no filters are referenced', async () => {
