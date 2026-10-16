@@ -777,6 +777,13 @@ async function main(): Promise<void> {
 			(disableFailCountByFlag.get(f.key) ?? 0) + 1,
 		);
 	}
+	const enableApprovalRequestCountByFlag = new Map<string, number>();
+	for (const request of migration.enableApprovalRequests ?? []) {
+		enableApprovalRequestCountByFlag.set(
+			request.key,
+			(enableApprovalRequestCountByFlag.get(request.key) ?? 0) + 1,
+		);
+	}
 	const disableApprovalRequestCountByFlag = new Map<string, number>();
 	for (const request of migration.disableApprovalRequests ?? []) {
 		disableApprovalRequestCountByFlag.set(
@@ -801,10 +808,15 @@ async function main(): Promise<void> {
 		const skipReason = skippedFlagReason.get(flagKey);
 		const enableFailCount = enableFailCountByFlag.get(flagKey) ?? 0;
 		const disableFailCount = disableFailCountByFlag.get(flagKey) ?? 0;
+		const enableApprovalRequestCount =
+			enableApprovalRequestCountByFlag.get(flagKey) ?? 0;
 		const disableApprovalRequestCount =
 			disableApprovalRequestCountByFlag.get(flagKey) ?? 0;
 		const envFailCount =
-			enableFailCount + disableFailCount + disableApprovalRequestCount;
+			enableFailCount +
+			disableFailCount +
+			enableApprovalRequestCount +
+			disableApprovalRequestCount;
 		const partialDetails: string[] = [];
 		if (skipReason !== undefined) {
 			partialDetails.push(skipReason);
@@ -814,6 +826,11 @@ async function main(): Promise<void> {
 			}
 			if (disableFailCount > 0) {
 				partialDetails.push(`Could not disable (${disableFailCount} env(s))`);
+			}
+			if (enableApprovalRequestCount > 0) {
+				partialDetails.push(
+					`Enable approval requested (${enableApprovalRequestCount} env(s))`,
+				);
 			}
 			if (disableApprovalRequestCount > 0) {
 				partialDetails.push(
