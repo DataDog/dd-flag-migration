@@ -72,9 +72,10 @@ Datadog → Datadog migrations read all six `SOURCE_DD_*` and `TARGET_DD_*` vari
 
 | Variable | Required when | Where to find it |
 |---|---|---|
-| `DD_API_KEY` | always | Datadog → Organization Settings → API Keys |
-| `DD_APP_KEY` | always | Datadog → Organization Settings → Application Keys |
-| `LAUNCHDARKLY_API_KEY` | always | LaunchDarkly → Account settings → Authorization → Access tokens |
+| `DD_API_KEY` | migration = LaunchDarkly → Datadog | Datadog → Organization Settings → API Keys |
+| `DD_APP_KEY` | migration = LaunchDarkly → Datadog | Datadog → Organization Settings → Application Keys |
+| `LAUNCHDARKLY_API_KEY` | migration = LaunchDarkly → Datadog | LaunchDarkly → Account settings → Authorization → Access tokens |
+| `SOURCE_DD_*`, `TARGET_DD_*` | migration = Datadog → Datadog | Same six variables as [`org-diff`](#required-for-org-diff) |
 
 ### Required for `org-diff`
 
@@ -379,7 +380,7 @@ This writes the full list of API requests that would be sent to a `dry-run-<time
 
 ## Migration Status
 
-Generate a read-only LaunchDarkly migration status report with:
+Generate a read-only migration status report with:
 
 ```bash
 npx @datadog/dd-flag-migration migration-status
@@ -388,7 +389,11 @@ npx @datadog/dd-flag-migration migration-status
 yarn migration-status
 ```
 
-The interactive workflow uses the same environment selection and one-to-many mapping experience as migration:
+First choose the migration to check: **LaunchDarkly → Datadog** or **Datadog → Datadog**. **Eppo → Datadog** is listed as coming soon and can't be selected yet.
+
+**Datadog → Datadog** compares the `SOURCE_DD_*` and `TARGET_DD_*` orgs and produces the same report as [Org Diff](#org-diff).
+
+For **LaunchDarkly → Datadog**, the interactive workflow uses the same environment selection and one-to-many mapping experience as migration:
 
 1. Select a LaunchDarkly project.
 2. Select the LaunchDarkly environments to analyze.

@@ -56,7 +56,9 @@ export function HelpScreen(): JSX.Element {
 				<Text>
 					{'  '}
 					<Text color="cyan">migration-status</Text>
-					{'   Check LaunchDarkly migration coverage and sync status'}
+					{
+						'   Check LaunchDarkly or Datadog → Datadog migration coverage and sync status'
+					}
 				</Text>
 			),
 		},
