@@ -30,6 +30,9 @@ if (subcommand === '--version' || subcommand === '-V') {
 } else if (subcommand === 'migration-status') {
 	process.argv.splice(2, 1);
 	await import('./migration-status.js');
+} else if (subcommand === 'org-diff') {
+	process.argv.splice(2, 1);
+	await import('./org-diff.js');
 } else if (subcommand === 'sync-tags') {
 	process.argv.splice(2, 1);
 	await import('./sync-tags.js');

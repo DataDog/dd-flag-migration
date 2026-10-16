@@ -59,6 +59,28 @@ export function safeCell(
 	return /^[=+\-@]/.test(text) ? `'${text}` : text;
 }
 
+/** Excel-safe worksheet name, unique (case-insensitively) within `usedNames`. */
+export function uniqueWorksheetName(
+	name: string,
+	usedNames: Set<string>,
+): string {
+	const sanitized =
+		name
+			.replace(/[\\/?*[\]:]/g, ' ')
+			.replace(/\s+/g, ' ')
+			.replace(/^'+|'+$/g, '')
+			.trim() || 'Environment';
+	let worksheetName = sanitized.slice(0, 31);
+	let suffixNumber = 2;
+	while (usedNames.has(worksheetName.toLowerCase())) {
+		const suffix = ` (${suffixNumber})`;
+		worksheetName = `${sanitized.slice(0, 31 - suffix.length)}${suffix}`;
+		suffixNumber++;
+	}
+	usedNames.add(worksheetName.toLowerCase());
+	return worksheetName;
+}
+
 // ─── Shared Sheet Setup ───────────────────────────────────────────────────────
 
 export function addSheetHeader(

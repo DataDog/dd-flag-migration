@@ -345,3 +345,33 @@ describe('FilterableSelectView', () => {
 		expect(cancel).toHaveBeenCalled();
 	});
 });
+
+describe('SelectView disabled choices', () => {
+	it('starts on and skips to enabled choices, and never selects a disabled one', async () => {
+		const done = jest.fn<(v: string) => void>();
+		const cancel = jest.fn();
+		const { stdin, lastFrame } = render(
+			<SelectView<string>
+				message="Pick one"
+				choices={[
+					{ name: 'soon (coming soon)', value: 'soon', disabled: true },
+					{ name: 'first', value: 'a' },
+					{ name: 'later', value: 'later', disabled: true },
+					{ name: 'second', value: 'b' },
+				]}
+				onDone={done}
+				onCancel={cancel}
+			/>,
+		);
+		await ready();
+		expect(stripAnsi(lastFrame() ?? '')).toContain('❯ first');
+		stdin.write('\x1b[A'); // up: only a disabled choice above, stay put
+		await tick();
+		expect(stripAnsi(lastFrame() ?? '')).toContain('❯ first');
+		stdin.write('\x1b[B'); // down: skip "later"
+		await tick();
+		stdin.write('\r');
+		await tick();
+		expect(done).toHaveBeenCalledWith('b');
+	});
+});

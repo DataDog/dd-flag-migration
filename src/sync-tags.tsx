@@ -27,8 +27,8 @@ const ALL_REQUIRED_PERMISSIONS = [
 ] as const;
 
 const PROVIDERS = [
-	{ name: 'Eppo', value: 'eppo' },
-	{ name: 'LaunchDarkly', value: 'launchdarkly' },
+	{ name: 'Eppo → Datadog', value: 'eppo' },
+	{ name: 'LaunchDarkly → Datadog', value: 'launchdarkly' },
 ] as const;
 
 // ─── Arg Parsing ──────────────────────────────────────────────────────────────

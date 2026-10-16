@@ -75,14 +75,34 @@ function buildLDMigrationRows(
 			rows.push({
 				flag,
 				status: 'Synced',
-				errorOrWarn: buildWarnings(flag.key, semverKeys, jsonArrayKeys),
+				errorOrWarn: [
+					buildWarnings(flag.key, semverKeys, jsonArrayKeys),
+					...(migration.enableApprovalRequests ?? [])
+						.filter((request) => request.key === flag.key)
+						.map(
+							(request) =>
+								`Warning: Enable in ${request.env} is awaiting approval`,
+						),
+				]
+					.filter(Boolean)
+					.join('\n'),
 				datadogKey,
 			});
 		} else {
 			rows.push({
 				flag,
 				status: 'Created',
-				errorOrWarn: buildWarnings(flag.key, semverKeys, jsonArrayKeys),
+				errorOrWarn: [
+					buildWarnings(flag.key, semverKeys, jsonArrayKeys),
+					...(migration.enableApprovalRequests ?? [])
+						.filter((request) => request.key === flag.key)
+						.map(
+							(request) =>
+								`Warning: Enable in ${request.env} is awaiting approval`,
+						),
+				]
+					.filter(Boolean)
+					.join('\n'),
 				datadogKey,
 			});
 		}

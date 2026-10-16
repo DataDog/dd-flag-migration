@@ -81,6 +81,8 @@ export const HEADER_SUBTITLES = {
 	migrateTags: '           Sync Tags to Datadog           ',
 	eppo: '              Eppo → Datadog              ',
 	launchdarkly: '          LaunchDarkly → Datadog          ',
+	datadog: '            Datadog → Datadog             ',
+	orgDiff: '      Datadog Org Configuration Diff      ',
 	evaluate: '           Evaluate Migration             ',
 	migrationStatus: '          Migration Status Report         ',
 	bulkPermissions: '        Bulk Permission Management        ',
