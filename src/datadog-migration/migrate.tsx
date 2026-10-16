@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import chalk from 'chalk';
-import { filterableCheckbox } from '../components/FilterableCheckbox.js';
 import {
 	type FilterCategory,
 	MIGRATED_FILTER_ID,
@@ -57,6 +56,7 @@ import {
 	resolveDatadogEnvMap,
 	selectSourceEnvironments,
 } from './environments.js';
+import { selectDatadogFlags } from './flag-selection.js';
 import {
 	buildDatadogAllocations,
 	buildDatadogCreateFlagRequest,
@@ -99,15 +99,6 @@ function flagDisplayName(flag: DatadogFlagEntry): string {
 	return flag.name ?? flag.key;
 }
 
-function flagLabel(flag: DatadogFlagEntry, inTarget: boolean): string {
-	const indicator = inTarget ? chalk.green('✓') : ' ';
-	const key = chalk.gray(`(${flag.key})`);
-	const badge = inTarget
-		? `  ${chalk.bgGreen.black(' In target org — will sync ')}`
-		: '';
-	return `${indicator}  ${flagDisplayName(flag)}  ${key}${badge}`;
-}
-
 // ─── Prompt Steps ─────────────────────────────────────────────────────────────
 
 const DATADOG_FILTER_CATEGORIES: FilterCategory[] = [
@@ -134,7 +125,6 @@ async function selectFlags(
 	const inTarget = (flag: DatadogFlagEntry) =>
 		findTargetFlag(targetFlags, flag) !== undefined;
 	const inTargetCount = sourceFlags.filter(inTarget).length;
-	const previousIds = new Set(previouslySelected.map((flag) => flag.id));
 
 	console.log();
 	console.log(
@@ -149,25 +139,23 @@ async function selectFlags(
 			) + chalk.green('✓'),
 		);
 	}
+	console.log(chalk.gray('  Type a tag (e.g. team:checkout) to filter by tag'));
 	console.log();
 
-	const sorted = sourceFlags.slice().sort((a, b) => {
-		const aTarget = inTarget(a) ? 0 : 1;
-		const bTarget = inTarget(b) ? 0 : 1;
-		if (aTarget !== bTarget) return aTarget - bTarget;
-		return flagDisplayName(a).localeCompare(flagDisplayName(b));
-	});
-	const pageSize = Math.max(5, (process.stdout.rows ?? 24) - 9);
-
-	return filterableCheckbox<DatadogFlagEntry>({
+	return selectDatadogFlags({
 		message: 'Select flags to migrate to the target org:',
-		choices: sorted.map((flag) => ({
-			name: flagLabel(flag, inTarget(flag)),
+		choices: sourceFlags.map((flag) => ({
 			value: flag,
-			checked: previousIds.has(flag.id),
+			id: flag.id,
+			key: flag.key,
+			name: flagDisplayName(flag),
+			tags: flag.tags ?? [],
 			migrated: inTarget(flag),
+			...(inTarget(flag)
+				? { badge: chalk.bgGreen.black(' In target org — will sync ') }
+				: {}),
 		})),
-		pageSize,
+		previouslySelectedIds: new Set(previouslySelected.map((flag) => flag.id)),
 		filterCategories: DATADOG_FILTER_CATEGORIES,
 	});
 }

@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
 import chalk from 'chalk';
 import { confirm } from '../components/Confirm.js';
+import type { FilterCategory } from '../components/filter-matching.js';
 import { HEADER_SUBTITLES, Header } from '../components/Header.js';
 import { renderStatic } from '../components/mount.js';
 import { spinner as createSpinner } from '../components/Spinner.js';
@@ -21,6 +22,7 @@ import {
 	linkDatadogEnvironments,
 	selectSourceEnvironments,
 } from '../datadog-migration/environments.js';
+import { selectDatadogFlags } from '../datadog-migration/flag-selection.js';
 import { mapWithConcurrency } from '../helpers/concurrency.js';
 import { formatAxiosError } from '../helpers/format-axios-error.js';
 import {
@@ -29,7 +31,11 @@ import {
 	linkOrgFlags,
 	linkSavedFilters,
 } from './comparison.js';
-import type { OrgDiffEnvironmentPair, OrgDiffResult } from './types.js';
+import type {
+	OrgDiffEnvironmentPair,
+	OrgDiffResult,
+	OrgFlagLink,
+} from './types.js';
 import {
 	orgDiffCounts,
 	orgDiffStatusLabel,
@@ -151,6 +157,103 @@ function printSummary(result: OrgDiffResult): void {
 	console.log();
 }
 
+const IN_BOTH_FILTER_ID = 'in-both-orgs';
+const SOURCE_ONLY_FILTER_ID = 'only-in-source';
+const TARGET_ONLY_FILTER_ID = 'only-in-target';
+
+const ORG_DIFF_FILTER_CATEGORIES: FilterCategory[] = [
+	{
+		id: IN_BOTH_FILTER_ID,
+		label: 'in-both-orgs',
+		scope: 'flag',
+		description: 'A flag with this key exists in both orgs.',
+	},
+	{
+		id: SOURCE_ONLY_FILTER_ID,
+		label: 'only-in-source',
+		scope: 'flag',
+		description: 'The flag exists only in the source org.',
+	},
+	{
+		id: TARGET_ONLY_FILTER_ID,
+		label: 'only-in-target',
+		scope: 'flag',
+		description: 'The flag exists only in the target org.',
+	},
+];
+
+/** Category ids and badge for a flag link in the comparison picker. */
+export function orgFlagLinkPresence(link: OrgFlagLink): {
+	category: string;
+	badge: string;
+} {
+	if (link.source && link.target) {
+		return { category: IN_BOTH_FILTER_ID, badge: chalk.green('both orgs') };
+	}
+	if (link.source) {
+		return {
+			category: SOURCE_ONLY_FILTER_ID,
+			badge: chalk.yellow('source org only'),
+		};
+	}
+	return {
+		category: TARGET_ONLY_FILTER_ID,
+		badge: chalk.yellow('target org only'),
+	};
+}
+
+/** Tags from both orgs, deduplicated, so either org's tags can be searched. */
+export function orgFlagLinkTags(link: OrgFlagLink): string[] {
+	return [
+		...new Set([...(link.source?.tags ?? []), ...(link.target?.tags ?? [])]),
+	];
+}
+
+/**
+ * Let the user narrow the comparison to a subset of flags, using the same
+ * tag-aware picker as Datadog-to-Datadog migration. Re-prompts on an empty
+ * selection; returns null when the user backs out.
+ */
+async function selectOrgFlagLinks(
+	links: OrgFlagLink[],
+): Promise<OrgFlagLink[] | null> {
+	console.log();
+	console.log(
+		chalk.bold(
+			`Found ${chalk.green(String(links.length))} flag(s) across both orgs`,
+		),
+	);
+	console.log(
+		chalk.gray(
+			'  Type a tag (e.g. team:checkout) to filter by tag; Ctrl+A selects all visible flags',
+		),
+	);
+	console.log();
+	while (true) {
+		const selected = await selectDatadogFlags<OrgFlagLink>({
+			message: 'Select flags to compare:',
+			choices: links.map((link) => {
+				const flag = link.source ?? link.target;
+				const presence = orgFlagLinkPresence(link);
+				return {
+					value: link,
+					id: link.key,
+					key: link.key,
+					name: flag?.name ?? link.key,
+					tags: orgFlagLinkTags(link),
+					migrated: link.source !== undefined && link.target !== undefined,
+					badge: presence.badge,
+					categories: [presence.category],
+				};
+			}),
+			filterCategories: ORG_DIFF_FILTER_CATEGORIES,
+		});
+		if (selected === null) return null;
+		if (selected.length > 0) return selected;
+		console.log(chalk.yellow('Please select at least one flag.'));
+	}
+}
+
 function safeFilePart(value: string): string {
 	return value.replace(/[^a-zA-Z0-9._-]/g, '_');
 }
@@ -207,9 +310,16 @@ export async function runOrgDiffWorkflow(
 	if (!mapping) return null;
 	const pairs = environmentPairs(mapping, selectedEnvironments);
 
+	const allLinks = linkOrgFlags(sourceFlags, targetFlags);
+	clearScreen();
+	await printHeader();
+	const links = await selectOrgFlagLinks(allLinks);
+	if (!links) return null;
+
 	clearScreen();
 	await printHeader();
 	printScope(pair, pairs);
+	console.log(chalk.bold(`Flags: ${links.length} of ${allLinks.length}\n`));
 	if (
 		!(await confirm({
 			message: 'Compare flag configuration for these environment pairs?',
@@ -219,7 +329,6 @@ export async function runOrgDiffWorkflow(
 		return null;
 	}
 
-	const links = linkOrgFlags(sourceFlags, targetFlags);
 	const linked = links.filter((link) => link.source && link.target);
 	const sourceLoad = await loadDetails(
 		source,
@@ -274,8 +383,8 @@ export async function runOrgDiffWorkflow(
 	const result = compareOrgs({
 		sourceSite: source.site,
 		targetSite: target.site,
-		sourceFlags,
-		targetFlags,
+		sourceFlags: links.flatMap((link) => (link.source ? [link.source] : [])),
+		targetFlags: links.flatMap((link) => (link.target ? [link.target] : [])),
 		sourceDetails: sourceLoad.details,
 		targetDetails: targetLoad.details,
 		sourceDetailErrors: sourceLoad.errors,

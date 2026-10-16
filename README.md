@@ -275,7 +275,7 @@ Choose **Datadog → Datadog** to copy flags from one Datadog org (the source) t
 
 1. **Select source org environments** — choose which environments in the source org to copy from
 2. **Link environments** — map each source environment to one or more target org environments. Target environments with the same name are pre-selected
-3. **Select flags** — flags whose key already exists in the target org are marked and are synced instead of created
+3. **Select flags** — flags whose key already exists in the target org are marked and are synced instead of created. Each flag's tags are shown, and typing a tag (such as `team:checkout`) in the filter narrows the list, as in `bulk-enable`
 
 Before copying flags, the tool copies the saved filters that the selected flags reference, following the same rules as LaunchDarkly segments. A saved filter that was copied before is updated in place, so edits in the source org carry over. A new saved filter is created with migration metadata that points back to its source filter. If a target org filter without that metadata already has the same name, you can skip the conflicting filter or add a prefix to its name. Non-interactive runs skip conflicts. Saved filters are never deleted from the target org.
 
@@ -398,9 +398,10 @@ For **LaunchDarkly → Datadog**, the interactive workflow uses the same environ
 1. Select a LaunchDarkly project.
 2. Select the LaunchDarkly environments to analyze.
 3. Map each selected LaunchDarkly environment to one or more Datadog environments.
-4. Confirm the analysis scope.
+4. Select the flags to check. This is the same flag picker as migration, including the **Tab** advanced filters (see [Advanced filtering](#advanced-filtering)); press **Ctrl+A** to check every visible flag.
+5. Confirm the analysis scope.
 
-The command reports flags as **Not yet migrated**, **Partially migrated**, **Out of sync**, **In sync**, or **Needs review**. Environment sync is calculated only for the selected mappings; unselected Datadog environments do not affect the result. A `migration-status-launchdarkly-<project>-<timestamp>.xlsx` workbook is written automatically to the current directory with a global summary and one status tab per selected Datadog environment. Each environment tab includes scoped status counts at the top.
+The command reports the selected flags as **Not yet migrated**, **Partially migrated**, **Out of sync**, **In sync**, or **Needs review**. Environment sync is calculated only for the selected mappings; unselected Datadog environments do not affect the result. A `migration-status-launchdarkly-<project>-<timestamp>.xlsx` workbook is written automatically to the current directory with a global summary and one status tab per selected Datadog environment. Each environment tab includes scoped status counts at the top.
 
 The report compares current configuration and does not identify which platform changed after migration. Tags, permissions, restriction policies, and saved-filter contents are not assessed.
 
@@ -421,9 +422,10 @@ Credentials come from `SOURCE_DD_*` and `TARGET_DD_*` (see [Required for `org-di
 
 1. Select the source org environments to compare.
 2. Link each one to one or more target org environments. Environments with the same name are pre-selected.
-3. Confirm the environment pairs.
+3. Select the flags to compare. The list includes flags from both orgs, labeled by which org has them. Type a tag (such as `team:checkout`) to filter by tag, press **Tab** to filter to flags in both orgs or in only one, and press **Ctrl+A** to check every visible flag.
+4. Confirm the environment pairs.
 
-Flags are paired by key across both orgs and reported as **Only in source org**, **Only in target org**, **Differs**, **In sync**, or **Needs review**. Each pair compares the flag's name, description, value type, distribution channel, tags, and variants. For each environment pair, it also compares enablement, the default variant, any environment override, and targeting. Targeting is compared by behavior: filter order, rules, and rollout weights. Filter keys and names are ignored. Saved-filter references are matched across orgs by migration metadata or by a name that is unique in both orgs; their contents are not compared. Environments that are disabled in both orgs don't have their targeting compared. Progressive rollouts, scheduled rollouts, and experiments are reported as **Needs review**.
+The selected flags are paired by key across both orgs and reported as **Only in source org**, **Only in target org**, **Differs**, **In sync**, or **Needs review**. Each pair compares the flag's name, description, value type, distribution channel, tags, and variants. For each environment pair, it also compares enablement, the default variant, any environment override, and targeting. Targeting is compared by behavior: filter order, rules, and rollout weights. Filter keys and names are ignored. Saved-filter references are matched across orgs by migration metadata or by a name that is unique in both orgs; their contents are not compared. Environments that are disabled in both orgs don't have their targeting compared. Progressive rollouts, scheduled rollouts, and experiments are reported as **Needs review**.
 
 An `org-diff-<source-site>-<target-site>-<timestamp>.xlsx` workbook is written to the current directory, with a summary tab and one tab per environment pair. To fix differences, decide which org is correct and run `migrate` with **Datadog → Datadog**, using that org as the source.
 

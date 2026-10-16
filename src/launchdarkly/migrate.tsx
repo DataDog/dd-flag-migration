@@ -720,7 +720,51 @@ const LD_FILTER_CATEGORIES: FilterCategory[] = [
 	},
 ];
 
-type LDFlagStatusByEnv = Map<string, Map<string, LDFlagStatus> | null>;
+export type LDFlagStatusByEnv = Map<string, Map<string, LDFlagStatus> | null>;
+
+/**
+ * Fetch LD flag lifecycle statuses for every non-archived environment not
+ * already cached, so the advanced-filter screen can answer "active anywhere"
+ * and "inactive everywhere". Failures are non-fatal — an environment whose
+ * statuses could not be loaded is cached as null and affected flags stay
+ * uncategorized unless another environment proves a positive status.
+ */
+export async function loadFlagStatuses(
+	ldApiKey: string,
+	projectKey: string,
+	environments: LDEnvironment[],
+	cache: LDFlagStatusByEnv,
+): Promise<void> {
+	const envsToLoad = environments.filter(
+		(env) => !env.archived && !cache.has(env.key),
+	);
+	if (envsToLoad.length === 0) return;
+	const statusSpinner = createSpinner(
+		'Loading LaunchDarkly flag statuses…',
+	).start();
+	let failedCount = 0;
+	for (const env of envsToLoad) {
+		try {
+			cache.set(
+				env.key,
+				await fetchFlagStatuses(ldApiKey, projectKey, env.key),
+			);
+		} catch {
+			cache.set(env.key, null);
+			failedCount++;
+		}
+	}
+	const loadedCount = envsToLoad.length - failedCount;
+	if (failedCount > 0) {
+		statusSpinner.warn(
+			`Loaded flag statuses for ${loadedCount} environment(s); ${failedCount} could not be loaded (affected flags stay uncategorized)`,
+		);
+	} else {
+		statusSpinner.succeed(
+			`Loaded flag statuses for ${loadedCount} environment(s)`,
+		);
+	}
+}
 
 /**
  * Collapse per-environment LD statuses for a single flag into filter
@@ -759,6 +803,7 @@ export async function selectFlags(
 	previouslySelected: LDFlag[] = [],
 	conflictResolution?: ConflictResolution,
 	statusByEnv: LDFlagStatusByEnv = new Map(),
+	message = 'Select flags to migrate to Datadog:',
 ): Promise<LDFlag[] | null> {
 	let inDatadogCount = 0;
 	let prefixedCount = 0;
@@ -817,7 +862,7 @@ export async function selectFlags(
 	const pageSize = Math.max(5, (process.stdout.rows ?? 24) - 9);
 
 	return filterableCheckbox<LDFlag>({
-		message: 'Select flags to migrate to Datadog:',
+		message,
 		choices: sortedFlags.map((flag) => {
 			const conflictType = classifyConflict(
 				datadogFlags,
@@ -2624,7 +2669,6 @@ export async function runLaunchDarklyMigration(
 	let prevSelectedEnvKeys: string[] = [];
 	let prevEnvMapping: EnvironmentMapping<string> = new Map();
 	let prevSelectedFlags: LDFlag[] = [];
-	const statusEnvs = ldEnvironments.filter((env) => !env.archived);
 	// Cache of LD flag lifecycle statuses per non-archived environment key,
 	// fetched lazily and reused across re-selection loops.
 	const statusByEnv: LDFlagStatusByEnv = new Map();
@@ -2649,39 +2693,14 @@ export async function runLaunchDarklyMigration(
 		}
 		prevSelectedEnvKeys = envResult.map((e) => e.key);
 
-		// Fetch flag lifecycle statuses for all non-archived environments so the
-		// advanced-filter screen can answer "active anywhere" and "inactive
-		// everywhere". Failures are non-fatal — filtering simply treats affected
-		// flags as uncategorized unless another environment proves a positive
-		// status. Fetched lazily and cached, so re-selection loops stay silent.
-		const envsToLoad = statusEnvs.filter((env) => !statusByEnv.has(env.key));
-		if (envsToLoad.length > 0) {
-			const statusSpinner = createSpinner(
-				'Loading LaunchDarkly flag statuses…',
-			).start();
-			let failedCount = 0;
-			for (const env of envsToLoad) {
-				try {
-					statusByEnv.set(
-						env.key,
-						await fetchFlagStatuses(ldApiKey, selectedProject.key, env.key),
-					);
-				} catch {
-					statusByEnv.set(env.key, null);
-					failedCount++;
-				}
-			}
-			const loadedCount = envsToLoad.length - failedCount;
-			if (failedCount > 0) {
-				statusSpinner.warn(
-					`Loaded flag statuses for ${loadedCount} environment(s); ${failedCount} could not be loaded (affected flags stay uncategorized)`,
-				);
-			} else {
-				statusSpinner.succeed(
-					`Loaded flag statuses for ${loadedCount} environment(s)`,
-				);
-			}
-		}
+		// Lifecycle statuses power the advanced filter; fetched lazily and
+		// cached so re-selection loops stay silent.
+		await loadFlagStatuses(
+			ldApiKey,
+			selectedProject.key,
+			ldEnvironments,
+			statusByEnv,
+		);
 
 		// Link LD environments → DD environments
 		while (true) {
