@@ -2,15 +2,20 @@ import { Box, Text } from 'ink';
 
 type PermissionsErrorProps = {
 	missing: readonly string[];
+	/** Names the org when a command uses more than one. */
+	orgLabel?: string;
 };
 
 export function PermissionsError({
 	missing,
+	orgLabel,
 }: PermissionsErrorProps): JSX.Element {
 	const items = [
 		{
 			id: 'title',
-			text: 'Missing required Datadog permissions:',
+			text: orgLabel
+				? `Missing required Datadog permissions in the ${orgLabel}:`
+				: 'Missing required Datadog permissions:',
 		},
 		...missing.map((permission) => ({
 			id: `permission-${permission}`,

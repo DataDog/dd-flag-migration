@@ -3,7 +3,7 @@ import chalk from 'chalk';
 import {
 	ArgParseError,
 	type MigrateArgs,
-	type ProviderValue,
+	type MigrateProviderValue,
 	parseMigrateArgs,
 } from './args.js';
 import { HEADER_SUBTITLES, Header } from './components/Header.js';
@@ -12,6 +12,12 @@ import { PermissionsError } from './components/PermissionsError.js';
 import { select } from './components/Select.js';
 import { fetchCurrentUserPermissions } from './datadog/api.js';
 import { getDatadogCredentials } from './datadog/auth.js';
+import { checkDatadogOrgPermissions } from './datadog/org-permissions.js';
+import {
+	assertDistinctDatadogOrgs,
+	type DatadogOrgPair,
+	requireDatadogOrgPair,
+} from './datadog/orgs.js';
 import { requireEnvVars } from './helpers/env.js';
 import { withConsoleLogToStderr } from './helpers/output.js';
 import { promptForDatadogSite } from './helpers/prompt-for-datadog-site.js';
@@ -27,8 +33,9 @@ const ALL_REQUIRED_PERMISSIONS = [
 ] as const;
 
 const PROVIDERS = [
-	{ name: 'Eppo', value: 'eppo' },
-	{ name: 'LaunchDarkly', value: 'launchdarkly' },
+	{ name: 'Eppo → Datadog', value: 'eppo' },
+	{ name: 'Datadog → Datadog', value: 'datadog' },
+	{ name: 'LaunchDarkly → Datadog', value: 'launchdarkly' },
 ] as const;
 
 // ─── Arg Parsing ──────────────────────────────────────────────────────────────
@@ -57,9 +64,13 @@ function clearScreen(): void {
 
 // ─── Prompt Steps ─────────────────────────────────────────────────────────────
 
-async function selectProvider(): Promise<ProviderValue> {
-	return select<ProviderValue>({
-		message: 'Which feature flagging solution are you migrating from?',
+function providerLabel(provider: MigrateProviderValue): string {
+	return PROVIDERS.find((p) => p.value === provider)?.name ?? provider;
+}
+
+async function selectProvider(): Promise<MigrateProviderValue> {
+	return select<MigrateProviderValue>({
+		message: 'Which migration would you like to run?',
 		choices: PROVIDERS.map((p) => ({
 			name: p.name,
 			value: p.value,
@@ -92,18 +103,50 @@ async function checkRequiredPermissions(
 	}
 }
 
+/**
+ * Datadog-to-Datadog migrations read both orgs from SOURCE_DD_* and
+ * TARGET_DD_* instead of DD_API_KEY / DD_APP_KEY / DD_SITE.
+ */
+async function prepareDatadogOrgPair(): Promise<DatadogOrgPair> {
+	const pair = requireDatadogOrgPair();
+	try {
+		await assertDistinctDatadogOrgs(pair);
+		if (!(await checkDatadogOrgPermissions(pair))) process.exit(1);
+	} catch (err) {
+		const detail = err instanceof Error ? err.message : String(err);
+		console.error(chalk.red(`\n${detail}\n`));
+		process.exit(1);
+	}
+	return pair;
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
 	const args = parseArgs();
 
-	// Validate Datadog env vars up front. Provider-specific env vars are
-	// validated after the provider is known so that, e.g., a LaunchDarkly
-	// migration doesn't require EPPO_API_KEY to be set.
-	const { apiKey: ddApiKey, appKey: ddAppKey } = getDatadogCredentials();
+	if (!args.interactive && args.nonInteractive?.provider === 'datadog') {
+		const ni = args.nonInteractive;
+		await withConsoleLogToStderr(async () => {
+			const pair = await prepareDatadogOrgPair();
+			const { runDatadogMigration } = await import(
+				'./datadog-migration/migrate.js'
+			);
+			await runDatadogMigration(pair, args.dryRun, {
+				doExport: args.doExport,
+				tagMode: args.tagMode,
+				nonInteractive: { envMap: ni.envMap, flagKeys: ni.flagKeys },
+			});
+		});
+		return;
+	}
 
 	if (!args.interactive && args.nonInteractive) {
 		const ni = args.nonInteractive;
+		// Validate Datadog env vars up front. Provider-specific env vars are
+		// validated next so that, e.g., a LaunchDarkly migration doesn't require
+		// EPPO_API_KEY to be set.
+		const { apiKey: ddApiKey, appKey: ddAppKey } = getDatadogCredentials();
 		await withConsoleLogToStderr(async () => {
 			// Non-interactive: skip UI, prompts, and saved-site lookup.
 			if (ni.provider === 'eppo') {
@@ -160,17 +203,41 @@ async function main(): Promise<void> {
 		);
 	}
 
-	const ddSite = await promptForDatadogSite(args.datadogSite);
-	await checkRequiredPermissions(ddApiKey, ddAppKey, ddSite);
-
+	// The provider decides which credentials apply, so it is chosen first.
 	const provider = await selectProvider();
 
 	console.log();
-	console.log(
-		chalk.bold('Provider: ') +
-			chalk.green(provider === 'eppo' ? 'Eppo' : 'LaunchDarkly'),
-	);
+	console.log(chalk.bold('Migration: ') + chalk.green(providerLabel(provider)));
 	console.log();
+
+	if (provider === 'datadog') {
+		if (args.datadogSite !== undefined) {
+			console.error(
+				chalk.red(
+					'\n--datadog-site is not supported for Datadog-to-Datadog migrations; set SOURCE_DD_SITE and TARGET_DD_SITE instead.\n',
+				),
+			);
+			process.exit(1);
+		}
+		if (args.distributionChannelMode !== undefined) {
+			console.error(
+				chalk.red(
+					'\n--distribution-channel is only supported for LaunchDarkly migrations.\n',
+				),
+			);
+			process.exit(1);
+		}
+		const pair = await prepareDatadogOrgPair();
+		const { runDatadogMigration } = await import(
+			'./datadog-migration/migrate.js'
+		);
+		await runDatadogMigration(pair, args.dryRun, { tagMode: args.tagMode });
+		return;
+	}
+
+	const { apiKey: ddApiKey, appKey: ddAppKey } = getDatadogCredentials();
+	const ddSite = await promptForDatadogSite(args.datadogSite);
+	await checkRequiredPermissions(ddApiKey, ddAppKey, ddSite);
 
 	if (provider === 'eppo') {
 		requireEnvVars(['EPPO_API_KEY']);

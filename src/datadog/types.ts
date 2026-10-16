@@ -4,9 +4,11 @@ export interface MigrationMetadata {
 	project_key?: string;
 	flag_key?: string;
 	key_prefix?: string;
-	provider?: 'launchdarkly' | 'eppo';
+	provider?: 'launchdarkly' | 'eppo' | 'datadog';
 	source_id?: string;
 	source_key?: string;
+	/** Datadog site of the source org for Datadog-to-Datadog migrations. */
+	source_site?: string;
 }
 
 export type DatadogEnvironmentStatus = 'ENABLED' | 'DISABLED';
@@ -25,6 +27,11 @@ export interface DatadogStatusAllocation {
 	id?: string;
 	key: string;
 	name?: string;
+	type?: string;
+	status?: string;
+	order_position?: number;
+	experiment_id?: string | null;
+	exposure_schedule?: unknown;
 	targeting_rules?: Array<{
 		conditions?: Array<{
 			operator?: string;
@@ -44,12 +51,19 @@ export interface DatadogStatusFlagDetail {
 	id: string;
 	key: string;
 	name: string;
+	description?: string;
+	valueType?: string;
+	distributionChannel?: string;
+	jsonSchema?: string;
+	tags?: string[];
 	migrationMetadata?: MigrationMetadata;
 	variants: DatadogVariantDetail[];
 	environments: Array<{
 		environmentId: string;
 		status: DatadogEnvironmentStatus;
 		defaultVariantKey?: string;
+		/** Variant served to every subject regardless of targeting, when set. */
+		overrideVariantKey?: string;
 		allocations: DatadogStatusAllocation[] | null;
 	}>;
 }
@@ -117,12 +131,14 @@ export type DatadogAllocationSyncRequest = Omit<
 export interface DatadogCreateFlagRequest {
 	key: string;
 	name: string;
+	description?: string;
 	value_type: 'BOOLEAN' | 'INTEGER' | 'NUMERIC' | 'STRING' | 'JSON';
+	json_schema?: string;
 	variants: Array<{ key: string; name: string; value: string }>;
 	allocations?: DatadogAllocationForFlagCreation[];
 	migration_metadata?: MigrationMetadata;
 	tags?: string[];
-	distribution_channel?: 'CLIENT' | 'SERVER' | 'BOTH';
+	distribution_channel?: 'CLIENT' | 'SERVER' | 'BOTH' | 'ALL';
 }
 
 export interface DatadogCreatedFlag {
@@ -144,14 +160,27 @@ export interface EppoSavedFilterMigrationMetadata {
 	audience_id: number;
 }
 
+export interface DatadogSavedFilterMigrationMetadata {
+	provider: 'datadog';
+	/** Saved filter UUID in the source org. */
+	source_id: string;
+	source_site: string;
+	name_prefix?: string;
+}
+
 export type SavedFilterMigrationMetadata =
 	| LDSavedFilterMigrationMetadata
-	| EppoSavedFilterMigrationMetadata;
+	| EppoSavedFilterMigrationMetadata
+	| DatadogSavedFilterMigrationMetadata;
 
 export interface SavedFilterSummary {
 	id: string;
 	name: string;
 	migration_metadata?: SavedFilterMigrationMetadata;
+	/** Present only when listed with `include_rules` or fetched individually. */
+	description?: string;
+	creation_type?: 'RULES' | 'LIST';
+	targeting_rules?: DatadogTargetingRule[];
 }
 
 export interface CreateSavedFilterRequest {
@@ -179,7 +208,7 @@ export interface DatadogVariantDetail {
 }
 
 export interface VariantMigrationMetadata {
-	provider: 'launchdarkly' | 'eppo';
+	provider: 'launchdarkly' | 'eppo' | 'datadog';
 	/** Stable identifier from the source variation — survives rename. */
 	source_id: string;
 	/** Slugified source key at migration time — useful for debugging drift. */

@@ -301,3 +301,46 @@ describe('parseMigrateArgs', () => {
 		);
 	});
 });
+
+describe('parseMigrateArgs with the Datadog provider', () => {
+	const base = [
+		'--interactive=false',
+		'--provider=Datadog',
+		'--env-map=Production,Production',
+		'--feature-flag=example-flag',
+	];
+
+	it('parses a non-interactive Datadog-to-Datadog invocation', () => {
+		const args = parseMigrateArgs([...base, '--tag-mode=replace']);
+		expect(args.nonInteractive).toEqual({
+			provider: 'datadog',
+			projectKey: undefined,
+			envMap: [['Production', 'Production']],
+			flagKeys: ['example-flag'],
+		});
+		expect(args.datadogSite).toBeUndefined();
+		expect(args.tagMode).toBe('replace');
+	});
+
+	it.each([
+		['--datadog-site=datadoghq.com', /SOURCE_DD_SITE and TARGET_DD_SITE/],
+		['--project=example', /--project is only supported for LaunchDarkly/],
+		[
+			'--distribution-channel=client',
+			/--distribution-channel is only supported for LaunchDarkly/,
+		],
+	])('rejects %s', (option, message) => {
+		expect(() => parseMigrateArgs([...base, option])).toThrow(message);
+	});
+
+	it('lists Datadog among the supported providers', () => {
+		expect(() =>
+			parseMigrateArgs([
+				'--interactive=false',
+				'--provider=Other',
+				'--env-map=p,p',
+				'--feature-flag=x',
+			]),
+		).toThrow(/"Eppo", "LaunchDarkly", or "Datadog"/);
+	});
+});

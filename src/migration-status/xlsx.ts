@@ -8,6 +8,7 @@ import {
 	addSheetHeader,
 	colorRow,
 	safeCell,
+	uniqueWorksheetName,
 } from '../helpers/xlsx-helpers.js';
 import type {
 	EnvironmentMigrationStatus,
@@ -154,24 +155,6 @@ function selectedDatadogEnvironments(
 		...environment,
 		worksheetName: uniqueWorksheetName(environment.name, usedNames),
 	}));
-}
-
-function uniqueWorksheetName(name: string, usedNames: Set<string>): string {
-	const sanitized =
-		name
-			.replace(/[\\/?*[\]:]/g, ' ')
-			.replace(/\s+/g, ' ')
-			.replace(/^'+|'+$/g, '')
-			.trim() || 'Environment';
-	let worksheetName = sanitized.slice(0, 31);
-	let suffixNumber = 2;
-	while (usedNames.has(worksheetName.toLowerCase())) {
-		const suffix = ` (${suffixNumber})`;
-		worksheetName = `${sanitized.slice(0, 31 - suffix.length)}${suffix}`;
-		suffixNumber++;
-	}
-	usedNames.add(worksheetName.toLowerCase());
-	return worksheetName;
 }
 
 function mostImportantStatus(

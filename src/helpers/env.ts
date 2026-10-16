@@ -8,7 +8,13 @@ export type EnvVarName =
 	| 'EPPO_API_KEY'
 	| 'EPPO_SDK_KEY'
 	| 'LAUNCHDARKLY_API_KEY'
-	| 'LAUNCHDARKLY_SDK_KEY';
+	| 'LAUNCHDARKLY_SDK_KEY'
+	| 'SOURCE_DD_API_KEY'
+	| 'SOURCE_DD_APP_KEY'
+	| 'SOURCE_DD_SITE'
+	| 'TARGET_DD_API_KEY'
+	| 'TARGET_DD_APP_KEY'
+	| 'TARGET_DD_SITE';
 
 function read(name: EnvVarName): string | undefined {
 	const v = process.env[name];
