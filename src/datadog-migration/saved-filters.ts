@@ -137,25 +137,20 @@ export function buildSavedFilterRequest(
 
 // ─── Adoption ─────────────────────────────────────────────────────────────────
 
-/** Target flag ID → target environment IDs whose targeting this run replaces. */
-export type RewrittenTargeting = ReadonlyMap<string, ReadonlySet<string>>;
-
 /**
- * Find target flags that reference the given saved filters in targeting this
- * run does not replace. Those flags would silently change targeting if the
- * filter were overwritten. Draft targeting filters count: they take effect
- * once published. Returns saved filter UUID → sorted target flag keys.
+ * Find every target flag that references the given saved filters. Selected
+ * flags still count: adoption happens before targeting rewrites, which may
+ * later be skipped or fail (including when another saved filter cannot be
+ * migrated). Draft targeting filters count too, since they may be published.
+ * Returns saved filter UUID → sorted target flag keys.
  */
-export function findOutsideSavedFilterUsage(
+export function findSavedFilterUsage(
 	details: Iterable<DatadogStatusFlagDetail>,
 	filterIds: ReadonlySet<string>,
-	rewritten: RewrittenTargeting,
 ): Map<string, string[]> {
 	const usage = new Map<string, Set<string>>();
 	for (const detail of details) {
-		const replaced = rewritten.get(detail.id);
 		for (const environment of detail.environments) {
-			if (replaced?.has(environment.environmentId)) continue;
 			for (const allocation of environment.allocations ?? []) {
 				for (const rule of allocation.targeting_rules ?? []) {
 					for (const condition of rule.conditions ?? []) {
@@ -204,14 +199,14 @@ export interface AdoptionCandidate {
 	blockedReason?: string;
 	/** Target targeting already matches the source, so adopting changes nothing. */
 	identical: boolean;
-	/** Target flags outside this run that reference the target filter. */
-	outsideFlagKeys: string[];
+	/** All target flags that currently reference the target filter. */
+	flagKeys: string[];
 }
 
 /**
  * Safe to adopt: overwriting the target filter cannot change targeting of any
- * flag this run does not already rewrite. When some target flags could not be
- * inspected, only identical filters are safe.
+ * target flag. When some target flags could not be inspected, only identical
+ * filters are safe.
  */
 export function isSafeAdoption(
 	candidate: AdoptionCandidate,
@@ -219,7 +214,7 @@ export function isSafeAdoption(
 ): boolean {
 	if (candidate.blockedReason !== undefined) return false;
 	if (candidate.identical) return true;
-	return usageComplete && candidate.outsideFlagKeys.length === 0;
+	return usageComplete && candidate.flagKeys.length === 0;
 }
 
 /**
@@ -232,7 +227,7 @@ export function isSafeAdoption(
 export function planSavedFilterAdoptions(
 	sources: SavedFilterSummary[],
 	targetFilters: SavedFilterSummary[],
-	outsideUsage: ReadonlyMap<string, string[]>,
+	usage: ReadonlyMap<string, string[]>,
 ): AdoptionCandidate[] {
 	const targetsByName = new Map<string, SavedFilterSummary[]>();
 	for (const target of targetFilters) {
@@ -252,7 +247,7 @@ export function planSavedFilterAdoptions(
 			...(target ? { target } : {}),
 			blockedReason: reason,
 			identical: false,
-			outsideFlagKeys: target ? (outsideUsage.get(target.id) ?? []) : [],
+			flagKeys: target ? (usage.get(target.id) ?? []) : [],
 		});
 		if (matches.length !== 1) {
 			return blocked(
@@ -281,7 +276,7 @@ export function planSavedFilterAdoptions(
 			identical:
 				canonicalSavedFilterTargeting(source) ===
 				canonicalSavedFilterTargeting(target),
-			outsideFlagKeys: outsideUsage.get(target.id) ?? [],
+			flagKeys: usage.get(target.id) ?? [],
 		};
 	});
 }
@@ -323,7 +318,6 @@ interface ConflictResolution {
 /** What the adopt option needs to check target flag usage. */
 export interface SavedFilterAdoptionContext {
 	targetFlags: DatadogFlagEntry[];
-	rewrittenTargeting: RewrittenTargeting;
 }
 
 async function promptForConflictAction(
@@ -447,10 +441,9 @@ async function assessAdoptions(
 		spinner.succeed(`Checked ${details.length} target flag(s)`);
 	}
 
-	const usage = findOutsideSavedFilterUsage(
+	const usage = findSavedFilterUsage(
 		details,
 		new Set(sameName.map((filter) => filter.id)),
-		adoption.rewrittenTargeting,
 	);
 	const candidates = planSavedFilterAdoptions(
 		conflicts,
@@ -474,7 +467,7 @@ function printAdoptionReport(
 	}
 	for (const candidate of candidates) {
 		const name = candidate.source.name;
-		const { outsideFlagKeys } = candidate;
+		const { flagKeys } = candidate;
 		if (candidate.blockedReason !== undefined) {
 			console.log(
 				chalk.gray(`  – ${name}: cannot adopt (${candidate.blockedReason})`),
@@ -484,24 +477,22 @@ function printAdoptionReport(
 				chalk.green(`  ✓ ${name}: targeting already matches the source`),
 			);
 		} else if (isSafeAdoption(candidate, usageComplete)) {
-			console.log(
-				chalk.green(`  ✓ ${name}: not used by flags outside this migration`),
-			);
-		} else if (outsideFlagKeys.length === 0) {
+			console.log(chalk.green(`  ✓ ${name}: not used by any target flags`));
+		} else if (flagKeys.length === 0) {
 			console.log(
 				chalk.yellow(
 					`  ⚠ ${name}: targeting differs; usage could not be fully checked`,
 				),
 			);
 		} else {
-			const preview = outsideFlagKeys.slice(0, USAGE_PREVIEW_LIMIT).join(', ');
+			const preview = flagKeys.slice(0, USAGE_PREVIEW_LIMIT).join(', ');
 			const more =
-				outsideFlagKeys.length > USAGE_PREVIEW_LIMIT
-					? `, +${outsideFlagKeys.length - USAGE_PREVIEW_LIMIT} more`
+				flagKeys.length > USAGE_PREVIEW_LIMIT
+					? `, +${flagKeys.length - USAGE_PREVIEW_LIMIT} more`
 					: '';
 			console.log(
 				chalk.yellow(
-					`  ⚠ ${name}: targeting differs and ${outsideFlagKeys.length} flag(s) outside this migration use it: ${preview}${more}`,
+					`  ⚠ ${name}: targeting differs and ${flagKeys.length} target flag(s) use it: ${preview}${more}`,
 				),
 			);
 		}
@@ -519,14 +510,14 @@ async function resolveConflicts(
 		conflicts.length,
 		adoption !== undefined,
 	);
-	if (action === 'skip' || adoption === undefined) {
-		return { adopt: new Map(), fallback: { action: 'skip' } };
-	}
 	if (action === 'prefix') {
 		return {
 			adopt: new Map(),
 			fallback: { action: 'prefix', prefix: await promptForPrefix() },
 		};
+	}
+	if (action === 'skip' || adoption === undefined) {
+		return { adopt: new Map(), fallback: { action: 'skip' } };
 	}
 
 	const { candidates, usageComplete } = await assessAdoptions(
@@ -555,7 +546,7 @@ async function resolveConflicts(
 				...(risky > 0
 					? [
 							{
-								name: `Adopt all ${adoptable.length}, including ${risky} used by other flags${blocked > 0 ? ` (skip ${blocked} that cannot be adopted)` : ''}`,
+								name: `Adopt all ${adoptable.length}, including ${risky} that may change target flag evaluations${blocked > 0 ? ` (skip ${blocked} that cannot be adopted)` : ''}`,
 								value: 'all' as const,
 							},
 						]

@@ -787,25 +787,13 @@ async function executeDatadogMigration(
 	if (refs.length > 0) {
 		console.log(chalk.bold('  Phase 1: Migrating saved filters'));
 		console.log();
-		// Targeting this run PUT-replaces cannot be affected by adopting a filter.
-		const rewrittenTargeting = new Map<string, Set<string>>();
-		for (const detail of details.values()) {
-			const existing = findTargetFlag(targetFlags, detail);
-			if (!existing) continue;
-			rewrittenTargeting.set(
-				existing.id,
-				new Set(
-					getDatadogEnvsToEnable(detail, envMapping).map((env) => env.id),
-				),
-			);
-		}
 		try {
 			const result = await migrateDatadogSavedFilters({
 				pair,
 				refs,
 				dryRun,
 				nonInteractive,
-				adoption: { targetFlags, rewrittenTargeting },
+				adoption: { targetFlags },
 			});
 			savedFilterIdMap = result.savedFilterIdMap;
 			savedFilterStats = result.stats;

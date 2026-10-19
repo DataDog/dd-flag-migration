@@ -8,7 +8,7 @@ import type {
 } from '../../src/datadog/types.js';
 import { buildDatadogAllocations } from '../../src/datadog-migration/helpers/migration.js';
 import {
-	findOutsideSavedFilterUsage,
+	findSavedFilterUsage,
 	isSafeAdoption,
 	migrateDatadogSavedFilters,
 	planSavedFilterAdoptions,
@@ -102,7 +102,7 @@ describe('planSavedFilterTargets', () => {
 	});
 });
 
-describe('findOutsideSavedFilterUsage', () => {
+describe('findSavedFilterUsage', () => {
 	const flag = (
 		id: string,
 		environments: Array<{ id: string; filterId: string; status?: string }>,
@@ -126,8 +126,8 @@ describe('findOutsideSavedFilterUsage', () => {
 		})),
 	});
 
-	it('ignores targeting this run replaces and counts everything else', () => {
-		const usage = findOutsideSavedFilterUsage(
+	it('counts all referencing flags, including drafts, and deduplicates environments', () => {
+		const usage = findSavedFilterUsage(
 			[
 				flag('migrated', [
 					{ id: 'prod', filterId: 'shared' },
@@ -139,13 +139,14 @@ describe('findOutsideSavedFilterUsage', () => {
 				flag('fully-migrated', [{ id: 'prod', filterId: 'shared' }]),
 			],
 			new Set(['shared']),
-			new Map([
-				['migrated', new Set(['prod'])],
-				['fully-migrated', new Set(['prod'])],
-			]),
 		);
 		expect(usage).toEqual(
-			new Map([['shared', ['draft-key', 'migrated-key', 'unrelated-key']]]),
+			new Map([
+				[
+					'shared',
+					['draft-key', 'fully-migrated-key', 'migrated-key', 'unrelated-key'],
+				],
+			]),
 		);
 	});
 });
@@ -155,7 +156,7 @@ describe('planSavedFilterAdoptions', () => {
 		{ conditions: [{ operator: 'ONE_OF', attribute: 'id', value: values }] },
 	];
 
-	it('marks identical targeting and outside usage per target filter', () => {
+	it('marks identical targeting and usage per target filter', () => {
 		const candidates = planSavedFilterAdoptions(
 			[
 				{ id: 'a', name: 'Alpha', targeting_rules: rules(['x', 'y']) },
@@ -168,14 +169,14 @@ describe('planSavedFilterAdoptions', () => {
 			new Map([['target-b', ['other-flag']]]),
 		);
 		expect(
-			candidates.map(({ target, identical, outsideFlagKeys }) => ({
+			candidates.map(({ target, identical, flagKeys }) => ({
 				target: target?.id,
 				identical,
-				outsideFlagKeys,
+				flagKeys,
 			})),
 		).toEqual([
-			{ target: 'target-a', identical: true, outsideFlagKeys: [] },
-			{ target: 'target-b', identical: false, outsideFlagKeys: ['other-flag'] },
+			{ target: 'target-a', identical: true, flagKeys: [] },
+			{ target: 'target-b', identical: false, flagKeys: ['other-flag'] },
 		]);
 		expect(
 			candidates.map((candidate) => isSafeAdoption(candidate, true)),
