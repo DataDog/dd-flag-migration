@@ -90,29 +90,117 @@ export function buildDatadogSourceVariants(
 	}));
 }
 
+function uniqueIndex<T>(
+	items: T[],
+	identity: (item: T) => string | undefined,
+): Map<string, T> {
+	const index = new Map<string, T>();
+	const duplicates = new Set<string>();
+	for (const item of items) {
+		const id = identity(item);
+		if (id === undefined) continue;
+		if (index.has(id)) duplicates.add(id);
+		else index.set(id, item);
+	}
+	for (const id of duplicates) index.delete(id);
+	return index;
+}
+
+/** JSON values are excluded: their serialisation is key-order-sensitive. */
+function matchableValue(value: string): string | undefined {
+	return value.startsWith('{') || value.startsWith('[') ? undefined : value;
+}
+
 /**
- * Plan variant writes for a Datadog-to-Datadog sync. Variant keys are
- * immutable in both orgs and copied verbatim on create, so the key is the
- * matching contract. Existing `migration_metadata` is never rewritten: a
- * target variant may carry another provider's source ID, and replacing it
- * would break that provider's own re-migration matching.
+ * Pair source variants with target variants, keyed by source variant key.
+ * Passes run strongest first so a weaker match never claims a variant that a
+ * stronger one wants: a target variant this sync created (Datadog
+ * `migration_metadata.source_id`), then key, then a name, then a non-JSON
+ * value. Each identity must be unique in both orgs. Name and value catch
+ * flags whose variants were created separately in each org under different
+ * keys, such as "true"/"false" versus "variation-0"/"variation-1".
+ */
+export function matchDatadogVariants(
+	sourceVariants: SourceVariant[],
+	targetVariants: DatadogVariantDetail[],
+): Map<string, DatadogVariantDetail> {
+	const passes: Array<{
+		source: (variant: SourceVariant) => string | undefined;
+		target: (variant: DatadogVariantDetail) => string | undefined;
+	}> = [
+		{
+			source: (variant) => variant.sourceId,
+			target: (variant) => {
+				const meta = variant.migration_metadata;
+				return meta?.provider === 'datadog' &&
+					typeof meta.source_id === 'string'
+					? meta.source_id
+					: undefined;
+			},
+		},
+		{ source: (variant) => variant.key, target: (variant) => variant.key },
+		{ source: (variant) => variant.name, target: (variant) => variant.name },
+		{
+			source: (variant) => matchableValue(variant.value),
+			target: (variant) => matchableValue(variant.value),
+		},
+	];
+	const matches = new Map<string, DatadogVariantDetail>();
+	const claimed = new Set<string>();
+	for (const pass of passes) {
+		const targetIndex = uniqueIndex(targetVariants, pass.target);
+		for (const [id, variant] of uniqueIndex(sourceVariants, pass.source)) {
+			if (matches.has(variant.key)) continue;
+			const counterpart = targetIndex.get(id);
+			if (!counterpart || claimed.has(counterpart.id)) continue;
+			matches.set(variant.key, counterpart);
+			claimed.add(counterpart.id);
+		}
+	}
+	return matches;
+}
+
+export interface DatadogVariantSyncPlan extends VariantSyncPlan {
+	/** Source variant key → its key in the target org once the plan runs. */
+	targetKeys: Map<string, string>;
+}
+
+/**
+ * Plan variant writes for a Datadog-to-Datadog sync. Matching follows
+ * `matchDatadogVariants`; target variant keys are immutable, so targeting
+ * and default variants must be translated through `targetKeys`. Existing
+ * `migration_metadata` is never rewritten: a target variant may carry another
+ * provider's source ID, and replacing it would break that provider's own
+ * re-migration matching. Boolean flags cannot gain variants, so an unmatched
+ * boolean variant is an error rather than a doomed create.
  */
 export function planDatadogVariantSync(
 	sourceVariants: SourceVariant[],
 	existingVariants: DatadogVariantDetail[],
-): VariantSyncPlan {
-	const existingByKey = new Map(
-		existingVariants.map((variant) => [variant.key, variant]),
-	);
-	const sourceKeys = new Set(sourceVariants.map((variant) => variant.key));
+	valueType?: string,
+): DatadogVariantSyncPlan {
+	const matches = matchDatadogVariants(sourceVariants, existingVariants);
+	const reservedKeys = new Set(existingVariants.map((variant) => variant.key));
+	const targetKeys = new Map<string, string>();
 	const toCreate: VariantSyncPlan['toCreate'] = [];
 	const toUpdate: VariantSyncPlan['toUpdate'] = [];
 	for (const variant of sourceVariants) {
-		const existing = existingByKey.get(variant.key);
+		const existing = matches.get(variant.key);
 		if (!existing) {
-			toCreate.push(variant);
+			let key = variant.key;
+			for (let suffix = 1; reservedKeys.has(key); suffix++) {
+				key = `${variant.key}-${suffix}`;
+			}
+			reservedKeys.add(key);
+			targetKeys.set(variant.key, key);
+			toCreate.push(
+				key === variant.key
+					? variant
+					: { ...variant, key, sourceKey: variant.key },
+			);
 			continue;
 		}
+		targetKeys.set(variant.key, existing.key);
 		if (existing.name !== variant.name || existing.value !== variant.value) {
 			toUpdate.push({
 				id: existing.id,
@@ -124,10 +212,45 @@ export function planDatadogVariantSync(
 			});
 		}
 	}
+	if (valueType === 'BOOLEAN' && toCreate.length > 0) {
+		const keys = toCreate.map((variant) => variant.sourceKey ?? variant.key);
+		throw new Error(
+			`Could not match source variant(s) ${keys.join(', ')} to the target flag's variants; boolean flags cannot gain variants`,
+		);
+	}
+	const matchedIds = new Set(
+		[...matches.values()].map((variant) => variant.id),
+	);
 	const toDelete = existingVariants
-		.filter((variant) => !sourceKeys.has(variant.key))
+		.filter((variant) => !matchedIds.has(variant.id))
 		.map((variant) => ({ id: variant.id, key: variant.key }));
-	return { toCreate, toUpdate, toDelete };
+	return { toCreate, toUpdate, toDelete, targetKeys };
+}
+
+/** Rewrite targeting variant references to the target org's variant keys. */
+export function remapAllocationVariantKeys<
+	T extends { variant_weights: Array<{ variant_key: string; value: number }> },
+>(allocations: T[], targetKeys: ReadonlyMap<string, string>): T[] {
+	return allocations.map((allocation) => ({
+		...allocation,
+		variant_weights: allocation.variant_weights.map((weight) => ({
+			...weight,
+			variant_key: targetKeys.get(weight.variant_key) ?? weight.variant_key,
+		})),
+	}));
+}
+
+/** Rewrite per-environment default variants to the target org's variant keys. */
+export function remapDefaultVariantKeys(
+	defaults: ReadonlyMap<string, string>,
+	targetKeys: ReadonlyMap<string, string>,
+): Map<string, string> {
+	return new Map(
+		[...defaults].map(([environmentId, key]) => [
+			environmentId,
+			targetKeys.get(key) ?? key,
+		]),
+	);
 }
 
 /**
@@ -177,7 +300,7 @@ export function buildDatadogVariantSyncRequests(
 						migration_metadata: {
 							provider: 'datadog',
 							source_id: variant.sourceId,
-							source_key: variant.key,
+							source_key: variant.sourceKey ?? variant.key,
 						},
 					},
 				},

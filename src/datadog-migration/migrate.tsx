@@ -72,6 +72,8 @@ import {
 	getDatadogEnvsToDisable,
 	getDatadogEnvsToEnable,
 	planDatadogVariantSync,
+	remapAllocationVariantKeys,
+	remapDefaultVariantKeys,
 	unsupportedTargetingReason,
 } from './helpers/migration.js';
 import {
@@ -398,6 +400,15 @@ async function syncExistingFlag(
 		const variantPlan = planDatadogVariantSync(
 			variants,
 			await fetchTargetVariants(target, flagId),
+			plan.valueType,
+		);
+		const targetAllocations = remapAllocationVariantKeys(
+			allocations,
+			variantPlan.targetKeys,
+		);
+		const targetDefaults = remapDefaultVariantKeys(
+			defaults,
+			variantPlan.targetKeys,
 		);
 		const { createUpdateRequests, deleteRequests } =
 			buildDatadogVariantSyncRequests(flagId, variantPlan);
@@ -422,8 +433,8 @@ async function syncExistingFlag(
 					allocationsPutRequest(
 						flagId,
 						environment.id,
-						allocations,
-						defaults.get(environment.id),
+						targetAllocations,
+						targetDefaults.get(environment.id),
 					),
 					{
 						method: 'POST',
@@ -492,17 +503,26 @@ async function syncExistingFlag(
 		target,
 		flagId,
 		variants,
+		plan.valueType,
 	);
 	if (fullSync) {
+		const targetAllocations = remapAllocationVariantKeys(
+			allocations,
+			variantSync.plan.targetKeys,
+		);
+		const targetDefaults = remapDefaultVariantKeys(
+			defaults,
+			variantSync.plan.targetKeys,
+		);
 		for (const environment of envsToEnable) {
 			await syncAllocationsForEnvironment(
 				target.apiKey,
 				target.appKey,
 				flagId,
 				environment.id,
-				toSyncRequests(allocations, environment.id),
+				toSyncRequests(targetAllocations, environment.id),
 				target.site,
-				defaults.get(environment.id),
+				targetDefaults.get(environment.id),
 			);
 		}
 		// Safe only now: the targeting writes above no longer reference these.

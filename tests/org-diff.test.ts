@@ -326,6 +326,26 @@ describe('compareOrgs', () => {
 		expect(flag.flagWideDetails.join(' ')).not.toContain('changed');
 	});
 
+	it('compares variants with different keys under their matched source key', () => {
+		const target = flagDetail(
+			'target',
+			{},
+			{ defaultVariantKey: 'variation-1' },
+		);
+		target.variants = [
+			{ id: 'target-on', key: 'variation-0', name: 'On', value: 'true' },
+			{ id: 'target-off', key: 'variation-1', name: 'Off', value: 'false' },
+		];
+		const flag = onlyFlag({
+			targetDetails: new Map([['target-flag', target]]),
+		});
+		expect(flag).toMatchObject({
+			status: 'in-sync',
+			flagWideChanges: [],
+			environments: [{ status: 'in-sync' }],
+		});
+	});
+
 	it('detects enablement, default, override, and targeting differences', () => {
 		const disabled = onlyFlag({
 			targetDetails: new Map([

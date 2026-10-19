@@ -6,8 +6,10 @@ import type {
 	SavedFilterSummary,
 } from '../datadog/types.js';
 import {
+	buildDatadogSourceVariants,
 	findTargetFlag,
 	liveAllocations,
+	matchDatadogVariants,
 	unsupportedAllocationReason,
 } from '../datadog-migration/helpers/migration.js';
 import { stableJson } from '../migration-status/utils.js';
@@ -287,19 +289,20 @@ function compareFlagAttributes(
 	}
 
 	const variantDetails: string[] = [];
-	const targetVariants = new Map(
-		target.variants.map((variant) => [variant.key, variant]),
+	const matches = matchDatadogVariants(
+		buildDatadogSourceVariants(source),
+		target.variants,
 	);
-	const sourceKeys = new Set<string>();
+	const matchedTargetIds = new Set<string>();
 	for (const variant of source.variants) {
-		sourceKeys.add(variant.key);
-		const counterpart = targetVariants.get(variant.key);
+		const counterpart = matches.get(variant.key);
 		if (!counterpart) {
 			variantDetails.push(
 				`Variant "${variant.key}" exists only in the source org.`,
 			);
 			continue;
 		}
+		matchedTargetIds.add(counterpart.id);
 		if (
 			counterpart.name !== variant.name ||
 			normalizeVariantValue(counterpart.value, target.valueType) !==
@@ -309,7 +312,7 @@ function compareFlagAttributes(
 		}
 	}
 	for (const variant of target.variants) {
-		if (!sourceKeys.has(variant.key)) {
+		if (!matchedTargetIds.has(variant.id)) {
 			variantDetails.push(
 				`Variant "${variant.key}" exists only in the target org.`,
 			);
@@ -332,6 +335,27 @@ function unverifiableReason(environment: FlagEnvironment): string | undefined {
 	return undefined;
 }
 
+function translateVariantKeys(
+	environment: FlagEnvironment,
+	translate: (key: string) => string,
+): FlagEnvironment {
+	const optional = (key: string | undefined) =>
+		key === undefined ? undefined : translate(key);
+	return {
+		...environment,
+		defaultVariantKey: optional(environment.defaultVariantKey),
+		overrideVariantKey: optional(environment.overrideVariantKey),
+		allocations:
+			environment.allocations?.map((allocation) => ({
+				...allocation,
+				variant_weights: allocation.variant_weights?.map((weight) => ({
+					...weight,
+					variant_key: optional(weight.variant_key),
+				})),
+			})) ?? null,
+	};
+}
+
 function compareEnvironment(
 	pair: OrgDiffEnvironmentPair,
 	source: DatadogStatusFlagDetail,
@@ -341,10 +365,10 @@ function compareEnvironment(
 	const sourceEnvironment = source.environments.find(
 		(environment) => environment.environmentId === pair.sourceEnvironmentId,
 	);
-	const targetEnvironment = target.environments.find(
+	const rawTargetEnvironment = target.environments.find(
 		(environment) => environment.environmentId === pair.targetEnvironmentId,
 	);
-	if (!sourceEnvironment || !targetEnvironment) {
+	if (!sourceEnvironment || !rawTargetEnvironment) {
 		const missing = !sourceEnvironment ? 'source' : 'target';
 		return {
 			...pair,
@@ -353,6 +377,22 @@ function compareEnvironment(
 			details: `The ${missing} org did not return configuration for this environment.`,
 		};
 	}
+
+	// Variant keys can differ between orgs for the same variant, so target
+	// references are compared under the source key they were matched to.
+	const sourceKeyByTargetKey = new Map(
+		[
+			...matchDatadogVariants(
+				buildDatadogSourceVariants(source),
+				target.variants,
+			),
+		].map(([sourceKey, variant]) => [variant.key, sourceKey]),
+	);
+	const asSourceKey = (key: string) => sourceKeyByTargetKey.get(key) ?? key;
+	const targetEnvironment = translateVariantKeys(
+		rawTargetEnvironment,
+		asSourceKey,
+	);
 
 	const changes: OrgDiffChangeKind[] = [];
 	const details: string[] = [];
@@ -410,7 +450,9 @@ function compareEnvironment(
 	);
 	const targetTargeting = canonicalEnvironmentTargeting(
 		targetEnvironment,
-		new Map(target.variants.map((variant) => [variant.id, variant.key])),
+		new Map(
+			target.variants.map((variant) => [variant.id, asSourceKey(variant.key)]),
+		),
 		(id) => {
 			const sourceId = targetToSource.get(id);
 			return sourceId !== undefined

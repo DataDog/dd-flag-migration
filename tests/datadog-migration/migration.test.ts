@@ -19,7 +19,10 @@ import {
 	getDatadogEnvsToDisable,
 	getDatadogEnvsToEnable,
 	liveAllocations,
+	matchDatadogVariants,
 	planDatadogVariantSync,
+	remapAllocationVariantKeys,
+	remapDefaultVariantKeys,
 	unsupportedTargetingReason,
 } from '../../src/datadog-migration/helpers/migration.js';
 
@@ -247,6 +250,211 @@ describe('planDatadogVariantSync', () => {
 			},
 		]);
 		expect(deleteRequests).toEqual([]);
+	});
+});
+
+describe('matchDatadogVariants', () => {
+	const source = buildDatadogSourceVariants(sourceFlag());
+
+	it('matches variants with different keys by unique value', () => {
+		const matches = matchDatadogVariants(source, [
+			{
+				id: 'target-0',
+				key: 'variation-0',
+				name: 'Variation 0',
+				value: 'true',
+			},
+			{
+				id: 'target-1',
+				key: 'variation-1',
+				name: 'Variation 1',
+				value: 'false',
+			},
+		]);
+		expect(matches.get('on')?.id).toBe('target-0');
+		expect(matches.get('off')?.id).toBe('target-1');
+	});
+
+	it('matches by unique name when keys and values differ', () => {
+		const matches = matchDatadogVariants(
+			[{ key: 'variation-2', name: 'Third', value: '"c"', sourceId: 's-2' }],
+			[{ id: 'target-2', key: 'third', name: 'Third', value: '"z"' }],
+		);
+		expect(matches.get('variation-2')?.id).toBe('target-2');
+	});
+
+	it('prefers a Datadog source ID over a key match on another variant', () => {
+		const matches = matchDatadogVariants(source, [
+			{
+				id: 'target-a',
+				key: 'off',
+				name: 'Off',
+				value: 'false',
+				migration_metadata: { provider: 'datadog', source_id: 'source-on' },
+			},
+			{
+				id: 'target-b',
+				key: 'on',
+				name: 'On',
+				value: 'true',
+				migration_metadata: { provider: 'datadog', source_id: 'source-off' },
+			},
+		]);
+		expect(matches.get('on')?.id).toBe('target-a');
+		expect(matches.get('off')?.id).toBe('target-b');
+	});
+
+	it('ignores source IDs recorded by other providers', () => {
+		const matches = matchDatadogVariants(source, [
+			{
+				id: 'target-a',
+				key: 'off',
+				name: 'Off',
+				value: 'false',
+				migration_metadata: {
+					provider: 'launchdarkly',
+					source_id: 'source-on',
+				},
+			},
+		]);
+		expect(matches.get('off')?.id).toBe('target-a');
+		expect(matches.has('on')).toBe(false);
+	});
+
+	it('does not match by a name or value shared by several variants', () => {
+		const matches = matchDatadogVariants(
+			[{ key: 'a', name: 'Same', value: 'x', sourceId: 's-a' }],
+			[
+				{ id: 't-1', key: 'b', name: 'Same', value: 'x' },
+				{ id: 't-2', key: 'c', name: 'Same', value: 'x' },
+			],
+		);
+		expect(matches.size).toBe(0);
+	});
+
+	it('does not match by JSON value', () => {
+		const matches = matchDatadogVariants(
+			[{ key: 'a', name: 'A', value: '{"x":1}', sourceId: 's-a' }],
+			[{ id: 't-1', key: 'b', name: 'B', value: '{"x":1}' }],
+		);
+		expect(matches.size).toBe(0);
+	});
+});
+
+describe('planDatadogVariantSync key translation', () => {
+	const source = buildDatadogSourceVariants(sourceFlag());
+
+	it('updates boolean variants with different keys instead of creating them', () => {
+		const plan = planDatadogVariantSync(
+			source,
+			[
+				{ id: 'target-0', key: 'variation-0', name: 'On', value: 'true' },
+				{
+					id: 'target-1',
+					key: 'variation-1',
+					name: 'Variation 1',
+					value: 'false',
+				},
+			],
+			'BOOLEAN',
+		);
+		expect(plan.toCreate).toEqual([]);
+		expect(plan.toDelete).toEqual([]);
+		expect(plan.toUpdate).toEqual([
+			{
+				id: 'target-1',
+				key: 'variation-1',
+				name: 'Off',
+				value: 'false',
+				sourceId: 'source-off',
+				sourceKey: 'off',
+			},
+		]);
+		expect(plan.targetKeys).toEqual(
+			new Map([
+				['on', 'variation-0'],
+				['off', 'variation-1'],
+			]),
+		);
+	});
+
+	it('rejects creates on boolean flags with a clear error', () => {
+		expect(() =>
+			planDatadogVariantSync(
+				source,
+				[
+					{ id: 't-1', key: 'a', name: 'A', value: 'true' },
+					{ id: 't-2', key: 'b', name: 'B', value: 'true' },
+				],
+				'BOOLEAN',
+			),
+		).toThrow(/Could not match source variant\(s\) on, off/);
+	});
+
+	it('suffixes a created key that collides with a matched target variant', () => {
+		const plan = planDatadogVariantSync(
+			[
+				{ key: 'a', name: 'A', value: '"1"', sourceId: 's-a' },
+				{ key: 'b', name: 'B', value: '"2"', sourceId: 's-b' },
+			],
+			[
+				{
+					id: 't-1',
+					key: 'b',
+					name: 'Old',
+					value: '"0"',
+					migration_metadata: { provider: 'datadog', source_id: 's-a' },
+				},
+			],
+			'STRING',
+		);
+		expect(plan.toCreate).toEqual([
+			{ key: 'b-1', name: 'B', value: '"2"', sourceId: 's-b', sourceKey: 'b' },
+		]);
+		expect(plan.targetKeys).toEqual(
+			new Map([
+				['a', 'b'],
+				['b', 'b-1'],
+			]),
+		);
+		const { createUpdateRequests } = buildDatadogVariantSyncRequests(
+			'target-flag',
+			plan,
+		);
+		expect(createUpdateRequests[1].body).toMatchObject({
+			data: {
+				attributes: {
+					key: 'b-1',
+					migration_metadata: { source_id: 's-b', source_key: 'b' },
+				},
+			},
+		});
+	});
+
+	it('remaps targeting and default variant keys to target keys', () => {
+		const targetKeys = new Map([
+			['on', 'variation-0'],
+			['off', 'variation-1'],
+		]);
+		const [remapped] = remapAllocationVariantKeys(
+			[
+				{
+					key: 'rule',
+					variant_weights: [
+						{ variant_key: 'on', value: 60 },
+						{ variant_key: 'off', value: 40 },
+					],
+				},
+			],
+			targetKeys,
+		);
+		expect(remapped.variant_weights).toEqual([
+			{ variant_key: 'variation-0', value: 60 },
+			{ variant_key: 'variation-1', value: 40 },
+		]);
+		expect(
+			remapDefaultVariantKeys(new Map([['target-prod', 'off']]), targetKeys),
+		).toEqual(new Map([['target-prod', 'variation-1']]));
 	});
 });
 

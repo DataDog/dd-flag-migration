@@ -9,9 +9,11 @@ import type {
 	PendingVariantDelete,
 	SourceVariant,
 	VariantSyncCounts,
-	VariantSyncPlan,
 } from '../datadog/types.js';
-import { planDatadogVariantSync } from './helpers/migration.js';
+import {
+	type DatadogVariantSyncPlan,
+	planDatadogVariantSync,
+} from './helpers/migration.js';
 
 export async function fetchTargetVariants(
 	target: DatadogOrgConnection,
@@ -35,13 +37,14 @@ export async function syncDatadogVariantsCreatesAndUpdates(
 	target: DatadogOrgConnection,
 	flagId: string,
 	sourceVariants: SourceVariant[],
+	valueType?: string,
 ): Promise<{
 	counts: VariantSyncCounts;
 	pendingDeletes: PendingVariantDelete[];
-	plan: VariantSyncPlan;
+	plan: DatadogVariantSyncPlan;
 }> {
 	const existing = await fetchTargetVariants(target, flagId);
-	const plan = planDatadogVariantSync(sourceVariants, existing);
+	const plan = planDatadogVariantSync(sourceVariants, existing, valueType);
 	for (const variant of plan.toUpdate) {
 		await updateVariant(
 			target.apiKey,
@@ -64,7 +67,7 @@ export async function syncDatadogVariantsCreatesAndUpdates(
 				migrationMetadata: {
 					provider: 'datadog',
 					source_id: variant.sourceId,
-					source_key: variant.key,
+					source_key: variant.sourceKey ?? variant.key,
 				},
 			},
 			target.site,
