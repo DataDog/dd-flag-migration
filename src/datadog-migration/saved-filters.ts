@@ -197,24 +197,26 @@ export interface AdoptionCandidate {
 	target?: SavedFilterSummary;
 	/** Why the target filter cannot be adopted, if it cannot. */
 	blockedReason?: string;
-	/** Target targeting already matches the source, so adopting changes nothing. */
+	/** Target targeting currently matches the source; future syncs can diverge. */
 	identical: boolean;
 	/** All target flags that currently reference the target filter. */
 	flagKeys: string[];
 }
 
 /**
- * Safe to adopt: overwriting the target filter cannot change targeting of any
- * target flag. When some target flags could not be inspected, only identical
- * filters are safe.
+ * Safe to adopt only when no target flag currently uses the filter and the
+ * usage check completed. Identical targeting avoids an immediate change, but
+ * later source edits would still change referencing target flags on re-migration.
  */
 export function isSafeAdoption(
 	candidate: AdoptionCandidate,
 	usageComplete: boolean,
 ): boolean {
-	if (candidate.blockedReason !== undefined) return false;
-	if (candidate.identical) return true;
-	return usageComplete && candidate.flagKeys.length === 0;
+	return (
+		candidate.blockedReason === undefined &&
+		usageComplete &&
+		candidate.flagKeys.length === 0
+	);
 }
 
 /**
@@ -461,7 +463,7 @@ function printAdoptionReport(
 	if (!usageComplete) {
 		console.log(
 			chalk.yellow(
-				'  Some target flags could not be checked, so only saved filters whose targeting already matches count as safe',
+				'  Some target flags could not be checked, so no saved filters can be marked safe to adopt',
 			),
 		);
 	}
@@ -472,16 +474,12 @@ function printAdoptionReport(
 			console.log(
 				chalk.gray(`  – ${name}: cannot adopt (${candidate.blockedReason})`),
 			);
-		} else if (candidate.identical) {
-			console.log(
-				chalk.green(`  ✓ ${name}: targeting already matches the source`),
-			);
 		} else if (isSafeAdoption(candidate, usageComplete)) {
 			console.log(chalk.green(`  ✓ ${name}: not used by any target flags`));
 		} else if (flagKeys.length === 0) {
 			console.log(
 				chalk.yellow(
-					`  ⚠ ${name}: targeting differs; usage could not be fully checked`,
+					`  ⚠ ${name}: usage could not be fully checked; adoption or future syncs may affect unchecked flags`,
 				),
 			);
 		} else {
@@ -490,9 +488,12 @@ function printAdoptionReport(
 				flagKeys.length > USAGE_PREVIEW_LIMIT
 					? `, +${flagKeys.length - USAGE_PREVIEW_LIMIT} more`
 					: '';
+			const risk = candidate.identical
+				? 'targeting matches now, but future source edits may change evaluations for'
+				: 'targeting differs and may change evaluations for';
 			console.log(
 				chalk.yellow(
-					`  ⚠ ${name}: targeting differs and ${flagKeys.length} target flag(s) use it: ${preview}${more}`,
+					`  ⚠ ${name}: ${risk} ${flagKeys.length} target flag(s): ${preview}${more}`,
 				),
 			);
 		}
@@ -546,7 +547,7 @@ async function resolveConflicts(
 				...(risky > 0
 					? [
 							{
-								name: `Adopt all ${adoptable.length}, including ${risky} that may change target flag evaluations${blocked > 0 ? ` (skip ${blocked} that cannot be adopted)` : ''}`,
+								name: `Adopt all ${adoptable.length}, including ${risky} that may change target flag evaluations now or on future syncs${blocked > 0 ? ` (skip ${blocked} that cannot be adopted)` : ''}`,
 								value: 'all' as const,
 							},
 						]

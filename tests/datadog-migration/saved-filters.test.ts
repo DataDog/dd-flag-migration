@@ -219,21 +219,27 @@ describe('planSavedFilterAdoptions', () => {
 		).toBe(false);
 	});
 
-	it('treats only identical filters as safe when usage is incomplete', () => {
-		const [identical, unused] = planSavedFilterAdoptions(
+	it('requires a complete usage check and no consumers even when targeting matches', () => {
+		const [identical, unused, shared] = planSavedFilterAdoptions(
 			[
 				{ id: 'a', name: 'Alpha', targeting_rules: rules(['x']) },
 				{ id: 'b', name: 'Bravo', targeting_rules: rules(['x']) },
+				{ id: 'c', name: 'Charlie', targeting_rules: rules(['x']) },
 			],
 			[
 				{ id: 'target-a', name: 'Alpha', targeting_rules: rules(['x']) },
 				{ id: 'target-b', name: 'Bravo', targeting_rules: rules(['z']) },
+				{ id: 'target-c', name: 'Charlie', targeting_rules: rules(['x']) },
 			],
-			new Map(),
+			new Map([['target-c', ['unrelated-flag']]]),
 		);
-		expect(isSafeAdoption(identical, false)).toBe(true);
+		expect(identical.identical).toBe(true);
+		expect(isSafeAdoption(identical, false)).toBe(false);
+		expect(isSafeAdoption(identical, true)).toBe(true);
 		expect(isSafeAdoption(unused, false)).toBe(false);
 		expect(isSafeAdoption(unused, true)).toBe(true);
+		expect(shared.identical).toBe(true);
+		expect(isSafeAdoption(shared, true)).toBe(false);
 	});
 });
 

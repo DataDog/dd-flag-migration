@@ -151,6 +151,16 @@ describe('migrateDatadogSavedFilters adoption', () => {
 			.reply(200, targetFlagDetail('unrelated-flag', 'target-prod', filterId));
 	}
 
+	function useIdenticalTarget() {
+		mock.onGet(`${TARGET_LIST}/target-shared`).reply(200, {
+			data: jsonApiFilter({
+				id: 'target-shared',
+				name: 'Shared name',
+				targeting_rules: sourceRules,
+			}),
+		});
+	}
+
 	function run(dryRun = false) {
 		return migrateDatadogSavedFilters({
 			pair,
@@ -205,23 +215,45 @@ describe('migrateDatadogSavedFilters adoption', () => {
 		expect(result.stats).toMatchObject({ adopted: 0, skipped: 1 });
 	});
 
-	it('adopts identical targeting without confirmation even with incomplete usage', async () => {
-		mock.onGet(`${TARGET_FLAGS}/unrelated-flag`).reply(500);
-		mock.onGet(`${TARGET_LIST}/target-shared`).reply(200, {
-			data: jsonApiFilter({
-				id: 'target-shared',
-				name: 'Shared name',
-				targeting_rules: sourceRules,
-			}),
-		});
+	it.each([
+		false,
+		true,
+	])('requires confirmation for identical targeting used by another flag (dryRun=%s)', async (dryRun) => {
+		useIdenticalTarget();
+		useUnrelatedFlag('target-shared');
+		selectAnswers.push('adopt', 'safe-skip');
+
+		const result = await run(dryRun);
+
+		expect(selectMessages).toContain('Which saved filters should be adopted?');
+		expect(mock.history.put).toHaveLength(0);
+		expect(result.dryRunRequests).toHaveLength(0);
+		expect(result.stats).toMatchObject({ adopted: 0, skipped: 1 });
+	});
+
+	it('adopts identical targeting used by another flag only after confirmation', async () => {
+		useIdenticalTarget();
+		useUnrelatedFlag('target-shared');
 		mock.onPut(`${TARGET_LIST}/target-shared`).reply(200, {});
-		selectAnswers.push('adopt');
+		selectAnswers.push('adopt', 'all');
 
 		const result = await run();
 
-		expect(selectMessages).toHaveLength(1);
+		expect(selectMessages).toContain('Which saved filters should be adopted?');
 		expect(mock.history.put).toHaveLength(1);
 		expect(result.stats.adopted).toBe(1);
+	});
+
+	it('requires confirmation for identical targeting when usage is incomplete', async () => {
+		useIdenticalTarget();
+		mock.onGet(`${TARGET_FLAGS}/unrelated-flag`).reply(500);
+		selectAnswers.push('adopt', 'safe-skip');
+
+		const result = await run();
+
+		expect(selectMessages).toContain('Which saved filters should be adopted?');
+		expect(mock.history.put).toHaveLength(0);
+		expect(result.stats).toMatchObject({ adopted: 0, skipped: 1 });
 	});
 
 	it.each([
