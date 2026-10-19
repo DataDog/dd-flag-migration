@@ -5,17 +5,22 @@ import { spinner as createSpinner } from '../components/Spinner.js';
 import {
 	createSavedFilter,
 	fetchAllSavedFilters,
+	fetchDatadogStatusFlagDetail,
 	fetchSavedFilter,
 	updateSavedFilter,
 } from '../datadog/api.js';
 import type { DatadogOrgPair } from '../datadog/orgs.js';
 import type {
 	CreateSavedFilterRequest,
+	DatadogFlagEntry,
 	DatadogSavedFilterMigrationMetadata,
+	DatadogStatusFlagDetail,
 	SavedFilterSummary,
 } from '../datadog/types.js';
+import { mapWithConcurrency } from '../helpers/concurrency.js';
 import { formatAxiosError } from '../helpers/format-axios-error.js';
 import { SAVED_FILTER_NAME_MAX_BYTES } from '../launchdarkly/segments.js';
+import { stableJson } from '../migration-status/utils.js';
 
 // ─── Names ────────────────────────────────────────────────────────────────────
 
@@ -130,6 +135,157 @@ export function buildSavedFilterRequest(
 	};
 }
 
+// ─── Adoption ─────────────────────────────────────────────────────────────────
+
+/** Target flag ID → target environment IDs whose targeting this run replaces. */
+export type RewrittenTargeting = ReadonlyMap<string, ReadonlySet<string>>;
+
+/**
+ * Find target flags that reference the given saved filters in targeting this
+ * run does not replace. Those flags would silently change targeting if the
+ * filter were overwritten. Draft targeting filters count: they take effect
+ * once published. Returns saved filter UUID → sorted target flag keys.
+ */
+export function findOutsideSavedFilterUsage(
+	details: Iterable<DatadogStatusFlagDetail>,
+	filterIds: ReadonlySet<string>,
+	rewritten: RewrittenTargeting,
+): Map<string, string[]> {
+	const usage = new Map<string, Set<string>>();
+	for (const detail of details) {
+		const replaced = rewritten.get(detail.id);
+		for (const environment of detail.environments) {
+			if (replaced?.has(environment.environmentId)) continue;
+			for (const allocation of environment.allocations ?? []) {
+				for (const rule of allocation.targeting_rules ?? []) {
+					for (const condition of rule.conditions ?? []) {
+						const id = condition.saved_filter_id;
+						if (!id || !filterIds.has(id)) continue;
+						const keys = usage.get(id) ?? new Set();
+						keys.add(detail.key);
+						usage.set(id, keys);
+					}
+				}
+			}
+		}
+	}
+	return new Map(
+		[...usage].map(([id, keys]) => [id, [...keys].sort()] as const),
+	);
+}
+
+/** Order-insensitive form of a saved filter's evaluation-relevant fields. */
+function canonicalSavedFilterTargeting(filter: SavedFilterSummary): string {
+	const rules = (filter.targeting_rules ?? [])
+		.map((rule) =>
+			stableJson(
+				(rule.conditions ?? [])
+					.map((condition) =>
+						stableJson({
+							operator: condition.operator,
+							attribute: condition.attribute,
+							value: Array.isArray(condition.value)
+								? condition.value.map((value) => String(value)).sort()
+								: condition.value,
+						}),
+					)
+					.sort(),
+			),
+		)
+		.sort();
+	return stableJson({ creation_type: filter.creation_type ?? 'RULES', rules });
+}
+
+export interface AdoptionCandidate {
+	source: SavedFilterSummary;
+	/** The same-name target filter, with targeting rules when it could be read. */
+	target?: SavedFilterSummary;
+	/** Why the target filter cannot be adopted, if it cannot. */
+	blockedReason?: string;
+	/** Target targeting already matches the source, so adopting changes nothing. */
+	identical: boolean;
+	/** Target flags outside this run that reference the target filter. */
+	outsideFlagKeys: string[];
+}
+
+/**
+ * Safe to adopt: overwriting the target filter cannot change targeting of any
+ * flag this run does not already rewrite. When some target flags could not be
+ * inspected, only identical filters are safe.
+ */
+export function isSafeAdoption(
+	candidate: AdoptionCandidate,
+	usageComplete: boolean,
+): boolean {
+	if (candidate.blockedReason !== undefined) return false;
+	if (candidate.identical) return true;
+	return usageComplete && candidate.outsideFlagKeys.length === 0;
+}
+
+/**
+ * Pair each conflicting source filter with the target filter of the same name
+ * and decide whether it can be adopted. Only an unambiguous, unmanaged target
+ * filter can be adopted: a filter carrying migration metadata belongs to
+ * another migration (LaunchDarkly, Eppo, or a different source filter), and
+ * rewriting that metadata would break its re-migrations.
+ */
+export function planSavedFilterAdoptions(
+	sources: SavedFilterSummary[],
+	targetFilters: SavedFilterSummary[],
+	outsideUsage: ReadonlyMap<string, string[]>,
+): AdoptionCandidate[] {
+	const targetsByName = new Map<string, SavedFilterSummary[]>();
+	for (const target of targetFilters) {
+		const matches = targetsByName.get(target.name) ?? [];
+		matches.push(target);
+		targetsByName.set(target.name, matches);
+	}
+	const claimed = new Set<string>();
+	return sources.map((source) => {
+		const name = renderDatadogSavedFilterName(source.name);
+		const matches = name === null ? [] : (targetsByName.get(name) ?? []);
+		const blocked = (
+			reason: string,
+			target?: SavedFilterSummary,
+		): AdoptionCandidate => ({
+			source,
+			...(target ? { target } : {}),
+			blockedReason: reason,
+			identical: false,
+			outsideFlagKeys: target ? (outsideUsage.get(target.id) ?? []) : [],
+		});
+		if (matches.length !== 1) {
+			return blocked(
+				matches.length === 0
+					? 'no target saved filter with this name'
+					: `${matches.length} target saved filters share this name`,
+			);
+		}
+		const [target] = matches;
+		if (target.migration_metadata) {
+			return blocked(
+				`managed by a ${target.migration_metadata.provider} migration`,
+				target,
+			);
+		}
+		if (claimed.has(target.id)) {
+			return blocked('already adopted by another source saved filter', target);
+		}
+		if (target.targeting_rules === undefined) {
+			return blocked('targeting could not be read', target);
+		}
+		claimed.add(target.id);
+		return {
+			source,
+			target,
+			identical:
+				canonicalSavedFilterTargeting(source) ===
+				canonicalSavedFilterTargeting(target),
+			outsideFlagKeys: outsideUsage.get(target.id) ?? [],
+		};
+	});
+}
+
 // ─── Migration ────────────────────────────────────────────────────────────────
 
 export interface DatadogSavedFilterMigrationStats {
@@ -137,6 +293,8 @@ export interface DatadogSavedFilterMigrationStats {
 	created: number;
 	updated: number;
 	reused: number;
+	/** Same-name target filters taken over by this migration. */
+	adopted: number;
 	skipped: number;
 	failures: Array<{ savedFilterId: string; name: string; error: string }>;
 }
@@ -148,13 +306,30 @@ export interface DatadogSavedFilterMigrationResult {
 	dryRunRequests: Array<{ method: string; path: string; body: unknown }>;
 }
 
-type ConflictResolution =
+const USAGE_CHECK_CONCURRENCY = 2;
+const USAGE_PREVIEW_LIMIT = 5;
+
+type ConflictFallback =
 	| { action: 'skip' }
 	| { action: 'prefix'; prefix: string };
 
-async function promptForConflictResolution(
+interface ConflictResolution {
+	/** Source saved filter UUID → same-name target filter to take over. */
+	adopt: Map<string, SavedFilterSummary>;
+	/** Applied to every conflict that is not adopted. */
+	fallback: ConflictFallback;
+}
+
+/** What the adopt option needs to check target flag usage. */
+export interface SavedFilterAdoptionContext {
+	targetFlags: DatadogFlagEntry[];
+	rewrittenTargeting: RewrittenTargeting;
+}
+
+async function promptForConflictAction(
 	count: number,
-): Promise<ConflictResolution> {
+	canAdopt: boolean,
+): Promise<'skip' | 'prefix' | 'adopt'> {
 	console.log();
 	console.log(
 		chalk.yellow(
@@ -162,7 +337,7 @@ async function promptForConflictResolution(
 		),
 	);
 	console.log();
-	const action = await select<'skip' | 'prefix'>({
+	return select<'skip' | 'prefix' | 'adopt'>({
 		message: 'How would you like to handle these conflicts?',
 		choices: [
 			{ name: 'Skip conflicting saved filters', value: 'skip' },
@@ -170,9 +345,19 @@ async function promptForConflictResolution(
 				name: 'Add a prefix to conflicting saved filter names',
 				value: 'prefix',
 			},
+			...(canAdopt
+				? [
+						{
+							name: 'Adopt the existing saved filters (overwrite their targeting after a usage check)',
+							value: 'adopt' as const,
+						},
+					]
+				: []),
 		],
 	});
-	if (action === 'skip') return { action };
+}
+
+async function promptForPrefix(): Promise<string> {
 	const prefix = await input({
 		message: 'Enter a prefix for conflicting saved filter names:',
 		validate: (value) => {
@@ -183,7 +368,234 @@ async function promptForConflictResolution(
 			return true;
 		},
 	});
-	return { action: 'prefix', prefix: prefix.trim() };
+	return prefix.trim();
+}
+
+/**
+ * Read the same-name target filters' targeting and every target flag's
+ * targeting, then plan which conflicts can be adopted.
+ */
+async function assessAdoptions(
+	pair: DatadogOrgPair,
+	conflicts: SavedFilterSummary[],
+	targetFilters: SavedFilterSummary[],
+	adoption: SavedFilterAdoptionContext,
+): Promise<{ candidates: AdoptionCandidate[]; usageComplete: boolean }> {
+	const { target } = pair;
+	const { targetFlags } = adoption;
+	const label = `Checking ${targetFlags.length} target flag(s) for saved filter usage…`;
+	const spinner = createSpinner(label).start();
+
+	const names = new Set(
+		conflicts.map((source) => renderDatadogSavedFilterName(source.name)),
+	);
+	const sameName = targetFilters.filter((filter) => names.has(filter.name));
+	const withRules = new Map<string, SavedFilterSummary>();
+	await mapWithConcurrency(
+		sameName,
+		USAGE_CHECK_CONCURRENCY,
+		async (filter) => {
+			try {
+				withRules.set(
+					filter.id,
+					await fetchSavedFilter(
+						target.apiKey,
+						target.appKey,
+						filter.id,
+						target.site,
+					),
+				);
+			} catch {
+				// Leave targeting unknown so the filter is reported as not adoptable.
+				withRules.set(filter.id, {
+					id: filter.id,
+					name: filter.name,
+					migration_metadata: filter.migration_metadata,
+				});
+			}
+		},
+	);
+
+	const details: DatadogStatusFlagDetail[] = [];
+	let failed = 0;
+	let completed = 0;
+	await mapWithConcurrency(
+		targetFlags,
+		USAGE_CHECK_CONCURRENCY,
+		async (flag) => {
+			try {
+				details.push(
+					await fetchDatadogStatusFlagDetail(
+						target.apiKey,
+						target.appKey,
+						flag.id,
+						target.site,
+					),
+				);
+			} catch {
+				failed++;
+			}
+			completed++;
+			spinner.text = `${label} (${completed}/${targetFlags.length})`;
+		},
+	);
+	if (failed > 0) {
+		spinner.warn(
+			`Checked ${details.length} target flag(s); ${failed} could not be loaded`,
+		);
+	} else {
+		spinner.succeed(`Checked ${details.length} target flag(s)`);
+	}
+
+	const usage = findOutsideSavedFilterUsage(
+		details,
+		new Set(sameName.map((filter) => filter.id)),
+		adoption.rewrittenTargeting,
+	);
+	const candidates = planSavedFilterAdoptions(
+		conflicts,
+		targetFilters.map((filter) => withRules.get(filter.id) ?? filter),
+		usage,
+	);
+	return { candidates, usageComplete: failed === 0 };
+}
+
+function printAdoptionReport(
+	candidates: AdoptionCandidate[],
+	usageComplete: boolean,
+): void {
+	console.log();
+	if (!usageComplete) {
+		console.log(
+			chalk.yellow(
+				'  Some target flags could not be checked, so only saved filters whose targeting already matches count as safe',
+			),
+		);
+	}
+	for (const candidate of candidates) {
+		const name = candidate.source.name;
+		const { outsideFlagKeys } = candidate;
+		if (candidate.blockedReason !== undefined) {
+			console.log(
+				chalk.gray(`  – ${name}: cannot adopt (${candidate.blockedReason})`),
+			);
+		} else if (candidate.identical) {
+			console.log(
+				chalk.green(`  ✓ ${name}: targeting already matches the source`),
+			);
+		} else if (isSafeAdoption(candidate, usageComplete)) {
+			console.log(
+				chalk.green(`  ✓ ${name}: not used by flags outside this migration`),
+			);
+		} else if (outsideFlagKeys.length === 0) {
+			console.log(
+				chalk.yellow(
+					`  ⚠ ${name}: targeting differs; usage could not be fully checked`,
+				),
+			);
+		} else {
+			const preview = outsideFlagKeys.slice(0, USAGE_PREVIEW_LIMIT).join(', ');
+			const more =
+				outsideFlagKeys.length > USAGE_PREVIEW_LIMIT
+					? `, +${outsideFlagKeys.length - USAGE_PREVIEW_LIMIT} more`
+					: '';
+			console.log(
+				chalk.yellow(
+					`  ⚠ ${name}: targeting differs and ${outsideFlagKeys.length} flag(s) outside this migration use it: ${preview}${more}`,
+				),
+			);
+		}
+	}
+	console.log();
+}
+
+async function resolveConflicts(
+	pair: DatadogOrgPair,
+	conflicts: SavedFilterSummary[],
+	targetFilters: SavedFilterSummary[],
+	adoption: SavedFilterAdoptionContext | undefined,
+): Promise<ConflictResolution> {
+	const action = await promptForConflictAction(
+		conflicts.length,
+		adoption !== undefined,
+	);
+	if (action === 'skip' || adoption === undefined) {
+		return { adopt: new Map(), fallback: { action: 'skip' } };
+	}
+	if (action === 'prefix') {
+		return {
+			adopt: new Map(),
+			fallback: { action: 'prefix', prefix: await promptForPrefix() },
+		};
+	}
+
+	const { candidates, usageComplete } = await assessAdoptions(
+		pair,
+		conflicts,
+		targetFilters,
+		adoption,
+	);
+	printAdoptionReport(candidates, usageComplete);
+	const adoptable = candidates.filter(
+		(candidate) => candidate.blockedReason === undefined,
+	);
+	const safe = adoptable.filter((candidate) =>
+		isSafeAdoption(candidate, usageComplete),
+	);
+	const risky = adoptable.length - safe.length;
+	const blocked = candidates.length - adoptable.length;
+	const rest = candidates.length - safe.length;
+
+	let chosen = safe;
+	let fallback: ConflictFallback = { action: 'skip' };
+	if (rest > 0) {
+		const choice = await select<'all' | 'safe-skip' | 'safe-prefix'>({
+			message: 'Which saved filters should be adopted?',
+			choices: [
+				...(risky > 0
+					? [
+							{
+								name: `Adopt all ${adoptable.length}, including ${risky} used by other flags${blocked > 0 ? ` (skip ${blocked} that cannot be adopted)` : ''}`,
+								value: 'all' as const,
+							},
+						]
+					: []),
+				{
+					name: `Adopt the ${safe.length} safe filter(s) and skip the other ${rest}`,
+					value: 'safe-skip',
+				},
+				{
+					name: `Adopt the ${safe.length} safe filter(s) and add a prefix to the other ${rest}`,
+					value: 'safe-prefix',
+				},
+			],
+		});
+		if (choice === 'all') chosen = adoptable;
+		if (choice === 'safe-prefix') {
+			fallback = { action: 'prefix', prefix: await promptForPrefix() };
+		}
+	}
+	return {
+		adopt: new Map(
+			chosen.flatMap((candidate) =>
+				candidate.target
+					? [[candidate.source.id, candidate.target] as const]
+					: [],
+			),
+		),
+		fallback,
+	};
+}
+
+function dryRunPut(
+	id: string,
+	request: CreateSavedFilterRequest,
+): DatadogSavedFilterMigrationResult['dryRunRequests'][number] {
+	return {
+		method: 'PUT',
+		path: `/api/v2/feature-flags/saved-filters/${id}`,
+		body: { data: { type: 'saved-filters', id, attributes: request } },
+	};
 }
 
 async function fetchReferencedSourceFilters(
@@ -233,7 +645,10 @@ async function fetchReferencedSourceFilters(
  * segment flow — previously copied filters are PUT-replaced so source edits
  * propagate (Tier 2: filters outside this selection are untouched and nothing
  * is deleted), new filters are created with `migration_metadata`, and name
- * conflicts are skipped or prefixed.
+ * conflicts are skipped, prefixed, or adopted. Adopting takes over the
+ * same-name target filter: it is PUT-replaced with the source targeting and
+ * metadata, after a usage check of every target flag. Adoption is offered only
+ * interactively and only when `adoption` is provided.
  *
  * Dry runs read both orgs but never write; planned requests are returned and
  * new filters get placeholder IDs so flag requests still show the reference.
@@ -243,8 +658,9 @@ export async function migrateDatadogSavedFilters(params: {
 	refs: string[];
 	dryRun: boolean;
 	nonInteractive?: boolean;
+	adoption?: SavedFilterAdoptionContext;
 }): Promise<DatadogSavedFilterMigrationResult> {
-	const { pair, refs, dryRun, nonInteractive = false } = params;
+	const { pair, refs, dryRun, nonInteractive = false, adoption } = params;
 	const { target } = pair;
 	const savedFilterIdMap = new Map<string, string>();
 	const dryRunRequests: DatadogSavedFilterMigrationResult['dryRunRequests'] =
@@ -254,6 +670,7 @@ export async function migrateDatadogSavedFilters(params: {
 		created: 0,
 		updated: 0,
 		reused: 0,
+		adopted: 0,
 		skipped: 0,
 		failures: [],
 	};
@@ -278,7 +695,10 @@ export async function migrateDatadogSavedFilters(params: {
 	}
 
 	const plan = planSavedFilterTargets(sourceFilters, targetFilters);
-	let resolution: ConflictResolution = { action: 'skip' };
+	let resolution: ConflictResolution = {
+		adopt: new Map(),
+		fallback: { action: 'skip' },
+	};
 	if (plan.collisions.size > 0) {
 		if (nonInteractive) {
 			console.log(
@@ -287,7 +707,12 @@ export async function migrateDatadogSavedFilters(params: {
 				),
 			);
 		} else {
-			resolution = await promptForConflictResolution(plan.collisions.size);
+			resolution = await resolveConflicts(
+				pair,
+				plan.pending.filter((source) => plan.collisions.has(source.id)),
+				targetFilters,
+				adoption,
+			);
 		}
 	}
 
@@ -299,15 +724,58 @@ export async function migrateDatadogSavedFilters(params: {
 
 	for (const source of plan.pending) {
 		let namePrefix: string | undefined;
+		const adoptTarget = resolution.adopt.get(source.id);
+		if (adoptTarget) {
+			if ((source.targeting_rules ?? []).length === 0) {
+				writeSpinner.warn(
+					`Skipped saved filter "${source.name}" — no targeting rules`,
+				);
+				stats.skipped++;
+				continue;
+			}
+			const request = buildSavedFilterRequest(
+				source,
+				adoptTarget.name,
+				pair.source.site,
+			);
+			if (dryRun) {
+				dryRunRequests.push(dryRunPut(adoptTarget.id, request));
+				savedFilterIdMap.set(source.id, adoptTarget.id);
+				stats.adopted++;
+				continue;
+			}
+			try {
+				await updateSavedFilter(
+					target.apiKey,
+					target.appKey,
+					adoptTarget.id,
+					request,
+					target.site,
+				);
+				savedFilterIdMap.set(source.id, adoptTarget.id);
+				stats.adopted++;
+			} catch (error) {
+				const message = formatAxiosError(error);
+				writeSpinner.warn(
+					`Failed to adopt saved filter "${source.name}": ${message}`,
+				);
+				stats.failures.push({
+					savedFilterId: source.id,
+					name: source.name,
+					error: message,
+				});
+			}
+			continue;
+		}
 		if (plan.collisions.has(source.id)) {
-			if (resolution.action === 'skip') {
+			if (resolution.fallback.action === 'skip') {
 				writeSpinner.warn(
 					`Skipped saved filter "${source.name}" — name conflict in the target org`,
 				);
 				stats.skipped++;
 				continue;
 			}
-			namePrefix = resolution.prefix;
+			namePrefix = resolution.fallback.prefix;
 		}
 		const name = renderDatadogSavedFilterName(source.name, namePrefix);
 		if (name === null || usedNames.has(name)) {
@@ -382,13 +850,7 @@ export async function migrateDatadogSavedFilters(params: {
 			namePrefix,
 		);
 		if (dryRun) {
-			dryRunRequests.push({
-				method: 'PUT',
-				path: `/api/v2/feature-flags/saved-filters/${existing.id}`,
-				body: {
-					data: { type: 'saved-filters', id: existing.id, attributes: request },
-				},
-			});
+			dryRunRequests.push(dryRunPut(existing.id, request));
 			savedFilterIdMap.set(source.id, existing.id);
 			stats.updated++;
 			continue;
@@ -420,8 +882,12 @@ export async function migrateDatadogSavedFilters(params: {
 
 	const createdVerb = dryRun ? 'Would create' : 'Created';
 	const updatedVerb = dryRun ? 'would update' : 'updated';
+	const adoptedLabel =
+		stats.adopted > 0
+			? `, ${stats.adopted} ${dryRun ? 'would adopt' : 'adopted'}`
+			: '';
 	writeSpinner.succeed(
-		`${createdVerb} ${stats.created} saved filter(s) (${stats.reused} reused, ${stats.updated} ${updatedVerb}, ${stats.skipped} skipped)`,
+		`${createdVerb} ${stats.created} saved filter(s) (${stats.reused} reused, ${stats.updated} ${updatedVerb}${adoptedLabel}, ${stats.skipped} skipped)`,
 	);
 	return { savedFilterIdMap, stats, dryRunRequests };
 }

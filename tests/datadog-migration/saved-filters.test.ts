@@ -2,10 +2,16 @@ import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import AxiosMockAdapter from 'axios-mock-adapter';
 import { ddClient } from '../../src/datadog/api.js';
 import type { DatadogOrgPair } from '../../src/datadog/orgs.js';
-import type { SavedFilterSummary } from '../../src/datadog/types.js';
+import type {
+	DatadogStatusFlagDetail,
+	SavedFilterSummary,
+} from '../../src/datadog/types.js';
 import { buildDatadogAllocations } from '../../src/datadog-migration/helpers/migration.js';
 import {
+	findOutsideSavedFilterUsage,
+	isSafeAdoption,
 	migrateDatadogSavedFilters,
+	planSavedFilterAdoptions,
 	planSavedFilterTargets,
 	renderDatadogSavedFilterName,
 } from '../../src/datadog-migration/saved-filters.js';
@@ -93,6 +99,140 @@ describe('planSavedFilterTargets', () => {
 		);
 		expect(plan.pending.map((filter) => filter.id)).toEqual(['b', 'c']);
 		expect([...plan.collisions]).toEqual(['b']);
+	});
+});
+
+describe('findOutsideSavedFilterUsage', () => {
+	const flag = (
+		id: string,
+		environments: Array<{ id: string; filterId: string; status?: string }>,
+	): DatadogStatusFlagDetail => ({
+		id,
+		key: `${id}-key`,
+		name: id,
+		variants: [],
+		environments: environments.map((environment) => ({
+			environmentId: environment.id,
+			status: 'ENABLED',
+			allocations: [
+				{
+					key: 'rule',
+					...(environment.status ? { status: environment.status } : {}),
+					targeting_rules: [
+						{ conditions: [{ saved_filter_id: environment.filterId }] },
+					],
+				},
+			],
+		})),
+	});
+
+	it('ignores targeting this run replaces and counts everything else', () => {
+		const usage = findOutsideSavedFilterUsage(
+			[
+				flag('migrated', [
+					{ id: 'prod', filterId: 'shared' },
+					{ id: 'staging', filterId: 'shared' },
+				]),
+				flag('unrelated', [{ id: 'prod', filterId: 'shared' }]),
+				flag('draft', [{ id: 'prod', filterId: 'shared', status: 'draft' }]),
+				flag('other-filter', [{ id: 'prod', filterId: 'other' }]),
+				flag('fully-migrated', [{ id: 'prod', filterId: 'shared' }]),
+			],
+			new Set(['shared']),
+			new Map([
+				['migrated', new Set(['prod'])],
+				['fully-migrated', new Set(['prod'])],
+			]),
+		);
+		expect(usage).toEqual(
+			new Map([['shared', ['draft-key', 'migrated-key', 'unrelated-key']]]),
+		);
+	});
+});
+
+describe('planSavedFilterAdoptions', () => {
+	const rules = (values: string[]) => [
+		{ conditions: [{ operator: 'ONE_OF', attribute: 'id', value: values }] },
+	];
+
+	it('marks identical targeting and outside usage per target filter', () => {
+		const candidates = planSavedFilterAdoptions(
+			[
+				{ id: 'a', name: 'Alpha', targeting_rules: rules(['x', 'y']) },
+				{ id: 'b', name: 'Bravo', targeting_rules: rules(['x']) },
+			],
+			[
+				{ id: 'target-a', name: 'Alpha', targeting_rules: rules(['y', 'x']) },
+				{ id: 'target-b', name: 'Bravo', targeting_rules: rules(['z']) },
+			],
+			new Map([['target-b', ['other-flag']]]),
+		);
+		expect(
+			candidates.map(({ target, identical, outsideFlagKeys }) => ({
+				target: target?.id,
+				identical,
+				outsideFlagKeys,
+			})),
+		).toEqual([
+			{ target: 'target-a', identical: true, outsideFlagKeys: [] },
+			{ target: 'target-b', identical: false, outsideFlagKeys: ['other-flag'] },
+		]);
+		expect(
+			candidates.map((candidate) => isSafeAdoption(candidate, true)),
+		).toEqual([true, false]);
+	});
+
+	it('blocks managed, ambiguous, and unreadable target filters', () => {
+		const candidates = planSavedFilterAdoptions(
+			[
+				{ id: 'a', name: 'Managed', targeting_rules: rules(['x']) },
+				{ id: 'b', name: 'Duplicate', targeting_rules: rules(['x']) },
+				{ id: 'c', name: 'Unreadable', targeting_rules: rules(['x']) },
+			],
+			[
+				{
+					id: 'target-a',
+					name: 'Managed',
+					targeting_rules: rules(['x']),
+					migration_metadata: {
+						provider: 'launchdarkly',
+						project_key: 'project',
+						segment_key: 'segment',
+						environment_key: 'production',
+						negated: false,
+					},
+				},
+				{ id: 'target-b1', name: 'Duplicate', targeting_rules: rules(['x']) },
+				{ id: 'target-b2', name: 'Duplicate', targeting_rules: rules(['x']) },
+				{ id: 'target-c', name: 'Unreadable' },
+			],
+			new Map(),
+		);
+		expect(candidates.map((candidate) => candidate.blockedReason)).toEqual([
+			'managed by a launchdarkly migration',
+			'2 target saved filters share this name',
+			'targeting could not be read',
+		]);
+		expect(
+			candidates.some((candidate) => isSafeAdoption(candidate, true)),
+		).toBe(false);
+	});
+
+	it('treats only identical filters as safe when usage is incomplete', () => {
+		const [identical, unused] = planSavedFilterAdoptions(
+			[
+				{ id: 'a', name: 'Alpha', targeting_rules: rules(['x']) },
+				{ id: 'b', name: 'Bravo', targeting_rules: rules(['x']) },
+			],
+			[
+				{ id: 'target-a', name: 'Alpha', targeting_rules: rules(['x']) },
+				{ id: 'target-b', name: 'Bravo', targeting_rules: rules(['z']) },
+			],
+			new Map(),
+		);
+		expect(isSafeAdoption(identical, false)).toBe(true);
+		expect(isSafeAdoption(unused, false)).toBe(false);
+		expect(isSafeAdoption(unused, true)).toBe(true);
 	});
 });
 
