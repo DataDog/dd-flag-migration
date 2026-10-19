@@ -42,6 +42,7 @@ export type MigrationSummaryProps = {
 	counts: MigrationSummaryCounts;
 	failures?: readonly MigrationSummaryFailure[];
 	enableFailures?: readonly MigrationSummaryEnableFailure[];
+	enableApprovalRequests?: readonly MigrationSummaryApprovalRequest[];
 	disableFailures?: readonly MigrationSummaryEnableFailure[];
 	disableApprovalRequests?: readonly MigrationSummaryApprovalRequest[];
 	detailSections?: readonly MigrationSummaryDetailSection[];
@@ -77,6 +78,7 @@ function buildMigrationSummaryLines({
 	counts,
 	failures = [],
 	enableFailures = [],
+	enableApprovalRequests = [],
 	disableFailures = [],
 	disableApprovalRequests = [],
 	detailSections = [],
@@ -112,6 +114,20 @@ function buildMigrationSummaryLines({
 			lines.push({
 				id: `enable-failure-${failure.key}-${failure.env}-${index}`,
 				text: `  ${chalk.yellow('⚠')} ${failure.key} / ${failure.env}: ${failure.error}`,
+			});
+		});
+	}
+
+	if (enableApprovalRequests.length > 0) {
+		lines.push({ id: 'blank-enable-approval-requests', text: ' ' });
+		lines.push({
+			id: 'enable-approval-requests-title',
+			text: chalk.yellow('  Enable approval requested in some environments:'),
+		});
+		enableApprovalRequests.forEach((request, index) => {
+			lines.push({
+				id: `enable-approval-request-${request.key}-${request.env}-${index}`,
+				text: `  ${chalk.yellow('⚠')} ${request.key} / ${request.env}`,
 			});
 		});
 	}

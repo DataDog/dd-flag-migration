@@ -8,6 +8,8 @@ export type SelectChoice<T> = {
 	value: T;
 	short?: string;
 	description?: string;
+	/** Shown dimmed; the cursor skips it and it cannot be selected. */
+	disabled?: boolean;
 };
 
 export type SelectOptions<T> = {
@@ -22,15 +24,36 @@ type SelectProps<T> = SelectOptions<T> & {
 	onCancel: () => void;
 };
 
+/**
+ * Nearest enabled index from `from` moving in `step` direction, or `from`
+ * itself when every choice that way is disabled.
+ */
+function enabledIndex<T>(
+	choices: SelectChoice<T>[],
+	from: number,
+	step: 1 | -1,
+): number {
+	for (let i = from; i >= 0 && i < choices.length; i += step) {
+		if (!choices[i]?.disabled) return i;
+	}
+	return -1;
+}
+
 export function SelectView<T>(props: SelectProps<T>): JSX.Element {
 	const { exit } = useApp();
-	const initialIndex =
+	const defaultIndex =
 		props.default !== undefined
 			? Math.max(
 					0,
 					props.choices.findIndex((c) => c.value === props.default),
 				)
 			: 0;
+	const initialIndex = Math.max(
+		0,
+		enabledIndex(props.choices, defaultIndex, 1) === -1
+			? enabledIndex(props.choices, defaultIndex, -1)
+			: enabledIndex(props.choices, defaultIndex, 1),
+	);
 	const [active, setActive] = useState(initialIndex);
 	const [done, setDone] = useState<SelectChoice<T> | null>(null);
 	const pageSize = props.pageSize ?? 10;
@@ -44,21 +67,26 @@ export function SelectView<T>(props: SelectProps<T>): JSX.Element {
 		}
 		if (key.return) {
 			const chosen = props.choices[active];
-			if (chosen) {
+			if (chosen && !chosen.disabled) {
 				setDone(chosen);
 				props.onDone(chosen.value);
 				exit();
 			}
 			return;
 		}
+		const move = (target: number, step: 1 | -1) => {
+			const clamped = Math.max(0, Math.min(props.choices.length - 1, target));
+			const next = enabledIndex(props.choices, clamped, step);
+			if (next !== -1) setActive(next);
+		};
 		if (key.upArrow) {
-			setActive(Math.max(0, active - 1));
+			move(active - 1, -1);
 		} else if (key.downArrow) {
-			setActive(Math.min(props.choices.length - 1, active + 1));
+			move(active + 1, 1);
 		} else if (key.pageUp) {
-			setActive(Math.max(0, active - pageSize));
+			move(active - pageSize, -1);
 		} else if (key.pageDown) {
-			setActive(Math.min(props.choices.length - 1, active + pageSize));
+			move(active + pageSize, 1);
 		}
 	});
 
@@ -94,7 +122,11 @@ export function SelectView<T>(props: SelectProps<T>): JSX.Element {
 				const idx = clampedStart + i;
 				const isActive = idx === active;
 				const cursor = isActive ? chalk.cyan('❯') : ' ';
-				const label = isActive ? chalk.cyan(c.name) : c.name;
+				const label = c.disabled
+					? chalk.dim(c.name)
+					: isActive
+						? chalk.cyan(c.name)
+						: c.name;
 				return (
 					<Box key={idx}>
 						<Text>{`${cursor} ${label}`}</Text>

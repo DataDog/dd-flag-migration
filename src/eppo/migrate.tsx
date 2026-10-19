@@ -21,7 +21,7 @@ import {
 	applyVariantDeletes,
 	createFeatureFlag,
 	disableFeatureFlagEnvironmentWithOutcome,
-	enableFeatureFlagEnvironment,
+	enableFeatureFlagEnvironmentWithOutcome,
 	fetchDatadogEnvironments,
 	fetchDatadogFlags,
 	fetchFlagDetail,
@@ -29,6 +29,7 @@ import {
 	syncAllocationsForEnvironment,
 	syncVariantsCreatesAndUpdates,
 	updateFlagDistributionChannel,
+	updateFlagJsonSchema,
 	updateFlagName,
 	updateFlagTags,
 } from '../datadog/api.js';
@@ -454,6 +455,7 @@ async function confirmMigration(
 	let totalEnabled = 0;
 	let totalDisabled = 0;
 	const failures: Array<{ key: string; error: string }> = [];
+	const enableApprovalRequests: Array<{ key: string; env: string }> = [];
 	const enableFailures: Array<{ key: string; env: string; error: string }> = [];
 	const disableFailures: Array<{ key: string; env: string; error: string }> =
 		[];
@@ -500,6 +502,7 @@ async function confirmMigration(
 					disabled: totalDisabled,
 				},
 				failures,
+				enableApprovalRequests,
 				enableFailures,
 				disableFailures,
 				disableApprovalRequests,
@@ -659,6 +662,35 @@ async function confirmMigration(
 						});
 					}
 
+					// These source APIs expose no flag schema. Full sync removes any
+					// Datadog schema before variant writes so source edits can propagate.
+					const schemaLabel =
+						mapVariationType(flag.variation_type) === 'JSON'
+							? ', 1 JSON schema'
+							: '';
+					if (mapVariationType(flag.variation_type) === 'JSON') {
+						if (dryRun) {
+							dryRunRequests.push({
+								method: 'PUT',
+								path: `/api/v2/feature-flags/${existingFlagId}`,
+								body: {
+									data: {
+										type: 'feature-flags',
+										attributes: { json_schema: null },
+									},
+								},
+							});
+						} else {
+							await updateFlagJsonSchema(
+								ddApiKey,
+								ddAppKey,
+								existingFlagId,
+								null,
+								site,
+							);
+						}
+					}
+
 					if (envsToEnable.length === 0) {
 						// Always sync tags. Overwrite mode propagates removals; merge
 						// mode preserves tags that exist only in Datadog.
@@ -791,8 +823,8 @@ async function confirmMigration(
 								: '';
 						doSync(
 							dryRun
-								? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (1 name, ${syncTags.length} tag(s)${variantLabel}${disableLabel})`
-								: `${chalk.green('✓')} Synced ${chalk.cyan(flag.key)} (1 name, ${syncTags.length} tag(s)${variantLabel}${disableLabel})`,
+								? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (1 name, ${syncTags.length} tag(s)${variantLabel}${schemaLabel}${disableLabel})`
+								: `${chalk.green('✓')} Synced ${chalk.cyan(flag.key)} (1 name, ${syncTags.length} tag(s)${variantLabel}${schemaLabel}${disableLabel})`,
 						);
 						continue;
 					}
@@ -906,7 +938,7 @@ async function confirmMigration(
 								: '';
 						doSync(
 							`${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} ` +
-								`(${syncFilterLabel}${syncRuleLabel}${variantLabel}${tagLabel}, 1 name${enableLabel}${disableLabel})`,
+								`(${syncFilterLabel}${syncRuleLabel}${variantLabel}${tagLabel}, 1 name${schemaLabel}${enableLabel}${disableLabel})`,
 						);
 					} else {
 						try {
@@ -993,14 +1025,19 @@ async function confirmMigration(
 							let enabledCount = 0;
 							for (const ddEnv of envsToEnable) {
 								try {
-									await enableFeatureFlagEnvironment(
+									const outcome = await enableFeatureFlagEnvironmentWithOutcome(
 										ddApiKey,
 										ddAppKey,
 										existingFlagId,
 										ddEnv.id,
 										site,
 									);
-									enabledCount++;
+									if (outcome === 'enabled') enabledCount++;
+									else
+										enableApprovalRequests.push({
+											key: flag.key,
+											env: ddEnv.name,
+										});
 								} catch (err) {
 									enableFailures.push({
 										key: flag.key,
@@ -1055,7 +1092,7 @@ async function confirmMigration(
 									? `, disabled in ${disabledCount} env(s)`
 									: '';
 							doSync(
-								`${chalk.green('✓')} Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${variantLabel}${tagLabel}, 1 name${enableLabel}${disableLabel})`,
+								`${chalk.green('✓')} Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${variantLabel}${tagLabel}, 1 name${schemaLabel}${enableLabel}${disableLabel})`,
 							);
 						} catch (err) {
 							const error = formatAxiosError(err);
@@ -1147,14 +1184,19 @@ async function confirmMigration(
 									);
 								}
 								try {
-									await enableFeatureFlagEnvironment(
+									const outcome = await enableFeatureFlagEnvironmentWithOutcome(
 										ddApiKey,
 										ddAppKey,
 										createdFlag.id,
 										ddEnv.id,
 										site,
 									);
-									enabledCount++;
+									if (outcome === 'enabled') enabledCount++;
+									else
+										enableApprovalRequests.push({
+											key: flag.key,
+											env: ddEnv.name,
+										});
 								} catch (err) {
 									enableFailures.push({
 										key: flag.key,
@@ -1198,6 +1240,7 @@ async function confirmMigration(
 				disabled: totalDisabled,
 			}}
 			failures={failures}
+			enableApprovalRequests={enableApprovalRequests}
 			enableFailures={enableFailures}
 			disableFailures={disableFailures}
 			disableApprovalRequests={disableApprovalRequests}
@@ -1214,6 +1257,7 @@ async function confirmMigration(
 			success: errored === 0,
 			summary: { created, synced, skipped, errored, enabled: 0, disabled: 0 },
 			failures,
+			enableApprovalRequests: [],
 			enableFailures: [],
 			disableFailures: [],
 			skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
@@ -1244,6 +1288,7 @@ async function confirmMigration(
 				disabled: totalDisabled,
 			},
 			failures,
+			enableApprovalRequests,
 			enableFailures,
 			disableFailures,
 			disableApprovalRequests,

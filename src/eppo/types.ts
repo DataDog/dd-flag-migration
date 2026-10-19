@@ -108,6 +108,7 @@ export interface MigrationFile {
 		disabled?: number;
 	};
 	failures: MigrationFlagFailure[];
+	enableApprovalRequests?: Array<{ key: string; env: string }>;
 	enableFailures: MigrationEnvFailure[];
 	disableFailures?: MigrationEnvFailure[];
 	disableApprovalRequests?: Array<{ key: string; env: string }>;

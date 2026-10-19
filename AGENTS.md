@@ -22,6 +22,7 @@ Use the following for authentication when building new scripts that require API 
 
 - **Datadog:** Set `DD_API_KEY`, `DD_APP_KEY`, and `DD_SITE` (the Datadog site host, such as `datadoghq.com` or `us5.datadoghq.com`). Requests send the keys as the `dd-api-key` and `dd-application-key` headers. `scripts/get-datadog-flag.sh` requires `DD_SITE`. For the CLI, an explicit `--datadog-site` takes precedence over `DD_SITE`; interactive prompts may also use the saved site preference when neither is provided.
 - **LaunchDarkly:** Set `LAUNCHDARKLY_API_KEY`. The scripts send it directly in the `Authorization` header to `https://app.launchdarkly.com`.
+- **Datadog → Datadog:** `yarn migrate` with the Datadog provider and `yarn org-diff` read two orgs from `SOURCE_DD_API_KEY`, `SOURCE_DD_APP_KEY`, `SOURCE_DD_SITE`, `TARGET_DD_API_KEY`, `TARGET_DD_APP_KEY`, and `TARGET_DD_SITE` (all required) instead of `DD_API_KEY` / `DD_APP_KEY` / `DD_SITE`. `DD_BASE_URL` and `DD_HTTP_HEADERS` are rejected for these commands because they would apply to both orgs.
 - **Eppo:** `yarn migrate` requires `EPPO_API_KEY` when Eppo is selected as the source provider (alongside the Datadog keys). The migration client sends it in the `x-eppo-token` header to `https://eppo.cloud`. The standalone `scripts/eppo-raw.sh` helper currently reads `eppoApiKey` from `$HOME/.dd-flag-migration/config.json` and uses the same header.
 
 ## Committing and Opening PRs
@@ -33,7 +34,7 @@ Use [Conventional Commits](https://www.conventionalcommits.org/) for every commi
 
 ## Re-migration sync contract
 
-Customers typically run their source platform (LaunchDarkly or Eppo) and Datadog in parallel for weeks-to-months while migrating the code that evaluates flags. During this dual-run window the **source platform is the source of truth** — customers continue to edit flags there. The migration tool's job on re-migration is to make Datadog match.
+Customers typically run their source platform (LaunchDarkly, Eppo, or another Datadog org) and Datadog in parallel for weeks-to-months while migrating the code that evaluates flags. During this dual-run window the **source platform is the source of truth** — customers continue to edit flags there. The migration tool's job on re-migration is to make Datadog match.
 
 When adding or changing what gets synced, classify each field into one of these tiers and follow the contract for that tier:
 
@@ -43,6 +44,9 @@ The source platform owns these end-to-end. On re-migration, make Datadog match e
 
 - Targeting rules / allocations (PUT-replace per environment)
 - Default variant (per environment)
+- **JSON schema** for JSON flags: replace the source schema, including removal.
+  LaunchDarkly and Eppo expose no flag schema, so JSON re-migrations clear the
+  target schema.
 - Environment state (enablement and disablement)
 - **Variants** (POST/PUT/DELETE via the `/feature-flags/{id}/variants` sub-resource)
 
@@ -64,7 +68,7 @@ When introducing a new field in this tier: a missing value in the source must pr
 Datadog-side state may exist that the source system doesn't know about, and clobbering it would be surprising. Merge: union with what's on Datadog, dedupe, preserve unrelated bindings.
 
 - **Restriction policies**: editor-team principals derived from RBAC walk are merged into existing editor bindings; non-editor bindings (e.g., viewer) are preserved.
-- **Saved filters** for LD segments / Eppo audiences: PUT-replace the body (`name`, `targeting_rules`, `description`, `migration_metadata`) of every matched filter so source-side edits propagate, but saved filters outside the current re-migration's selection are preserved. Deletes are intentionally out of scope — a saved filter can be referenced by flags outside the current selection, so deleting one would orphan those references.
+- **Saved filters** for LD segments / Eppo audiences / saved filters copied from another Datadog org: PUT-replace the body (`name`, `targeting_rules`, `description`, `migration_metadata`) of every matched filter so source-side edits propagate, but saved filters outside the current re-migration's selection are preserved. Deletes are intentionally out of scope — a saved filter can be referenced by flags outside the current selection, so deleting one would orphan those references.
 
 When introducing a new field in this tier: GET current state, compute union with source-derived state, PUT/POST merged result.
 
@@ -81,10 +85,10 @@ Renames in the source platform do not propagate. Customers must delete + recreat
 ## When adding a new sync field
 
 1. Decide which tier it belongs to. Default to Tier 1 unless there's a concrete reason to merge or preserve.
-2. Wire it into **both** `src/eppo/index.ts` and `src/launchdarkly/index.ts` re-migration paths — they have identical structure.
+2. Wire it into **every** re-migration path — `src/eppo/migrate.tsx`, `src/launchdarkly/migrate.tsx`, and `src/datadog-migration/migrate.tsx` have the same structure. If the field is compared, also update `src/org-diff/comparison.ts`.
 3. Each path has two sub-branches: `envsToEnable.length === 0` (no active source environments; sync metadata and disable inactive mappings) and `envsToEnable.length > 0` (full re-sync, including disabling inactive mappings). Cover both.
 4. Each branch has a `dryRun` and a live mode. Cover both.
-5. Mirror the existing `migration_metadata` pattern when creating new Datadog resources, with `provider: 'launchdarkly' | 'eppo'` plus a source identifier.
+5. Mirror the existing `migration_metadata` pattern when creating new Datadog resources, with `provider: 'launchdarkly' | 'eppo' | 'datadog'` plus a source identifier.
 6. Update the spinner success message to include counts for the new field.
 
 ## When the backend gains new capabilities

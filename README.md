@@ -2,7 +2,7 @@
 
 A CLI tool for migrating feature flags from your current provider into [Datadog Feature Flags](https://docs.datadoghq.com/getting_started/feature_flags/), with side-by-side evaluation to verify the migration before you switch over.
 
-**Supported providers:** Eppo, LaunchDarkly
+**Supported providers:** Eppo, LaunchDarkly, and another Datadog org
 
 ---
 
@@ -22,6 +22,9 @@ npx @datadog/dd-flag-migration migrate
 
 # check migration coverage and sync status
 npx @datadog/dd-flag-migration migration-status
+
+# compare flag configuration between two Datadog orgs
+npx @datadog/dd-flag-migration org-diff
 
 # evaluate migrated flags
 npx @datadog/dd-flag-migration evaluate
@@ -44,7 +47,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Credentials you'll need
 
-Credentials are read from environment variables. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running `migrate`, `migration-status`, `evaluate`, `bulk-permissions`, `bulk-enable`, or `sync-tags`. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1.
+Credentials are read from environment variables. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running `migrate`, `migration-status`, `org-diff`, `evaluate`, `bulk-permissions`, `bulk-enable`, or `sync-tags`. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1.
 
 `DD_SITE` is optional for interactive commands and pre-fills the Datadog site prompt when set. For non-interactive `migrate` runs, use either `DD_SITE` or `--datadog-site`; the explicit CLI option takes precedence. The standalone `scripts/get-datadog-flag.sh` script requires `DD_SITE` and does not accept a site argument.
 
@@ -52,22 +55,34 @@ Credentials are read from environment variables. Set them in your shell (or `.en
 
 | Variable | Required when | Where to find it |
 |---|---|---|
-| `DD_API_KEY` | always | Datadog → Organization Settings → API Keys |
-| `DD_APP_KEY` | always | Datadog → Organization Settings → Application Keys |
-| `EPPO_API_KEY` | provider = Eppo | Eppo → Configuration → API Keys |
-| `LAUNCHDARKLY_API_KEY` | provider = LaunchDarkly | LaunchDarkly → Account settings → Authorization → Access tokens |
+| `DD_API_KEY` | migration = Eppo → Datadog or LaunchDarkly → Datadog | Datadog → Organization Settings → API Keys |
+| `DD_APP_KEY` | migration = Eppo → Datadog or LaunchDarkly → Datadog | Datadog → Organization Settings → Application Keys |
+| `EPPO_API_KEY` | migration = Eppo → Datadog | Eppo → Configuration → API Keys |
+| `LAUNCHDARKLY_API_KEY` | migration = LaunchDarkly → Datadog | LaunchDarkly → Account settings → Authorization → Access tokens |
+| `SOURCE_DD_API_KEY`, `SOURCE_DD_APP_KEY`, `SOURCE_DD_SITE` | migration = Datadog → Datadog | API key, application key, and site of the org you copy flags **from** |
+| `TARGET_DD_API_KEY`, `TARGET_DD_APP_KEY`, `TARGET_DD_SITE` | migration = Datadog → Datadog | API key, application key, and site of the org you copy flags **to** |
 
 Your LaunchDarkly access token needs **Reader** role permissions (or a custom role with `viewProject` access) to read projects, environments, and flag configurations.
 
 `EPPO_*` variables are checked only when you select Eppo as the source provider. `LAUNCHDARKLY_*` variables are checked only when you select LaunchDarkly. You don't need to set both.
 
+Datadog → Datadog migrations read all six `SOURCE_DD_*` and `TARGET_DD_*` variables and ignore `DD_API_KEY`, `DD_APP_KEY`, and `DD_SITE`. `DD_BASE_URL` and `DD_HTTP_HEADERS` can't be used with two orgs, because they would apply to both.
+
 ### Required for `migration-status`
 
 | Variable | Required when | Where to find it |
 |---|---|---|
-| `DD_API_KEY` | always | Datadog → Organization Settings → API Keys |
-| `DD_APP_KEY` | always | Datadog → Organization Settings → Application Keys |
-| `LAUNCHDARKLY_API_KEY` | always | LaunchDarkly → Account settings → Authorization → Access tokens |
+| `DD_API_KEY` | migration = LaunchDarkly → Datadog | Datadog → Organization Settings → API Keys |
+| `DD_APP_KEY` | migration = LaunchDarkly → Datadog | Datadog → Organization Settings → Application Keys |
+| `LAUNCHDARKLY_API_KEY` | migration = LaunchDarkly → Datadog | LaunchDarkly → Account settings → Authorization → Access tokens |
+| `SOURCE_DD_*`, `TARGET_DD_*` | migration = Datadog → Datadog | Same six variables as [`org-diff`](#required-for-org-diff) |
+
+### Required for `org-diff`
+
+| Variable | Required when | Where to find it |
+|---|---|---|
+| `SOURCE_DD_API_KEY`, `SOURCE_DD_APP_KEY`, `SOURCE_DD_SITE` | always | API key, application key, and site of the first org |
+| `TARGET_DD_API_KEY`, `TARGET_DD_APP_KEY`, `TARGET_DD_SITE` | always | API key, application key, and site of the second org |
 
 ### Required for `evaluate`
 
@@ -93,12 +108,14 @@ Enable the scopes required for the command you are running:
 | Scope | Required by | Description |
 |---|---|---|
 | `feature_flag_approvals_override` | Optional for `bulk-enable` | Bypasses Feature Flag approval requirements. Without it, approval-protected changes are submitted as approval requests and reported as such. |
-| `feature_flag_config_read` | `migrate`, `migration-status`, `bulk-permissions`, `bulk-enable`, `sync-tags` | View Feature Flag Configurations |
+| `feature_flag_config_read` | `migrate`, `migration-status`, `org-diff`, `bulk-permissions`, `bulk-enable`, `sync-tags` | View Feature Flag Configurations |
 | `feature_flag_config_write` | `migrate`, `bulk-enable`, `sync-tags` | Edit Feature Flag Configurations |
-| `feature_flag_environment_config_read` | `migrate`, `migration-status`, `bulk-enable`, `sync-tags` | View Feature Flag Environment settings |
-| `teams_read` | `migrate`, `bulk-permissions`, `sync-tags` | View Teams for team-based access controls |
+| `feature_flag_environment_config_read` | `migrate`, `migration-status`, `org-diff`, `bulk-enable`, `sync-tags` | View Feature Flag Environment settings |
+| `teams_read` | `migrate` (Eppo and LaunchDarkly), `bulk-permissions`, `sync-tags` | View Teams for team-based access controls |
 | `restriction_policies_read` | `bulk-permissions` | View restriction policies |
 | `restriction_policies_write` | `bulk-permissions` | Edit restriction policies |
+
+For Datadog → Datadog migrations and `org-diff`, both application keys need the read scopes. A Datadog → Datadog migration also needs `feature_flag_config_write` on the target org's key.
 
 To set these permissions, go to **Organization Settings → Application Keys**, select your key, and enable the scopes for the command. The feature flag scopes are under **Feature Flags**, `teams_read` is under **Teams**, and restriction-policy scopes are only used by `bulk-permissions`.
 
@@ -135,6 +152,19 @@ export LAUNCHDARKLY_API_KEY=...
 npx @datadog/dd-flag-migration migrate
 ```
 
+**Migrate from another Datadog org**
+
+```bash
+export SOURCE_DD_API_KEY=...
+export SOURCE_DD_APP_KEY=...
+export SOURCE_DD_SITE=datadoghq.com
+export TARGET_DD_API_KEY=...
+export TARGET_DD_APP_KEY=...
+export TARGET_DD_SITE=datadoghq.eu
+
+npx @datadog/dd-flag-migration migrate   # choose "Datadog → Datadog"
+```
+
 **Evaluate a LaunchDarkly migration**
 
 If `LAUNCHDARKLY_API_KEY` is already set (from running `migrate`), the SDK key is fetched automatically:
@@ -169,13 +199,13 @@ npx @datadog/dd-flag-migration migrate
 
 The tool will walk you through:
 
-1. **Select your provider** — Eppo or LaunchDarkly
+1. **Select your migration** — Eppo → Datadog, Datadog → Datadog, or LaunchDarkly → Datadog
 2. **Map environments** — link each source environment (e.g. `production`) to one or more corresponding Datadog environments
 3. **Select flags** — choose which flags to migrate; flags already in Datadog are marked. Press **Tab** to open the advanced-filter screen and narrow the list by category (see [Advanced filtering](#advanced-filtering)), then **Ctrl+A** to select all remaining flags
 4. **Confirm and migrate** — flags are created in Datadog and enabled in the mapped environments. A progress bar tracks migration status in real time
 
 API keys are read from environment variables (see [Credentials](#credentials-youll-need)).
-Set `DD_SITE` to pre-fill the Datadog site prompt, or pass `--datadog-site=<site>` to provide an explicit site without a prompt. For fully scripted runs, see [Non-interactive mode](#non-interactive-mode) below.
+Set `DD_SITE` to pre-fill the Datadog site prompt, or pass `--datadog-site=<site>` to provide an explicit site without a prompt. Datadog → Datadog migrations don't prompt for a site; they read `SOURCE_DD_SITE` and `TARGET_DD_SITE`. For fully scripted runs, see [Non-interactive mode](#non-interactive-mode) below.
 
 When the migration completes, a record is saved to `~/.dd-flag-migration/migration-<timestamp>.json`. In interactive mode you'll be prompted to export results to an `.xlsx` file; in non-interactive mode pass `--export=true` to generate one.
 
@@ -239,11 +269,25 @@ are set to Client. Existing non-semver flags keep their current channel, and
 new non-semver flags use Datadog's default. Explicit Client, Server, and All
 modes set the corresponding channel on every selected flag.
 
+### Datadog → Datadog workflow
+
+Choose **Datadog → Datadog** to copy flags from one Datadog org (the source) to another (the target):
+
+1. **Select source org environments** — choose which environments in the source org to copy from
+2. **Link environments** — map each source environment to one or more target org environments. Target environments with the same name are pre-selected
+3. **Select flags** — flags whose key already exists in the target org are marked and are synced instead of created. Each flag's tags are shown, and typing a tag (such as `team:checkout`) in the filter narrows the list, as in `bulk-enable`
+
+Before copying flags, the tool copies the saved filters that the selected flags reference, following the same rules as LaunchDarkly segments. A saved filter that was copied before is updated in place, so edits in the source org carry over. A new saved filter is created with migration metadata that points back to its source filter. If a target org filter without that metadata already has the same name, you can skip the conflicting filter, add a prefix to its name, or adopt the existing filter. Adopting replaces the existing filter's targeting with the source targeting and adds migration metadata, so later runs keep it in sync. Before it adopts anything, the tool checks every target org flag for references to the filter. A filter is safe to adopt only when the usage check succeeds for every target flag and none uses it. Matching targeting avoids an immediate change, but later source edits could affect flags that still reference the adopted filter. References from selected flags still count because their targeting is rewritten later and that step may be skipped or fail. If a filter is in use or usage could not be fully checked, you choose whether to adopt it anyway, skip it, or prefix it. Filters managed by another migration, or whose name matches more than one target filter, cannot be adopted. Non-interactive runs skip conflicts. Saved filters are never deleted from the target org.
+
+Flags are matched by key. Variant keys are copied as-is. Name, description, JSON schema (including removal), distribution channel, and tags sync on every run; tags follow `--tag-mode` or the tag prompt. Targeting and default variants sync in each mapped environment where the source flag is enabled, and each mapped target environment is enabled or disabled to match its source environment. Flags whose targeting uses a progressive rollout, scheduled rollout, experiment, or environment override are skipped with an explanation, because that state can't be copied between orgs. Restriction policies and team permissions aren't copied.
+
 ### Non-interactive mode
 
 Pass `--interactive=false` to run the migration entirely from CLI arguments, with no prompts. This is useful for scripted or CI environments. Set `DD_SITE` in the job environment or pass `--datadog-site`; you do not need to provide both.
 
 Non-interactive migrations use `--tag-mode merge` by default, preserving tags that exist only in Datadog. Use `--tag-mode replace` to replace existing tags with the source-derived tags, including LaunchDarkly's `project:<key>` tag. In interactive mode, specifying `--tag-mode` skips the tag-mode prompt.
+
+JSON flag schemas follow the source on re-migration. LaunchDarkly and Eppo expose no flag schema, so re-migrating their JSON flags clears any schema in Datadog. Environments awaiting enable approval are reported separately and do not count as enabled.
 
 Non-interactive migrations write a JSON result document to stdout. Status messages, progress output, and export messages are written to stderr so stdout can be piped into tools such as `jq`.
 
@@ -251,8 +295,8 @@ Non-interactive migrations write a JSON result document to stdout. Status messag
 
 | Flag | Description |
 |---|---|
-| `--provider <Eppo\|LaunchDarkly>` | Source provider (case-insensitive) |
-| `--datadog-site <site>` | Datadog site (e.g. `datadoghq.com`); optional when `DD_SITE` is set |
+| `--provider <Eppo\|LaunchDarkly\|Datadog>` | Source provider (case-insensitive). `Datadog` copies flags between the `SOURCE_DD_*` and `TARGET_DD_*` orgs |
+| `--datadog-site <site>` | Datadog site (e.g. `datadoghq.com`); optional when `DD_SITE` is set. Not used for `Datadog` |
 | `--env-map <source,target>` | Map a source environment to a Datadog environment. Repeat the option—including the same source—to map one source environment to multiple Datadog environments |
 | `--feature-flag <key>` | Flag key to migrate. Repeat for each flag. For LaunchDarkly, use `<source-key>,<datadog-key>` to rename the Datadog flag |
 | `--project <key>` | LaunchDarkly project key *(LaunchDarkly only)* |
@@ -304,6 +348,16 @@ npx @datadog/dd-flag-migration migrate --interactive=false \
   --feature-flag my-flag-1,my-renamed-flag-1
 ```
 
+Copy flags from the `SOURCE_DD_*` org to the `TARGET_DD_*` org. Environment names in `--env-map` are `source-org-environment,target-org-environment`:
+
+```bash
+npx @datadog/dd-flag-migration migrate --interactive=false \
+  --provider Datadog \
+  --env-map Production,Production \
+  --env-map Staging,Staging \
+  --feature-flag flag-one
+```
+
 Migrate Eppo flags (no project key required):
 
 ```bash
@@ -328,7 +382,7 @@ This writes the full list of API requests that would be sent to a `dry-run-<time
 
 ## Migration Status
 
-Generate a read-only LaunchDarkly migration status report with:
+Generate a read-only migration status report with:
 
 ```bash
 npx @datadog/dd-flag-migration migration-status
@@ -337,16 +391,45 @@ npx @datadog/dd-flag-migration migration-status
 yarn migration-status
 ```
 
-The interactive workflow uses the same environment selection and one-to-many mapping experience as migration:
+First choose the migration to check: **LaunchDarkly → Datadog** or **Datadog → Datadog**. **Eppo → Datadog** is listed as coming soon and can't be selected yet.
+
+**Datadog → Datadog** compares the `SOURCE_DD_*` and `TARGET_DD_*` orgs and produces the same report as [Org Diff](#org-diff).
+
+For **LaunchDarkly → Datadog**, the interactive workflow uses the same environment selection and one-to-many mapping experience as migration:
 
 1. Select a LaunchDarkly project.
 2. Select the LaunchDarkly environments to analyze.
 3. Map each selected LaunchDarkly environment to one or more Datadog environments.
-4. Confirm the analysis scope.
+4. Select the flags to check. This is the same flag picker as migration, including the **Tab** advanced filters (see [Advanced filtering](#advanced-filtering)); press **Ctrl+A** to check every visible flag.
+5. Confirm the analysis scope.
 
-The command reports flags as **Not yet migrated**, **Partially migrated**, **Out of sync**, **In sync**, or **Needs review**. Environment sync is calculated only for the selected mappings; unselected Datadog environments do not affect the result. A `migration-status-launchdarkly-<project>-<timestamp>.xlsx` workbook is written automatically to the current directory with a global summary and one status tab per selected Datadog environment. Each environment tab includes scoped status counts at the top.
+The command reports the selected flags as **Not yet migrated**, **Partially migrated**, **Out of sync**, **In sync**, or **Needs review**. Environment sync is calculated only for the selected mappings; unselected Datadog environments do not affect the result. A `migration-status-launchdarkly-<project>-<timestamp>.xlsx` workbook is written automatically to the current directory with a global summary and one status tab per selected Datadog environment. Each environment tab includes scoped status counts at the top.
 
 The report compares current configuration and does not identify which platform changed after migration. Tags, permissions, restriction policies, and saved-filter contents are not assessed.
+
+---
+
+## Org Diff
+
+Compare feature flag configuration between two Datadog orgs that should stay in sync with:
+
+```bash
+npx @datadog/dd-flag-migration org-diff
+
+# When running from this repository:
+yarn org-diff
+```
+
+Credentials come from `SOURCE_DD_*` and `TARGET_DD_*` (see [Required for `org-diff`](#required-for-org-diff)). The comparison is read-only and symmetric: neither org is treated as the source of truth. The source/target names only identify the two credential sets.
+
+1. Select the source org environments to compare.
+2. Link each one to one or more target org environments. Environments with the same name are pre-selected.
+3. Select the flags to compare. The list includes flags from both orgs, labeled by which org has them. Type a tag (such as `team:checkout`) to filter by tag, press **Tab** to filter to flags in both orgs or in only one, and press **Ctrl+A** to check every visible flag.
+4. Confirm the environment pairs.
+
+The selected flags are paired by key across both orgs and reported as **Only in source org**, **Only in target org**, **Differs**, **In sync**, or **Needs review**. Each pair compares the flag's name, description, value type, distribution channel, tags, and variants. For each environment pair, it also compares enablement, the default variant, any environment override, and targeting. Targeting is compared by behavior: filter order, rules, and rollout weights. Filter keys and names are ignored. Saved-filter references are matched across orgs by migration metadata or by a name that is unique in both orgs; their contents are not compared. Environments that are disabled in both orgs don't have their targeting compared. Progressive rollouts, scheduled rollouts, and experiments are reported as **Needs review**.
+
+An `org-diff-<source-site>-<target-site>-<timestamp>.xlsx` workbook is written to the current directory, with a summary tab and one tab per environment pair. To fix differences, decide which org is correct and run `migrate` with **Datadog → Datadog**, using that org as the source.
 
 ---
 

@@ -26,7 +26,7 @@ import {
 	buildRestrictionPolicyBindings,
 	createFeatureFlag,
 	disableFeatureFlagEnvironmentWithOutcome,
-	enableFeatureFlagEnvironment,
+	enableFeatureFlagEnvironmentWithOutcome,
 	fetchCurrentUserIdentity,
 	fetchDatadogEnvironments,
 	fetchDatadogFlags,
@@ -36,6 +36,7 @@ import {
 	syncAllocationsForEnvironment,
 	syncVariantsCreatesAndUpdates,
 	updateFlagDistributionChannel,
+	updateFlagJsonSchema,
 	updateFlagName,
 	updateFlagTags,
 } from '../datadog/api.js';
@@ -720,7 +721,51 @@ const LD_FILTER_CATEGORIES: FilterCategory[] = [
 	},
 ];
 
-type LDFlagStatusByEnv = Map<string, Map<string, LDFlagStatus> | null>;
+export type LDFlagStatusByEnv = Map<string, Map<string, LDFlagStatus> | null>;
+
+/**
+ * Fetch LD flag lifecycle statuses for every non-archived environment not
+ * already cached, so the advanced-filter screen can answer "active anywhere"
+ * and "inactive everywhere". Failures are non-fatal — an environment whose
+ * statuses could not be loaded is cached as null and affected flags stay
+ * uncategorized unless another environment proves a positive status.
+ */
+export async function loadFlagStatuses(
+	ldApiKey: string,
+	projectKey: string,
+	environments: LDEnvironment[],
+	cache: LDFlagStatusByEnv,
+): Promise<void> {
+	const envsToLoad = environments.filter(
+		(env) => !env.archived && !cache.has(env.key),
+	);
+	if (envsToLoad.length === 0) return;
+	const statusSpinner = createSpinner(
+		'Loading LaunchDarkly flag statuses…',
+	).start();
+	let failedCount = 0;
+	for (const env of envsToLoad) {
+		try {
+			cache.set(
+				env.key,
+				await fetchFlagStatuses(ldApiKey, projectKey, env.key),
+			);
+		} catch {
+			cache.set(env.key, null);
+			failedCount++;
+		}
+	}
+	const loadedCount = envsToLoad.length - failedCount;
+	if (failedCount > 0) {
+		statusSpinner.warn(
+			`Loaded flag statuses for ${loadedCount} environment(s); ${failedCount} could not be loaded (affected flags stay uncategorized)`,
+		);
+	} else {
+		statusSpinner.succeed(
+			`Loaded flag statuses for ${loadedCount} environment(s)`,
+		);
+	}
+}
 
 /**
  * Collapse per-environment LD statuses for a single flag into filter
@@ -759,6 +804,7 @@ export async function selectFlags(
 	previouslySelected: LDFlag[] = [],
 	conflictResolution?: ConflictResolution,
 	statusByEnv: LDFlagStatusByEnv = new Map(),
+	message = 'Select flags to migrate to Datadog:',
 ): Promise<LDFlag[] | null> {
 	let inDatadogCount = 0;
 	let prefixedCount = 0;
@@ -817,7 +863,7 @@ export async function selectFlags(
 	const pageSize = Math.max(5, (process.stdout.rows ?? 24) - 9);
 
 	return filterableCheckbox<LDFlag>({
-		message: 'Select flags to migrate to Datadog:',
+		message,
 		choices: sortedFlags.map((flag) => {
 			const conflictType = classifyConflict(
 				datadogFlags,
@@ -1209,6 +1255,7 @@ async function executeMigration(
 	let totalEnabled = 0;
 	let totalDisabled = 0;
 	const failures: Array<{ key: string; error: string }> = [];
+	const enableApprovalRequests: Array<{ key: string; env: string }> = [];
 	const enableFailures: Array<{ key: string; env: string; error: string }> = [];
 	const disableFailures: Array<{ key: string; env: string; error: string }> =
 		[];
@@ -1351,6 +1398,7 @@ async function executeMigration(
 					disabled: totalDisabled,
 				},
 				failures,
+				enableApprovalRequests,
 				enableFailures,
 				disableFailures,
 				disableApprovalRequests,
@@ -1679,6 +1727,33 @@ async function executeMigration(
 						});
 					}
 
+					// These source APIs expose no flag schema. Full sync removes any
+					// Datadog schema before variant writes so source edits can propagate.
+					const schemaLabel =
+						mapFlagType(flag) === 'JSON' ? ', 1 JSON schema' : '';
+					if (mapFlagType(flag) === 'JSON') {
+						if (dryRun) {
+							dryRunRequests.push({
+								method: 'PUT',
+								path: `/api/v2/feature-flags/${existingFlagId}`,
+								body: {
+									data: {
+										type: 'feature-flags',
+										attributes: { json_schema: null },
+									},
+								},
+							});
+						} else {
+							await updateFlagJsonSchema(
+								ddApiKey,
+								ddAppKey,
+								existingFlagId,
+								null,
+								ddSite,
+							);
+						}
+					}
+
 					if (envsToEnable.length === 0) {
 						// Always sync tags and restriction policy even when no new
 						// environments need enabling. Overwrite mode propagates tag
@@ -1825,8 +1900,8 @@ async function executeMigration(
 						syncedFlagKeys.push(flag.key);
 						doSync(
 							dryRun
-								? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (1 name, ${tagLabel}${variantLabel}${disableLabel}${policyLabel})`
-								: `${chalk.green('✓')} Synced ${chalk.cyan(flag.key)} (1 name, ${tagLabel}${variantLabel}${disableLabel}${policyLabel})`,
+								? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (1 name, ${tagLabel}${variantLabel}${schemaLabel}${disableLabel}${policyLabel})`
+								: `${chalk.green('✓')} Synced ${chalk.cyan(flag.key)} (1 name, ${tagLabel}${variantLabel}${schemaLabel}${disableLabel}${policyLabel})`,
 						);
 						continue;
 					}
@@ -1956,7 +2031,7 @@ async function executeMigration(
 						syncedFlagKeys.push(flag.key);
 						doSync(
 							`${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} ` +
-								`(${syncFilterLabel}${syncRuleLabel}${variantLabel}${tagLabel}, 1 name${enableLabel}${disableLabel})`,
+								`(${syncFilterLabel}${syncRuleLabel}${variantLabel}${tagLabel}, 1 name${schemaLabel}${enableLabel}${disableLabel})`,
 						);
 					} else {
 						try {
@@ -2061,14 +2136,19 @@ async function executeMigration(
 							let enabledCount = 0;
 							for (const ddEnv of envsToEnable) {
 								try {
-									await enableFeatureFlagEnvironment(
+									const outcome = await enableFeatureFlagEnvironmentWithOutcome(
 										ddApiKey,
 										ddAppKey,
 										existingFlagId,
 										ddEnv.id,
 										ddSite,
 									);
-									enabledCount++;
+									if (outcome === 'enabled') enabledCount++;
+									else
+										enableApprovalRequests.push({
+											key: flag.key,
+											env: ddEnv.name,
+										});
 								} catch (err) {
 									enableFailures.push({
 										key: flag.key,
@@ -2124,7 +2204,7 @@ async function executeMigration(
 									: '';
 							syncedFlagKeys.push(flag.key);
 							doSync(
-								`${chalk.green('✓')} Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${variantLabel}${tagLabel}, 1 name${enableLabel}${disableLabel})`,
+								`${chalk.green('✓')} Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${variantLabel}${tagLabel}, 1 name${schemaLabel}${enableLabel}${disableLabel})`,
 							);
 						} catch (err) {
 							const error = formatAxiosError(err);
@@ -2246,14 +2326,19 @@ async function executeMigration(
 							let enabledCount = 0;
 							for (const ddEnv of envsToEnable) {
 								try {
-									await enableFeatureFlagEnvironment(
+									const outcome = await enableFeatureFlagEnvironmentWithOutcome(
 										ddApiKey,
 										ddAppKey,
 										createdFlag.id,
 										ddEnv.id,
 										ddSite,
 									);
-									enabledCount++;
+									if (outcome === 'enabled') enabledCount++;
+									else
+										enableApprovalRequests.push({
+											key: flag.key,
+											env: ddEnv.name,
+										});
 								} catch (err) {
 									enableFailures.push({
 										key: flag.key,
@@ -2302,6 +2387,7 @@ async function executeMigration(
 				disabled: totalDisabled,
 			}}
 			failures={failures}
+			enableApprovalRequests={enableApprovalRequests}
 			enableFailures={enableFailures}
 			disableFailures={disableFailures}
 			disableApprovalRequests={disableApprovalRequests}
@@ -2328,6 +2414,7 @@ async function executeMigration(
 			disabled: totalDisabled,
 		},
 		failures,
+		enableApprovalRequests,
 		enableFailures,
 		disableFailures,
 		disableApprovalRequests,
@@ -2350,6 +2437,7 @@ async function executeMigration(
 			success: errored === 0,
 			summary: { created, synced, skipped, errored, enabled: 0, disabled: 0 },
 			failures,
+			enableApprovalRequests: [],
 			enableFailures: [],
 			disableFailures: [],
 			skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
@@ -2624,7 +2712,6 @@ export async function runLaunchDarklyMigration(
 	let prevSelectedEnvKeys: string[] = [];
 	let prevEnvMapping: EnvironmentMapping<string> = new Map();
 	let prevSelectedFlags: LDFlag[] = [];
-	const statusEnvs = ldEnvironments.filter((env) => !env.archived);
 	// Cache of LD flag lifecycle statuses per non-archived environment key,
 	// fetched lazily and reused across re-selection loops.
 	const statusByEnv: LDFlagStatusByEnv = new Map();
@@ -2649,39 +2736,14 @@ export async function runLaunchDarklyMigration(
 		}
 		prevSelectedEnvKeys = envResult.map((e) => e.key);
 
-		// Fetch flag lifecycle statuses for all non-archived environments so the
-		// advanced-filter screen can answer "active anywhere" and "inactive
-		// everywhere". Failures are non-fatal — filtering simply treats affected
-		// flags as uncategorized unless another environment proves a positive
-		// status. Fetched lazily and cached, so re-selection loops stay silent.
-		const envsToLoad = statusEnvs.filter((env) => !statusByEnv.has(env.key));
-		if (envsToLoad.length > 0) {
-			const statusSpinner = createSpinner(
-				'Loading LaunchDarkly flag statuses…',
-			).start();
-			let failedCount = 0;
-			for (const env of envsToLoad) {
-				try {
-					statusByEnv.set(
-						env.key,
-						await fetchFlagStatuses(ldApiKey, selectedProject.key, env.key),
-					);
-				} catch {
-					statusByEnv.set(env.key, null);
-					failedCount++;
-				}
-			}
-			const loadedCount = envsToLoad.length - failedCount;
-			if (failedCount > 0) {
-				statusSpinner.warn(
-					`Loaded flag statuses for ${loadedCount} environment(s); ${failedCount} could not be loaded (affected flags stay uncategorized)`,
-				);
-			} else {
-				statusSpinner.succeed(
-					`Loaded flag statuses for ${loadedCount} environment(s)`,
-				);
-			}
-		}
+		// Lifecycle statuses power the advanced filter; fetched lazily and
+		// cached so re-selection loops stay silent.
+		await loadFlagStatuses(
+			ldApiKey,
+			selectedProject.key,
+			ldEnvironments,
+			statusByEnv,
+		);
 
 		// Link LD environments → DD environments
 		while (true) {

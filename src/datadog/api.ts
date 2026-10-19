@@ -444,7 +444,7 @@ export async function updateFlagDistributionChannel(
 	apiKey: string,
 	appKey: string,
 	flagId: string,
-	distributionChannel: 'CLIENT' | 'SERVER' | 'BOTH',
+	distributionChannel: 'CLIENT' | 'SERVER' | 'BOTH' | 'ALL',
 	site = 'datadoghq.com',
 ): Promise<void> {
 	const baseUrl = datadogBaseUrl(site);
@@ -460,6 +460,47 @@ export async function updateFlagDistributionChannel(
 			'Content-Type': 'application/json',
 		},
 	});
+}
+
+export async function updateFlagDescription(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	description: string,
+	site = 'datadoghq.com',
+): Promise<void> {
+	const baseUrl = datadogBaseUrl(site);
+	const body = {
+		data: { type: 'feature-flags', attributes: { description } },
+	};
+	await ddClient.put(`${baseUrl}/api/v2/feature-flags/${flagId}`, body, {
+		headers: {
+			...ddHeaders(apiKey, appKey),
+			'Content-Type': 'application/json',
+		},
+	});
+}
+
+/** Full replacement; null removes a JSON flag's schema. */
+export async function updateFlagJsonSchema(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	jsonSchema: string | null,
+	site = 'datadoghq.com',
+): Promise<void> {
+	await ddClient.put(
+		`${datadogBaseUrl(site)}/api/v2/feature-flags/${flagId}`,
+		{
+			data: { type: 'feature-flags', attributes: { json_schema: jsonSchema } },
+		},
+		{
+			headers: {
+				...ddHeaders(apiKey, appKey),
+				'Content-Type': 'application/json',
+			},
+		},
+	);
 }
 
 export async function fetchDatadogTeams(
@@ -613,7 +654,7 @@ export async function fetchDatadogStatusFlagDetail(
 	flagId: string,
 	site = 'datadoghq.com',
 ): Promise<DatadogStatusFlagDetail> {
-	const baseUrl = `https://api.${site}`;
+	const baseUrl = datadogBaseUrl(site);
 	const response = await ddClient.get<{
 		data: { id: string; attributes: Record<string, unknown> };
 	}>(`${baseUrl}/api/v2/feature-flags/${flagId}`, {
@@ -699,12 +740,19 @@ export async function fetchDatadogStatusFlagDetail(
 					? environment.default_variant_key
 					: variants.find((variant) => variant.id === declaredDefaultVariantId)
 							?.key;
+			const overrideVariantKey =
+				typeof environment.override_variant_id === 'string'
+					? (variants.find(
+							(variant) => variant.id === environment.override_variant_id,
+						)?.key ?? environment.override_variant_id)
+					: undefined;
 			return {
 				environmentId: environment.environment_id,
 				status: environment.status as DatadogEnvironmentStatus,
 				defaultVariantKey:
 					declaredDefaultVariantKey ??
 					inferStatusDefaultVariantKey(allocations, variants),
+				...(overrideVariantKey !== undefined ? { overrideVariantKey } : {}),
 				allocations,
 			};
 		},
@@ -714,6 +762,25 @@ export async function fetchDatadogStatusFlagDetail(
 		id: data.id,
 		key: attributes.key,
 		name: attributes.name,
+		...(typeof attributes.description === 'string'
+			? { description: attributes.description }
+			: {}),
+		...(typeof attributes.value_type === 'string'
+			? { valueType: attributes.value_type }
+			: {}),
+		...(typeof attributes.distribution_channel === 'string'
+			? { distributionChannel: attributes.distribution_channel }
+			: {}),
+		...(typeof attributes.json_schema === 'string'
+			? { jsonSchema: attributes.json_schema }
+			: {}),
+		...(Array.isArray(attributes.tags)
+			? {
+					tags: attributes.tags.filter(
+						(tag): tag is string => typeof tag === 'string',
+					),
+				}
+			: {}),
 		migrationMetadata: isRecord(attributes.migration_metadata)
 			? (attributes.migration_metadata as MigrationMetadata)
 			: undefined,
@@ -1605,6 +1672,52 @@ export async function updateSavedFilter(
 	);
 }
 
+type JsonApiSavedFilter = {
+	id: string;
+	attributes: {
+		name: string;
+		description?: string | null;
+		creation_type?: string;
+		targeting_rules?: Array<{
+			conditions?: Array<{
+				operator?: string;
+				attribute?: string;
+				value?: string[];
+			}>;
+		}>;
+		migration_metadata?: SavedFilterMigrationMetadata;
+	};
+};
+
+function toSavedFilterSummary(item: JsonApiSavedFilter): SavedFilterSummary {
+	const { attributes } = item;
+	const creationType = attributes.creation_type;
+	return {
+		id: item.id,
+		name: attributes.name,
+		migration_metadata: attributes.migration_metadata,
+		...(typeof attributes.description === 'string'
+			? { description: attributes.description }
+			: {}),
+		...(creationType === 'RULES' || creationType === 'LIST'
+			? { creation_type: creationType }
+			: {}),
+		...(Array.isArray(attributes.targeting_rules)
+			? {
+					// Responses carry server-assigned rule and condition IDs; keep only
+					// the authoring shape so filters can be compared and re-created.
+					targeting_rules: attributes.targeting_rules.map((rule) => ({
+						conditions: (rule.conditions ?? []).map((condition) => ({
+							operator: condition.operator,
+							attribute: condition.attribute,
+							value: condition.value,
+						})),
+					})),
+				}
+			: {}),
+	};
+}
+
 /**
  * List saved filters (paginated). The v2 endpoint does not support filtering
  * by migration_metadata, so results are paged and matched client-side.
@@ -1616,18 +1729,13 @@ export async function listSavedFilters(
 		search?: string;
 		offset?: number;
 		include_archived?: boolean;
+		include_rules?: boolean;
 	} = {},
 	site = 'datadoghq.com',
 ): Promise<{ data: SavedFilterSummary[]; total: number }> {
 	const baseUrl = datadogBaseUrl(site);
 	const response = await ddClient.get<{
-		data: Array<{
-			id: string;
-			attributes: {
-				name: string;
-				migration_metadata?: SavedFilterMigrationMetadata;
-			};
-		}>;
+		data: JsonApiSavedFilter[];
 		meta?: { total?: number };
 	}>(`${baseUrl}/api/v2/feature-flags/saved-filters`, {
 		headers: ddHeaders(apiKey, appKey),
@@ -1637,16 +1745,53 @@ export async function listSavedFilters(
 			...(opts.include_archived !== undefined
 				? { include_archived: opts.include_archived }
 				: {}),
+			...(opts.include_rules !== undefined
+				? { include_rules: opts.include_rules }
+				: {}),
 		},
 	});
 
 	const data = response.data.data ?? [];
 	return {
-		data: data.map((item) => ({
-			id: item.id,
-			name: item.attributes.name,
-			migration_metadata: item.attributes.migration_metadata,
-		})),
+		data: data.map(toSavedFilterSummary),
 		total: response.data.meta?.total ?? data.length,
 	};
+}
+
+/** Page through every saved filter in the org. */
+export async function fetchAllSavedFilters(
+	apiKey: string,
+	appKey: string,
+	opts: { include_rules?: boolean; include_archived?: boolean } = {},
+	site = 'datadoghq.com',
+): Promise<SavedFilterSummary[]> {
+	const all: SavedFilterSummary[] = [];
+	let offset = 0;
+	while (true) {
+		const page = await listSavedFilters(
+			apiKey,
+			appKey,
+			{ offset, ...opts },
+			site,
+		);
+		all.push(...page.data);
+		if (all.length >= page.total || page.data.length === 0) break;
+		offset += page.data.length;
+	}
+	return all;
+}
+
+/** Fetch one saved filter, including its targeting rules. */
+export async function fetchSavedFilter(
+	apiKey: string,
+	appKey: string,
+	id: string,
+	site = 'datadoghq.com',
+): Promise<SavedFilterSummary> {
+	const baseUrl = datadogBaseUrl(site);
+	const response = await ddClient.get<{ data: JsonApiSavedFilter }>(
+		`${baseUrl}/api/v2/feature-flags/saved-filters/${id}`,
+		{ headers: ddHeaders(apiKey, appKey) },
+	);
+	return toSavedFilterSummary(response.data.data);
 }

@@ -2,10 +2,13 @@ import type { DistributionChannelMode } from './helpers/distribution-channel.js'
 
 export type ProviderValue = 'eppo' | 'launchdarkly';
 
+/** `migrate` also accepts another Datadog org as the source. */
+export type MigrateProviderValue = ProviderValue | 'datadog';
+
 export type TagMode = 'additive' | 'replace';
 
 export interface NonInteractiveArgs {
-	provider: ProviderValue;
+	provider: MigrateProviderValue;
 	projectKey?: string;
 	envMap: Array<[string, string]>;
 	flagKeys: string[];
@@ -54,6 +57,16 @@ function normalizeProvider(raw: string): ProviderValue {
 	if (v === 'launchdarkly') return 'launchdarkly';
 	throw new ArgParseError(
 		`--provider must be one of "Eppo" or "LaunchDarkly" (case-insensitive), got: ${raw}`,
+	);
+}
+
+function normalizeMigrateProvider(raw: string): MigrateProviderValue {
+	const v = raw.trim().toLowerCase();
+	if (v === 'eppo') return 'eppo';
+	if (v === 'launchdarkly') return 'launchdarkly';
+	if (v === 'datadog') return 'datadog';
+	throw new ArgParseError(
+		`--provider must be one of "Eppo", "LaunchDarkly", or "Datadog" (case-insensitive), got: ${raw}`,
 	);
 }
 
@@ -110,7 +123,7 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 	let doExport = false;
 	let datadogSite: string | undefined;
 	let interactive: boolean | undefined;
-	let provider: ProviderValue | undefined;
+	let provider: MigrateProviderValue | undefined;
 	let projectKey: string | undefined;
 	let distributionChannelMode: DistributionChannelMode | undefined;
 	let tagMode: TagMode | undefined;
@@ -167,7 +180,7 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 				interactive = parseBool(value as string, name);
 				break;
 			case '--provider':
-				provider = normalizeProvider(value as string);
+				provider = normalizeMigrateProvider(value as string);
 				break;
 			case '--project':
 				projectKey = (value as string).trim();
@@ -221,9 +234,19 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 				'--project is required in non-interactive mode for LaunchDarkly',
 			);
 		}
-		if (provider === 'eppo' && distributionChannelMode !== undefined) {
+		if (provider !== 'launchdarkly' && distributionChannelMode !== undefined) {
 			throw new ArgParseError(
 				'--distribution-channel is only supported for LaunchDarkly migrations',
+			);
+		}
+		if (provider === 'datadog' && projectKey !== undefined) {
+			throw new ArgParseError(
+				'--project is only supported for LaunchDarkly migrations',
+			);
+		}
+		if (provider === 'datadog' && datadogSite !== undefined) {
+			throw new ArgParseError(
+				'--datadog-site is not supported for Datadog-to-Datadog migrations; set SOURCE_DD_SITE and TARGET_DD_SITE instead',
 			);
 		}
 		return {

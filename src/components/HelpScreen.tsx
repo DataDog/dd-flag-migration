@@ -44,7 +44,9 @@ export function HelpScreen(): JSX.Element {
 				<Text>
 					{'  '}
 					<Text color="cyan">migrate</Text>
-					{'    Migrate feature flags from Eppo or LaunchDarkly into Datadog'}
+					{
+						'    Migrate feature flags from Eppo, LaunchDarkly, or another Datadog org into Datadog'
+					}
 				</Text>
 			),
 		},
@@ -54,7 +56,19 @@ export function HelpScreen(): JSX.Element {
 				<Text>
 					{'  '}
 					<Text color="cyan">migration-status</Text>
-					{'   Check LaunchDarkly migration coverage and sync status'}
+					{
+						'   Check LaunchDarkly or Datadog → Datadog migration coverage and sync status'
+					}
+				</Text>
+			),
+		},
+		{
+			id: 'org-diff-command',
+			render: () => (
+				<Text>
+					{'  '}
+					<Text color="cyan">org-diff</Text>
+					{'   Compare flag configuration between two Datadog orgs'}
 				</Text>
 			),
 		},
@@ -193,7 +207,7 @@ export function HelpScreen(): JSX.Element {
 			render: () => (
 				<Text>
 					{
-						'  --provider <Eppo|LaunchDarkly>   Source feature flag provider (case-insensitive)'
+						'  --provider <Eppo|LaunchDarkly|Datadog>  Source provider (case-insensitive); Datadog reads SOURCE_DD_* and TARGET_DD_*'
 					}
 				</Text>
 			),
@@ -412,6 +426,15 @@ export function HelpScreen(): JSX.Element {
 				<Text>
 					{'  '}
 					<Text color="gray">$</Text> dd-flag-migration migration-status
+				</Text>
+			),
+		},
+		{
+			id: 'example-org-diff',
+			render: () => (
+				<Text>
+					{'  '}
+					<Text color="gray">$</Text> dd-flag-migration org-diff
 				</Text>
 			),
 		},

@@ -23,7 +23,10 @@ import {
 	fetchProjects,
 } from '../launchdarkly/api.js';
 import {
+	type LDFlagStatusByEnv,
 	linkEnvironments,
+	loadFlagStatuses,
+	selectFlags,
 	selectLDEnvironments,
 	selectProject,
 } from '../launchdarkly/migrate.js';
@@ -113,9 +116,40 @@ export async function runMigrationStatusWorkflow(
 	);
 	if (!environmentMapping) return null;
 
+	// Same picker as migration, including the lifecycle and migration-state
+	// advanced filters, so a status check can target just the flags in flight.
+	const statusByEnv: LDFlagStatusByEnv = new Map();
+	await loadFlagStatuses(
+		ldApiKey,
+		project.key,
+		sourceEnvironments,
+		statusByEnv,
+	);
+	let selectedFlags: LDFlag[] | null = null;
+	while (selectedFlags === null || selectedFlags.length === 0) {
+		clearScreen();
+		await printHeader();
+		if (selectedFlags !== null) {
+			console.log(chalk.yellow('Please select at least one flag.'));
+		}
+		selectedFlags = await selectFlags(
+			activeFlags,
+			datadogFlags,
+			project.key,
+			[],
+			undefined,
+			statusByEnv,
+			'Select flags to check:',
+		);
+		if (selectedFlags === null) return null;
+	}
+
 	clearScreen();
 	await printHeader();
 	printScope(project.name, selectedEnvironments, environmentMapping);
+	console.log(
+		chalk.bold(`Flags: ${selectedFlags.length} of ${activeFlags.length}\n`),
+	);
 	if (
 		!(await confirm({
 			message: 'Generate migration status for this scope?',
@@ -125,7 +159,7 @@ export async function runMigrationStatusWorkflow(
 		return null;
 	}
 
-	const links = linkLaunchDarklyFlags(activeFlags, datadogFlags, project.key);
+	const links = linkLaunchDarklyFlags(selectedFlags, datadogFlags, project.key);
 	const linked = links.filter(
 		(
 			link,
@@ -171,7 +205,7 @@ export async function runMigrationStatusWorkflow(
 		},
 	);
 
-	const detailedFlags = activeFlags.map(
+	const detailedFlags = selectedFlags.map(
 		(flag) => detailedSourceFlags.get(flag.key) ?? flag,
 	);
 	let savedFilterLookup = new Map<string, string>();

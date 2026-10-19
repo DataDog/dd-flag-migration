@@ -58,6 +58,7 @@ function parseLastJsonOutput(writes: string[]): {
 		errored: number;
 	};
 	failures: Array<{ key: string; error: string }>;
+	enableApprovalRequests?: Array<{ key: string; env: string }>;
 	disableApprovalRequests?: Array<{ key: string; env: string }>;
 	flagKeyMapping?: Array<{ sourceKey: string; datadogKey: string }>;
 	requests?: Array<{
@@ -705,6 +706,171 @@ describe('flag-level migration failures', () => {
 					ddMock.history.put.filter((r) => r.url?.endsWith('/allocations')),
 				).toHaveLength(active ? 1 : 0);
 			}
+		});
+	});
+
+	describe.each([
+		'launchdarkly',
+		'eppo',
+	] as const)('%s schema sync and enable approvals', (provider) => {
+		function prepare(active: boolean, existing = true) {
+			const ld = ldFlag();
+			ld.kind = 'multivariate';
+			ld.variations[0].value = { enabled: true };
+			ld.variations[1].value = { enabled: false };
+			if (!ld.environments?.production) throw new Error('Missing environment');
+			ld.environments.production.on = active;
+			const eppo = eppoFlag();
+			eppo.variation_type = 'JSON';
+			if (!eppo.environments?.[0] || !eppo.variations)
+				throw new Error('Missing Eppo configuration');
+			eppo.environments[0].active = active;
+			eppo.variations[0].variant_key = '{"enabled":true}';
+			eppo.variations[1].variant_key = '{"enabled":false}';
+			if (provider === 'launchdarkly') mockLaunchDarklySource(ld);
+			else {
+				eppoMock.onGet(`${EPPO_BASE}/api/v1/feature-flags`).reply(200, [eppo]);
+				eppoMock.onGet(`${EPPO_BASE}/api/v1/audiences`).reply(200, []);
+			}
+			ddMock.onGet(`${DD_BASE}/api/v2/feature-flags`).reply(200, {
+				data: existing
+					? [
+							{
+								id: 'dd-flag-1',
+								attributes: {
+									key: ld.key,
+									name: ld.name,
+									migration_metadata:
+										provider === 'launchdarkly'
+											? { project_key: 'proj', flag_key: ld.key }
+											: {
+													provider: 'eppo',
+													source_id: '1',
+													source_key: eppo.key,
+												},
+								},
+							},
+						]
+					: [],
+				meta: { page: { total: existing ? 1 : 0 } },
+			});
+			ddMock.onGet(`${DD_BASE}/api/v2/feature-flags/environments`).reply(200, {
+				data: [ddEnvironment('dd-prod', 'Production', true)],
+			});
+			ddMock.onGet(`${DD_BASE}/api/v2/feature-flags/dd-flag-1`).reply(200, {
+				data: {
+					id: 'dd-flag-1',
+					attributes: {
+						json_schema: '{"type":"string"}',
+						variants: [
+							{ id: 'on-id', key: 'on', name: 'On', value: '{"enabled":true}' },
+							{
+								id: 'off-id',
+								key: 'off',
+								name: 'Off',
+								value: '{"enabled":false}',
+							},
+						],
+						feature_flag_environments: [],
+					},
+				},
+			});
+			ddMock
+				.onPost(`${DD_BASE}/api/v2/feature-flags`)
+				.reply(201, { data: { id: 'dd-flag-1', attributes: { key: ld.key } } });
+			ddMock
+				.onPut(new RegExp(`${DD_BASE}/api/v2/feature-flags/dd-flag-1`))
+				.reply(200, {});
+			ddMock
+				.onPost(
+					`${DD_BASE}/api/v2/feature-flags/dd-flag-1/environments/dd-prod/disable`,
+				)
+				.reply(200, {});
+			ddMock
+				.onPost(
+					`${DD_BASE}/api/v2/feature-flags/dd-flag-1/environments/dd-prod/enable`,
+				)
+				.reply(202, {});
+		}
+
+		async function run(dryRun: boolean) {
+			if (provider === 'launchdarkly') {
+				await runLaunchDarklyMigration(
+					'dd-api-key',
+					'dd-app-key',
+					DD_SITE,
+					dryRun,
+					{
+						tagMode: 'replace',
+						nonInteractive: {
+							projectKey: 'proj',
+							envMap: [['production', 'Production']],
+							flagKeys: [ldFlag().key],
+						},
+					},
+				);
+			} else {
+				await runEppoMigration('dd-api-key', 'dd-app-key', DD_SITE, dryRun, {
+					tagMode: 'replace',
+					nonInteractive: {
+						envMap: [['Production', 'Production']],
+						flagKeys: [eppoFlag().key],
+					},
+				});
+			}
+			return parseLastJsonOutput(stdoutWrites);
+		}
+
+		it.each([
+			{ active: true, dryRun: false },
+			{ active: false, dryRun: false },
+			{ active: true, dryRun: true },
+			{ active: false, dryRun: true },
+		])('clears the target schema when the source has none: %j', async ({
+			active,
+			dryRun,
+		}) => {
+			prepare(active);
+			const report = await run(dryRun);
+			expect(report.failures).toEqual([]);
+			expect(report.summary.synced).toBe(1);
+			if (dryRun) {
+				expect(report.requests).toContainEqual({
+					method: 'PUT',
+					path: '/api/v2/feature-flags/dd-flag-1',
+					body: {
+						data: { type: 'feature-flags', attributes: { json_schema: null } },
+					},
+				});
+				expect(ddMock.history.put).toHaveLength(0);
+			} else {
+				expect(flagUpdateAttributes(ddMock, 'dd-flag-1')).toContainEqual({
+					json_schema: null,
+				});
+				const schemaIndex = ddMock.history.put.findIndex(
+					(r) => JSON.parse(r.data).data.attributes?.json_schema === null,
+				);
+				const variantIndex = ddMock.history.put.findIndex((r) =>
+					r.url?.includes('/variants/'),
+				);
+				expect(variantIndex).toBeGreaterThan(schemaIndex);
+			}
+		});
+
+		it.each([
+			true,
+			false,
+		])('records pending enables without counting them as enabled (existing=%s)', async (existing) => {
+			prepare(true, existing);
+			const report = await run(false);
+			expect(report.failures).toEqual([]);
+			expect(report.summary).toMatchObject({
+				enabled: 0,
+				[existing ? 'synced' : 'created']: 1,
+			});
+			expect(report.enableApprovalRequests).toEqual([
+				{ key: ldFlag().key, env: 'Production' },
+			]);
 		});
 	});
 
