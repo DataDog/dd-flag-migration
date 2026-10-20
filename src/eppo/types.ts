@@ -25,6 +25,8 @@ export interface EppoFlagVariation {
 	id: number;
 	name: string;
 	variant_key: string;
+	/** False when deactivated. Eppo leaves deactivated variations out of every split. */
+	is_active?: boolean;
 }
 
 export interface EppoFlagEnvironment {
@@ -45,6 +47,8 @@ export interface EppoTargetingRule {
 }
 
 export interface EppoVariationWeight {
+	/** Eppo `variation_weights.id`. Eppo orders a split's variations by this ID. */
+	id?: number;
 	variation_id: number;
 	weight: number;
 }
@@ -60,6 +64,9 @@ export interface EppoAllocation {
 	name: string;
 	environment_id?: number;
 	type: string; // FEATURE_GATE | EXPERIMENT | SWITCHBACK
+	/** Disabled allocations are not served. */
+	enabled?: boolean;
+	/** Current exposure, from 0 to 1. */
 	percent_exposure: number;
 	is_default: boolean;
 	variation_weight: EppoVariationWeight[];
@@ -120,6 +127,8 @@ export interface MigrationFile {
 	skippedFlags?: Array<{ key: string; reason: string }>;
 	semverForcedClientKeys?: string[];
 	jsonArrayWrappedKeys?: string[];
+	/** Flags migrated before Eppo bucketing that keep Datadog's bucketing. */
+	legacyBucketingKeys?: string[];
 	flags: EppoFlag[];
 	environmentMapping: import('../datadog/types.js').MigrationEnvironmentMapping[];
 }

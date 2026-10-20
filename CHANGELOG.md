@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Migration — Eppo
+
+- Feat: migrate Eppo flags with Eppo-compatible bucketing, so subjects in splits and partial rollouts keep their assignments
+- Feat: migrate partial exposure as a rollout that starts immediately instead of exposing the targeting filter to everyone
+- Feat: fail flags whose Eppo default Datadog can't reproduce, and refuse to overwrite Datadog flags that weren't migrated from Eppo
+- Feat: ask for a default variant in interactive migrations when Eppo's production environment has none
+- Fix: skip disabled Eppo targeting filters and leave deactivated variations out of splits
+- Fix: set environment defaults before enabling a new flag, and sync targeting in disabled environments on re-migration
+- Fix: record variant migration metadata when creating a flag
+- Fix: stop serving a Datadog-chosen default to unmatched subjects in active environments where Eppo has no default; flags migrated by earlier versions fail re-migration until a default is set in Eppo
+
 ## [1.5.0] — 2026-09-16
 
 ### Migration — LaunchDarkly

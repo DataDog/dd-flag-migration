@@ -360,6 +360,31 @@ describe('fetchDatadogFlags', () => {
 		]);
 	});
 
+	it('parses bucketing_mode when the API returns it', async () => {
+		mock.onGet(`${BASE}/api/v2/feature-flags`).reply(200, {
+			data: [
+				{
+					id: 'uuid-e',
+					type: 'feature-flags',
+					attributes: {
+						key: 'eppo-flag',
+						name: 'Eppo Flag',
+						bucketing_mode: 'EPPO',
+					},
+				},
+				{
+					id: 'uuid-n',
+					type: 'feature-flags',
+					attributes: { key: 'native-flag', name: 'Native Flag' },
+				},
+			],
+		});
+
+		const result = await fetchDatadogFlags(API_KEY, APP_KEY, SITE);
+		expect(result[0].bucketing_mode).toBe('EPPO');
+		expect('bucketing_mode' in result[1]).toBe(false);
+	});
+
 	it('parses key_prefix from migration_metadata', async () => {
 		mock.onGet(`${BASE}/api/v2/feature-flags`).reply(200, {
 			data: [
@@ -969,6 +994,56 @@ describe('syncAllocationsForEnvironment', () => {
 				SITE,
 			),
 		).resolves.toBeUndefined();
+	});
+
+	it('sends Eppo variation weight IDs with the resolved variant IDs', async () => {
+		const flagId = 'flag-uuid-123';
+		const envId = 'env-uuid-456';
+		mockGetPrereqs(flagId);
+		mock
+			.onPut(
+				`${BASE}/api/v2/feature-flags/${flagId}/environments/${envId}/allocations`,
+			)
+			.reply((config) => {
+				const body = JSON.parse(config.data as string);
+				expect(body.data[0].attributes).toMatchObject({
+					eppo_allocation_id: 7,
+					variant_weights: [
+						{
+							variant_id: 'variant-uuid-on',
+							value: 3,
+							eppo_variant_weight_id: 12,
+						},
+						{
+							variant_id: 'variant-uuid-off',
+							value: 1,
+							eppo_variant_weight_id: 11,
+						},
+					],
+				});
+				return [200, { data: [] }];
+			});
+
+		await syncAllocationsForEnvironment(
+			API_KEY,
+			APP_KEY,
+			flagId,
+			envId,
+			[
+				{
+					name: 'Production',
+					key: 'my-flag-production',
+					type: 'FEATURE_GATE',
+					eppo_allocation_id: 7,
+					variant_weights: [
+						{ variant_key: 'on', value: 3, eppo_variant_weight_id: 12 },
+						{ variant_key: 'off', value: 1, eppo_variant_weight_id: 11 },
+					],
+				},
+			],
+			SITE,
+		);
+		expect(mock.history.put).toHaveLength(1);
 	});
 
 	it('uses caller-provided variant key aliases when resolving variant IDs', async () => {

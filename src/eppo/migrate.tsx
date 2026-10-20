@@ -39,6 +39,7 @@ import {
 	eppoSourceIdLookupKey,
 } from '../datadog/helpers.js';
 import type {
+	BucketingMode,
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,
 	DatadogFlagEntry,
@@ -58,14 +59,20 @@ import { extractEnvironments, fetchEppoFlags } from './api.js';
 import { migrateAudiences } from './audiences.js';
 import { EppoMigrationSummary } from './components/EppoMigrationSummary.js';
 import {
+	activeEnvironmentsWithoutDefault,
 	buildAllocations,
 	buildDefaultVariantKeyPerEnv,
 	buildVariants,
+	classifyExistingFlag,
+	findEppoMigrationBlockers,
 	getEnvsToDisable,
 	getEnvsToEnable,
 	hasJsonArrayVariants,
 	hasSemverConditions,
 	mapVariationType,
+	productionEnvironmentsWithoutDefault,
+	resolveFlagDefaultVariantKey,
+	toCreateFlagVariants,
 } from './helpers/migration.js';
 import type {
 	DryRunFile,
@@ -309,6 +316,79 @@ const EPPO_FILTER_CATEGORIES: FilterCategory[] = [
 
 type ConfirmAction = 'migrate' | 'select-more' | 'cancel';
 
+function isMigratableFlagType(flag: EppoFlag): boolean {
+	return (
+		flag.type !== 'BANDIT' &&
+		flag.type !== 'LAYER' &&
+		!(flag.allocations ?? []).some((a) => a.type === 'SWITCHBACK') &&
+		(flag.variations ?? []).length > 0
+	);
+}
+
+/**
+ * Ask for a default variant for each flag whose Eppo production environment
+ * has none. Eppo then gives unmatched subjects the fallback value from the
+ * caller's code, which Datadog cannot represent, so the user picks the variant
+ * that matches it. The choice also covers the flag's other environments
+ * without a default.
+ *
+ * Only flags this run would create, or re-migrate from before Eppo bucketing,
+ * are asked about: an existing `EPPO` flag keeps the defaults chosen when it
+ * was created. Returns flag key → chosen variant key, or null when the user
+ * skips the flag.
+ */
+async function promptForMissingDefaults(
+	flags: EppoFlag[],
+	datadogKeys: Map<string, string>,
+	datadogFlags: DatadogFlagEntry[],
+	envMapping: EnvironmentMapping<number>,
+): Promise<Map<string, string | null>> {
+	const chosen = new Map<string, string | null>();
+	for (const flag of flags) {
+		if (!isMigratableFlagType(flag)) continue;
+		const existingId = datadogIdForEppoFlag(flag, datadogKeys);
+		const existing = datadogFlags.find((f) => f.id === existingId);
+		if (
+			existing !== undefined &&
+			(classifyExistingFlag(existing) !== 'legacy' || existing.key !== flag.key)
+		) {
+			continue;
+		}
+		const productionEnvs = productionEnvironmentsWithoutDefault(flag);
+		if (productionEnvs.length === 0) continue;
+		const coveredEnvs = [
+			...new Set([
+				...productionEnvs,
+				...activeEnvironmentsWithoutDefault(flag, envMapping),
+			]),
+		];
+
+		console.log();
+		console.log(
+			`${chalk.cyan(flag.key)} has no default in Eppo's ${productionEnvs.join(', ')} environment. ` +
+				`Unmatched subjects in ${coveredEnvs.join(', ')} get the fallback value from your code, ` +
+				'but Datadog needs a default variant.',
+		);
+		const variantKey = await select<string | null>({
+			message:
+				'Choose the variant that matches the fallback value in your code:',
+			choices: [
+				...buildVariants(flag).map((variant) => ({
+					name: variant.name,
+					value: variant.key,
+					description:
+						variant.value.length > 60
+							? `${variant.value.slice(0, 57)}...`
+							: variant.value,
+				})),
+				{ name: 'Skip this flag', value: null },
+			],
+		});
+		chosen.set(flag.key, variantKey);
+	}
+	return chosen;
+}
+
 async function confirmMigration(
 	flags: EppoFlag[],
 	eppoApiKey: string,
@@ -382,6 +462,15 @@ async function confirmMigration(
 	) {
 		tagSyncMode = await selectMigrationTagMode();
 	}
+
+	const chosenDefaults = nonInteractive
+		? new Map<string, string | null>()
+		: await promptForMissingDefaults(
+				flags,
+				datadogKeys,
+				datadogFlags,
+				envMapping,
+			);
 
 	if (dryRun) {
 		console.log(chalk.bold.yellow('  Dry run — no flags will be created\n'));
@@ -463,6 +552,7 @@ async function confirmMigration(
 	const skippedFlags: Array<{ key: string; reason: string }> = [];
 	const semverForcedClientKeys: string[] = [];
 	const jsonArrayWrappedKeys: string[] = [];
+	const legacyBucketingKeys: string[] = [];
 	let runner: MigrationRunnerHandle | undefined;
 
 	const environmentMapping: MigrationEnvironmentMapping[] = [];
@@ -609,9 +699,53 @@ async function confirmMigration(
 					jsonArrayWrappedKeys.push(flag.key);
 				}
 
+				const existingFlagId = datadogIdForEppoFlag(flag, datadogKeys);
+				const existingFlag = datadogFlags.find(
+					(existing) => existing.id === existingFlagId,
+				);
+				const existingKind =
+					existingFlag !== undefined
+						? classifyExistingFlag(existingFlag)
+						: undefined;
+				if (existingFlag !== undefined && existingKind === 'native') {
+					doFail(
+						flag.key,
+						`Flag "${flag.key}": a Datadog flag with key "${existingFlag.key}" already exists and was not migrated from Eppo, so it was not overwritten. Rename or delete it in Datadog and re-run the migration.`,
+					);
+					continue;
+				}
+				if (existingFlag !== undefined && existingFlag.key !== flag.key) {
+					doFail(
+						flag.key,
+						`Flag "${flag.key}": it is linked to the Datadog flag "${existingFlag.key}", whose key differs. The flag key is part of every Eppo bucketing salt, so the keys must match; the flag was not synced.`,
+					);
+					continue;
+				}
+				// Every new flag buckets the Eppo way, whether or not it has splits
+				// today: the mode is immutable and the flag can gain splits before
+				// cutover. Flags migrated before Eppo bucketing keep Datadog's.
+				const bucketingMode: BucketingMode =
+					existingKind === 'legacy' ? 'DATADOG' : 'EPPO';
+
+				const chosenDefault = chosenDefaults.get(flag.key);
+				if (chosenDefault === null) {
+					doSkip(
+						flag.key,
+						`Skipped ${chalk.cyan(flag.key)} — no default chosen for Eppo's production environment`,
+						'No default chosen for production',
+					);
+					continue;
+				}
+				// The chosen variant covers every environment without an Eppo default.
+				// An existing EPPO flag keeps the defaults chosen when it was created.
+				const coveredDefaults =
+					chosenDefault !== undefined ||
+					(existingKind === 'eppo' &&
+						productionEnvironmentsWithoutDefault(flag).length > 0);
 				const defaultVariantKeyPerEnv = buildDefaultVariantKeyPerEnv(
 					flag,
 					envMapping,
+					chosenDefault,
 				);
 				const allocations = buildAllocations(
 					flag,
@@ -619,14 +753,47 @@ async function confirmMigration(
 					fingerprintLookup,
 					savedFilterLookup,
 					defaultVariantKeyPerEnv,
+					bucketingMode,
 				);
+				// New flags and re-migrations, legacy ones included, fail on the same
+				// conditions.
+				const blockers = findEppoMigrationBlockers(
+					flag,
+					envMapping,
+					allocations,
+					bucketingMode,
+					{ coveredDefaults },
+				);
+				if (blockers.length > 0) {
+					doFail(flag.key, blockers.join(' '));
+					continue;
+				}
+				if (bucketingMode === 'DATADOG') {
+					legacyBucketingKeys.push(flag.key);
+					activeRunner.printMessage(
+						`⚠ ${chalk.cyan(flag.key)} was migrated before Eppo-compatible bucketing — it keeps Datadog bucketing, so subjects in splits and partial rollouts are not assigned as in Eppo`,
+					);
+					activeRunner.beginFlag(flag.key);
+				}
 				const envsToEnable = getEnvsToEnable(flag, envMapping);
 				const envsToDisable = getEnvsToDisable(flag, envMapping);
-				const existingFlagId = datadogIdForEppoFlag(flag, datadogKeys);
+				// Inactive mapped environments get their targeting too, so they bucket
+				// like Eppo if they are enabled later.
+				const envsToSync = [...envsToEnable, ...envsToDisable];
 				const targetName = resolveFlagNameForSync(
 					flag.name,
-					datadogFlags.find((existing) => existing.id === existingFlagId)?.name,
+					existingFlag?.name,
 				);
+				// A renamed source variation keeps its original Datadog key.
+				const datadogDefaultVariantKey = (
+					envId: string,
+					sourceKeyToDatadogKey: ReadonlyMap<string, string>,
+				): string | undefined => {
+					const sourceKey = defaultVariantKeyPerEnv.get(envId);
+					return sourceKey === undefined
+						? undefined
+						: (sourceKeyToDatadogKey.get(sourceKey) ?? sourceKey);
+				};
 
 				// Count targeting rules for reporting (all environments — used for new-flag path)
 				const allRuleCount = allocations.reduce(
@@ -636,6 +803,12 @@ async function confirmMigration(
 				const allFilterLabel = `${allocations.length} targeting filter(s)`;
 				const allRuleLabel =
 					allRuleCount > 0 ? `, ${allRuleCount} rule(s)` : '';
+				// Every branch writes targeting for all mapped environments.
+				const rolloutCount = allocations.filter(
+					(a) => a.exposure_schedule !== undefined,
+				).length;
+				const rolloutLabel =
+					rolloutCount > 0 ? `, ${rolloutCount} partial rollout(s)` : '';
 
 				if (existingFlagId) {
 					// Flag already exists in Datadog — sync targeting and enable in new environments
@@ -693,13 +866,15 @@ async function confirmMigration(
 
 					if (envsToEnable.length === 0) {
 						// Always sync tags. Overwrite mode propagates removals; merge
-						// mode preserves tags that exist only in Datadog.
-						// Variant deletes are intentionally SKIPPED in this branch: this
-						// path performs no allocation rewrite, so deleting a variant
-						// could orphan existing DD allocation references (allocations
-						// reference variants by UUID). Creates+updates are safe.
+						// mode preserves tags that exist only in Datadog. Targeting in the
+						// inactive mapped environments is synced before they are disabled.
+						// Variant deletes are intentionally SKIPPED in this branch: Datadog
+						// environments outside the mapping may still reference a variant
+						// (allocations reference variants by UUID), and nothing here
+						// rewrites them. Creates+updates are safe.
 						let variantCounts = { added: 0, updated: 0, deleted: 0 };
 						let disabledCount = 0;
+						let syncFilterCount = 0;
 						if (dryRun) {
 							const { variants: existingVariants } = await fetchFlagDetail(
 								ddApiKey,
@@ -707,12 +882,13 @@ async function confirmMigration(
 								existingFlagId,
 								site,
 							);
-							const { createUpdateRequests } = buildVariantSyncDryRunRequests(
-								existingFlagId,
-								variants,
-								existingVariants,
-								'eppo',
-							);
+							const { createUpdateRequests, sourceKeyToDatadogKey } =
+								buildVariantSyncDryRunRequests(
+									existingFlagId,
+									variants,
+									existingVariants,
+									'eppo',
+								);
 							for (const r of createUpdateRequests) dryRunRequests.push(r);
 							variantCounts = {
 								added: createUpdateRequests.filter((r) => r.method === 'POST')
@@ -741,6 +917,21 @@ async function confirmMigration(
 											attributes: { distribution_channel: 'CLIENT' },
 										},
 									},
+								});
+							}
+							for (const ddEnv of envsToSync) {
+								const syncReqs = toSyncRequests(allocations, ddEnv.id);
+								syncFilterCount += syncReqs.length;
+								const dvk = datadogDefaultVariantKey(
+									ddEnv.id,
+									sourceKeyToDatadogKey,
+								);
+								dryRunRequests.push({
+									method: 'PUT',
+									path:
+										`/api/v2/feature-flags/${existingFlagId}/environments/${ddEnv.id}/allocations` +
+										(dvk !== undefined ? `?default_variant_key=${dvk}` : ''),
+									body: syncReqs,
 								});
 							}
 							for (const ddEnv of envsToDisable) {
@@ -784,6 +975,23 @@ async function confirmMigration(
 								);
 								semverForcedClientKeys.push(flag.key);
 							}
+							for (const ddEnv of envsToSync) {
+								const syncReqs = toSyncRequests(allocations, ddEnv.id);
+								await syncAllocationsForEnvironment(
+									ddApiKey,
+									ddAppKey,
+									existingFlagId,
+									ddEnv.id,
+									syncReqs,
+									site,
+									datadogDefaultVariantKey(
+										ddEnv.id,
+										result.sourceKeyToDatadogKey,
+									),
+									result.variantKeyToId,
+								);
+								syncFilterCount += syncReqs.length;
+							}
 							for (const ddEnv of envsToDisable) {
 								try {
 									const outcome =
@@ -821,16 +1029,17 @@ async function confirmMigration(
 							: disabledCount > 0
 								? `, disabled in ${disabledCount} env(s)`
 								: '';
+						const filterLabel = `, ${syncFilterCount} targeting filter(s)`;
 						doSync(
 							dryRun
-								? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (1 name, ${syncTags.length} tag(s)${variantLabel}${schemaLabel}${disableLabel})`
-								: `${chalk.green('✓')} Synced ${chalk.cyan(flag.key)} (1 name, ${syncTags.length} tag(s)${variantLabel}${schemaLabel}${disableLabel})`,
+								? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (1 name, ${syncTags.length} tag(s)${filterLabel}${rolloutLabel}${variantLabel}${schemaLabel}${disableLabel})`
+								: `${chalk.green('✓')} Synced ${chalk.cyan(flag.key)} (1 name, ${syncTags.length} tag(s)${filterLabel}${rolloutLabel}${variantLabel}${schemaLabel}${disableLabel})`,
 						);
 						continue;
 					}
 
 					activeRunner.printMessage(
-						`⚠ ${chalk.cyan(flag.key)} exists in Datadog — targeting filters in ${envsToEnable.map((e) => e.name).join(', ')} will be overwritten`,
+						`⚠ ${chalk.cyan(flag.key)} exists in Datadog — targeting filters in ${envsToSync.map((e) => e.name).join(', ')} will be overwritten`,
 					);
 					activeRunner.beginFlag(flag.key);
 
@@ -875,18 +1084,17 @@ async function confirmMigration(
 						}
 						let syncFilterCount = 0;
 						let syncRuleCount = 0;
-						for (const ddEnv of envsToEnable) {
+						for (const ddEnv of envsToSync) {
 							const syncReqs = toSyncRequests(allocations, ddEnv.id);
 							syncFilterCount += syncReqs.length;
 							syncRuleCount += syncReqs.reduce(
 								(sum, r) => sum + (r.targeting_rules?.length ?? 0),
 								0,
 							);
-							const sourceDvk = defaultVariantKeyPerEnv.get(ddEnv.id);
-							const dvk =
-								sourceDvk === undefined
-									? undefined
-									: (sourceKeyToDatadogKey.get(sourceDvk) ?? sourceDvk);
+							const dvk = datadogDefaultVariantKey(
+								ddEnv.id,
+								sourceKeyToDatadogKey,
+							);
 							dryRunRequests.push({
 								method: 'PUT',
 								path:
@@ -894,6 +1102,8 @@ async function confirmMigration(
 									(dvk !== undefined ? `?default_variant_key=${dvk}` : ''),
 								body: syncReqs,
 							});
+						}
+						for (const ddEnv of envsToEnable) {
 							dryRunRequests.push({
 								method: 'POST',
 								path: `/api/v2/feature-flags/${existingFlagId}/environments/${ddEnv.id}/enable`,
@@ -938,7 +1148,7 @@ async function confirmMigration(
 								: '';
 						doSync(
 							`${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} ` +
-								`(${syncFilterLabel}${syncRuleLabel}${variantLabel}${tagLabel}, 1 name${schemaLabel}${enableLabel}${disableLabel})`,
+								`(${syncFilterLabel}${syncRuleLabel}${rolloutLabel}${variantLabel}${tagLabel}, 1 name${schemaLabel}${enableLabel}${disableLabel})`,
 						);
 					} else {
 						try {
@@ -972,20 +1182,12 @@ async function confirmMigration(
 								);
 								semverForcedClientKeys.push(flag.key);
 							}
-							// Sync targeting for each target environment
+							// Sync targeting for every mapped environment before any is
+							// enabled, so an environment never serves stale defaults.
 							let syncedAllocCount = 0;
 							let syncedRuleCount = 0;
-							for (const ddEnv of envsToEnable) {
+							for (const ddEnv of envsToSync) {
 								const syncReqs = toSyncRequests(allocations, ddEnv.id);
-								const sourceDefaultVariantKey = defaultVariantKeyPerEnv.get(
-									ddEnv.id,
-								);
-								const defaultVariantKey =
-									sourceDefaultVariantKey === undefined
-										? undefined
-										: (variantSyncResult.sourceKeyToDatadogKey.get(
-												sourceDefaultVariantKey,
-											) ?? sourceDefaultVariantKey);
 								await syncAllocationsForEnvironment(
 									ddApiKey,
 									ddAppKey,
@@ -993,7 +1195,10 @@ async function confirmMigration(
 									ddEnv.id,
 									syncReqs,
 									site,
-									defaultVariantKey,
+									datadogDefaultVariantKey(
+										ddEnv.id,
+										variantSyncResult.sourceKeyToDatadogKey,
+									),
 									variantSyncResult.variantKeyToId,
 								);
 								syncedAllocCount += syncReqs.length;
@@ -1092,7 +1297,7 @@ async function confirmMigration(
 									? `, disabled in ${disabledCount} env(s)`
 									: '';
 							doSync(
-								`${chalk.green('✓')} Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${variantLabel}${tagLabel}, 1 name${schemaLabel}${enableLabel}${disableLabel})`,
+								`${chalk.green('✓')} Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${rolloutLabel}${variantLabel}${tagLabel}, 1 name${schemaLabel}${enableLabel}${disableLabel})`,
 							);
 						} catch (err) {
 							const error = formatAxiosError(err);
@@ -1104,24 +1309,46 @@ async function confirmMigration(
 						}
 					}
 				} else {
-					// Flag does not exist — create it with targeting rules
+					// Flag does not exist — create it with targeting rules, Eppo
+					// bucketing, and a default variant for every environment.
 					const tags = flag.tag_names ?? [];
+					const flagDefaultVariantKey = resolveFlagDefaultVariantKey(
+						flag,
+						envMapping,
+						defaultVariantKeyPerEnv,
+						variants,
+						chosenDefault,
+					);
 					const request: DatadogCreateFlagRequest = {
 						key: flag.key,
 						name: flag.name,
 						value_type: mapVariationType(flag.variation_type),
-						variants,
+						variants: toCreateFlagVariants(variants),
 						allocations: allocations.length > 0 ? allocations : undefined,
 						migration_metadata: {
 							provider: 'eppo',
 							source_id: String(flag.id),
 							source_key: flag.key,
 						},
+						bucketing_mode: 'EPPO',
+						...(flagDefaultVariantKey !== undefined
+							? { default_variant_key: flagDefaultVariantKey }
+							: {}),
 						...(hasSemverConditions(allocations)
 							? { distribution_channel: 'CLIENT' as const }
 							: {}),
 						...(tags.length > 0 ? { tags } : {}),
 					};
+					// Allocations are already embedded in the create request, so an
+					// environment is synced again only to set a default that differs
+					// from the flag-level one. This happens before any environment is
+					// enabled, so no environment serves the wrong default.
+					const envDefaultsToSet = envsToSync.flatMap((ddEnv) => {
+						const dvk = defaultVariantKeyPerEnv.get(ddEnv.id);
+						return dvk !== undefined && dvk !== flagDefaultVariantKey
+							? [{ ddEnv, dvk }]
+							: [];
+					});
 
 					if (dryRun) {
 						dryRunRequests.push({
@@ -1129,18 +1356,15 @@ async function confirmMigration(
 							path: '/api/v2/feature-flags',
 							body: { data: { type: 'feature-flags', attributes: request } },
 						});
+						for (const { ddEnv, dvk } of envDefaultsToSet) {
+							// flag.key used as placeholder — real ID assigned on creation
+							dryRunRequests.push({
+								method: 'PUT',
+								path: `/api/v2/feature-flags/${flag.key}/environments/${ddEnv.id}/allocations?default_variant_key=${dvk}`,
+								body: toSyncRequests(allocations, ddEnv.id),
+							});
+						}
 						for (const ddEnv of envsToEnable) {
-							const dvk = defaultVariantKeyPerEnv.get(ddEnv.id);
-							// Only sync allocations when there's a default_variant_key to set —
-							// allocations are already embedded in the create request body above.
-							if (dvk !== undefined) {
-								// flag.key used as placeholder — real ID assigned on creation
-								dryRunRequests.push({
-									method: 'PUT',
-									path: `/api/v2/feature-flags/${flag.key}/environments/${ddEnv.id}/allocations?default_variant_key=${dvk}`,
-									body: toSyncRequests(allocations, ddEnv.id),
-								});
-							}
 							dryRunRequests.push({
 								method: 'POST',
 								path: `/api/v2/feature-flags/${flag.key}/environments/${ddEnv.id}/enable`,
@@ -1154,7 +1378,7 @@ async function confirmMigration(
 								: '';
 						doCreate(
 							`${chalk.dim('[dry run]')} Would create ${chalk.cyan(flag.key)} ` +
-								`(${allFilterLabel}${allRuleLabel}${enableLabel})`,
+								`(${allFilterLabel}${allRuleLabel}${rolloutLabel}${enableLabel})`,
 						);
 					} else {
 						try {
@@ -1168,21 +1392,21 @@ async function confirmMigration(
 								semverForcedClientKeys.push(flag.key);
 							}
 
-							// Set per-environment default_variant_key and enable each active environment
+							// Set every per-environment default before enabling any
+							// environment; a failure here leaves the flag disabled.
+							for (const { ddEnv, dvk } of envDefaultsToSet) {
+								await syncAllocationsForEnvironment(
+									ddApiKey,
+									ddAppKey,
+									createdFlag.id,
+									ddEnv.id,
+									toSyncRequests(allocations, ddEnv.id),
+									site,
+									dvk,
+								);
+							}
 							let enabledCount = 0;
 							for (const ddEnv of envsToEnable) {
-								const dvk = defaultVariantKeyPerEnv.get(ddEnv.id);
-								if (dvk !== undefined) {
-									await syncAllocationsForEnvironment(
-										ddApiKey,
-										ddAppKey,
-										createdFlag.id,
-										ddEnv.id,
-										toSyncRequests(allocations, ddEnv.id),
-										site,
-										dvk,
-									);
-								}
 								try {
 									const outcome = await enableFeatureFlagEnvironmentWithOutcome(
 										ddApiKey,
@@ -1210,7 +1434,7 @@ async function confirmMigration(
 							const enableLabel =
 								enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
 							doCreate(
-								`${chalk.green('✓')} Created ${chalk.cyan(flag.key)} (${allFilterLabel}${allRuleLabel}${enableLabel})`,
+								`${chalk.green('✓')} Created ${chalk.cyan(flag.key)} (${allFilterLabel}${allRuleLabel}${rolloutLabel}${enableLabel})`,
 							);
 						} catch (err) {
 							const error = formatAxiosError(err);
@@ -1261,6 +1485,8 @@ async function confirmMigration(
 			enableFailures: [],
 			disableFailures: [],
 			skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
+			legacyBucketingKeys:
+				legacyBucketingKeys.length > 0 ? legacyBucketingKeys : undefined,
 			flags,
 			environmentMapping,
 			requests: dryRunRequests,
@@ -1297,6 +1523,8 @@ async function confirmMigration(
 				semverForcedClientKeys.length > 0 ? semverForcedClientKeys : undefined,
 			jsonArrayWrappedKeys:
 				jsonArrayWrappedKeys.length > 0 ? jsonArrayWrappedKeys : undefined,
+			legacyBucketingKeys:
+				legacyBucketingKeys.length > 0 ? legacyBucketingKeys : undefined,
 			flags,
 			environmentMapping,
 		};

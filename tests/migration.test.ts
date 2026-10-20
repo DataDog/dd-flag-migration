@@ -409,6 +409,49 @@ describe('toSyncRequests', () => {
 		expect(toSyncRequests(allocations, 'dd-prod')).toEqual([]);
 	});
 
+	it('keeps the exposure schedule and Eppo source IDs', () => {
+		const exposureSchedule = {
+			rollout_options: {
+				strategy: 'NO_ROLLOUT' as const,
+				scheduled_start: 'now' as const,
+			},
+			rollout_steps: [
+				{
+					exposure_ratio: 0.25,
+					interval_ms: null,
+					is_pause_record: false as const,
+					grouped_step_index: 0,
+				},
+			],
+		};
+		const allocations = [
+			{
+				environment_id: 'dd-prod',
+				name: 'Prod Alloc',
+				key: 'alloc-prod',
+				type: 'FEATURE_GATE' as const,
+				variant_weights: [
+					{ variant_key: 'on', value: 1, eppo_variant_weight_id: 11 },
+				],
+				exposure_schedule: exposureSchedule,
+				eppo_allocation_id: 7,
+			},
+		];
+
+		expect(toSyncRequests(allocations, 'dd-prod')).toEqual([
+			{
+				name: 'Prod Alloc',
+				key: 'alloc-prod',
+				type: 'FEATURE_GATE',
+				variant_weights: [
+					{ variant_key: 'on', value: 1, eppo_variant_weight_id: 11 },
+				],
+				exposure_schedule: exposureSchedule,
+				eppo_allocation_id: 7,
+			},
+		]);
+	});
+
 	it('includes targeting_rules when present', () => {
 		const allocations = [
 			{

@@ -11,13 +11,25 @@ export function toSyncRequests(
 ): DatadogAllocationSyncRequest[] {
 	return allocations
 		.filter((a) => a.environment_id === envId)
-		.map(({ name, key, type, variant_weights, targeting_rules }) => ({
-			name,
-			key,
-			type,
-			variant_weights,
-			...(targeting_rules && targeting_rules.length > 0
-				? { targeting_rules }
-				: {}),
-		}));
+		.map(
+			({
+				name,
+				key,
+				type,
+				variant_weights,
+				targeting_rules,
+				exposure_schedule,
+				eppo_allocation_id,
+			}) => ({
+				name,
+				key,
+				type,
+				variant_weights,
+				...(targeting_rules && targeting_rules.length > 0
+					? { targeting_rules }
+					: {}),
+				...(exposure_schedule !== undefined ? { exposure_schedule } : {}),
+				...(eppo_allocation_id !== undefined ? { eppo_allocation_id } : {}),
+			}),
+		);
 }

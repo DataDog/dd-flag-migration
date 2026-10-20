@@ -79,6 +79,7 @@ Identifiers and anchors that downstream Datadog references depend on. Changing t
 - Flag `key` (primary identifier)
 - Flag `id` (UUID, immutable)
 - Variant UUID (allocations reference variants by ID)
+- Flag `bucketing_mode` (set once on create; changing it reassigns every subject)
 
 Renames in the source platform do not propagate. Customers must delete + recreate if they truly need a different key.
 
@@ -119,11 +120,55 @@ Two rules follow:
    falls back to key (for legacy variants migrated before `source_id` was
    recorded).
 
-The `envsToEnable.length === 0` re-migration sub-branch does **not** rewrite
-allocations, so it must **skip variant deletes** entirely — a delete there
-would orphan UUID references that no code path is going to clean up. Tags and
-restriction policy still sync, mapped inactive environments are disabled, and
-variants only get creates and updates.
+The `envsToEnable.length === 0` re-migration sub-branch must **skip variant
+deletes** entirely — a delete there could orphan UUID references that no code
+path is going to clean up. Tags and restriction policy still sync, mapped
+inactive environments are disabled, and variants only get creates and updates.
+The LaunchDarkly and Datadog paths do not rewrite allocations in this branch;
+the Eppo path rewrites the allocations of every mapped environment, active or
+not, in both branches (see "Eppo-compatible bucketing").
+
+## Eppo-compatible bucketing
+
+Flags created by the Eppo migration use `bucketing_mode: "EPPO"` so Datadog
+reproduces Eppo's shard count, salts and split order, and subjects keep their
+assignments. Every new Eppo flag gets it, with or without splits: the mode is
+immutable and a flag can gain splits before cutover.
+
+- **Send source data, not derived data.** Eppo's raw weights (zero weights
+  included), `eppo_allocation_id` on every allocation and
+  `eppo_variant_weight_id` on every weight, on create and on every sync. The
+  server stores them and ranks weights into the split order; the CLI does no
+  sorting or ranking. Disabled allocations and deactivated variations are
+  dropped before anything is computed.
+- **Partial exposure** (`0 < percent_exposure < 1`, on a 0–1 scale) becomes a
+  single-step `NO_ROLLOUT` schedule with `scheduled_start: "now"`.
+- **Every environment needs a default.** The create request carries a
+  flag-level `default_variant_key` — Eppo production's default, whether or not
+  production is mapped; environments whose default differs are set with the
+  allocation sync, and environments are enabled only afterwards. Datadog
+  cannot represent Eppo's SDK fallback, so a missing default (no fully
+  exposed, untargeted Eppo default) fails the flag
+  (`findEppoMigrationBlockers`) when it is in Eppo's production environment
+  (mapped or not, active or not) or in another active environment. Disabled
+  environments get the flag-level default.
+- **Choosing a missing production default.** Interactive runs ask for a
+  variant (`promptForMissingDefaults`) before the run starts, for flags being
+  created or re-migrated from before Eppo bucketing; it covers every
+  environment without a default. Non-interactive runs fail those flags.
+  Existing `EPPO` flags are never asked: they keep their current Datadog
+  defaults, chosen when they were created.
+- **Existing flags.** `EPPO` flags re-migrate with Eppo IDs. `DATADOG` flags
+  with Eppo `migration_metadata` were migrated before this mode existed
+  ("legacy"; converting would reassign subjects a second time). They follow
+  the same rules as new flags — raw weights, defaults, exposure, preflight
+  failures — except what their bucketing mode forbids: no Eppo IDs (Datadog
+  rejects them), and allocation keys never change (they are part of a
+  `DATADOG` flag's salts). Any other flag with the same key is refused, never
+  overwritten.
+- **The flag key is part of every Eppo salt**, so the Datadog key must equal
+  the Eppo key. Allocation keys are not part of imported salts on `EPPO`
+  flags, so they may be suffixed per environment to stay unique per org.
 
 ## When adding a new source provider
 

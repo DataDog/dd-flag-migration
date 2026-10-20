@@ -469,7 +469,7 @@ describe('buildAllocations', () => {
 		]);
 	});
 
-	it('normalizes variant weights to percentages', () => {
+	it("sends Eppo's raw variant weights", () => {
 		const flag = makeFlag({
 			id: 1,
 			key: 'test-flag',
@@ -496,8 +496,8 @@ describe('buildAllocations', () => {
 		const allocations = buildAllocations(flag, mapping);
 
 		expect(allocations[0].variant_weights).toEqual([
-			{ variant_key: 'on', value: 30 },
-			{ variant_key: 'off', value: 70 },
+			{ variant_key: 'on', value: 3 },
+			{ variant_key: 'off', value: 7 },
 		]);
 	});
 
@@ -1246,7 +1246,7 @@ describe('buildDefaultVariantKeyPerEnv', () => {
 		);
 	});
 
-	it('omits an env whose default allocation has a split (multiple non-zero weights)', () => {
+	it('maps a split default to its first variation (the split stays as a catch-all)', () => {
 		const flag = makeFlag({
 			id: 1,
 			key: 'test',
@@ -1267,10 +1267,12 @@ describe('buildDefaultVariantKeyPerEnv', () => {
 			],
 		});
 		const mapping = new Map([[10, ddProd]]);
-		expect(buildDefaultVariantKeyPerEnv(flag, mapping).size).toBe(0);
+		expect(buildDefaultVariantKeyPerEnv(flag, mapping)).toEqual(
+			new Map([['dd-prod', 'on']]),
+		);
 	});
 
-	it('includes resolvable envs and omits the split env', () => {
+	it('maps single and split defaults per environment', () => {
 		const flag = makeFlag({
 			id: 1,
 			key: 'test',
@@ -1300,9 +1302,13 @@ describe('buildDefaultVariantKeyPerEnv', () => {
 			[10, ddProd],
 			[20, ddDev],
 		]);
-		// ddDev (env 20) has a split default — omitted so it keeps its targeting rule
+		// ddDev (env 20) has a split default: it keeps its catch-all targeting
+		// filter, and its default is the split's first variation.
 		expect(buildDefaultVariantKeyPerEnv(flag, mapping)).toEqual(
-			new Map([['dd-prod', 'on']]),
+			new Map([
+				['dd-prod', 'on'],
+				['dd-dev', 'on'],
+			]),
 		);
 	});
 

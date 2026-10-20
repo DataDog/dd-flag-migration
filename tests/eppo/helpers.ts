@@ -48,7 +48,7 @@ export function makeAllocation(
 		key: `alloc-${overrides.id}`,
 		name: `Allocation ${overrides.id}`,
 		type: 'FEATURE_GATE',
-		percent_exposure: 100,
+		percent_exposure: 1,
 		is_default: false,
 		variation_weight: [],
 		targeting_rules: [],

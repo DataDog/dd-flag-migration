@@ -184,7 +184,21 @@ describe('non-interactive tag modes', () => {
 						environments: [
 							{ id: 100, name: 'Production', active, is_production: false },
 						],
-						allocations: [],
+						// Active environments need an Eppo default to migrate.
+						allocations: [
+							{
+								id: 1000,
+								key: 'default-allocation',
+								name: 'Default',
+								environment_id: 100,
+								type: 'FEATURE_GATE',
+								enabled: true,
+								percent_exposure: 1,
+								is_default: true,
+								variation_weight: [{ id: 5000, variation_id: 20, weight: 100 }],
+								targeting_rules: [],
+							},
+						],
 					},
 				]);
 				eppo.onGet('https://eppo.cloud/api/v1/audiences').reply(200, []);
