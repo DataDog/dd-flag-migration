@@ -15,6 +15,11 @@ All notable changes to this project will be documented in this file.
 - Fix: record variant migration metadata when creating a flag
 - Fix: stop serving a Datadog-chosen default to unmatched subjects in active environments where Eppo has no default; flags migrated by earlier versions fail re-migration until a default is set in Eppo
 
+### Evaluation
+
+- Feat: evaluate one migrated Eppo flag for many random subjects (10,000 by default) and report every subject whose Eppo and Datadog assignments differ; both platforms evaluate locally, so the subject count doesn't drive network requests
+- Feat: export every flag evaluation to an .xlsx workbook with matches in green, different values in red, and one-sided assignments in yellow
+
 ## [1.5.0] — 2026-09-16
 
 ### Migration — LaunchDarkly
