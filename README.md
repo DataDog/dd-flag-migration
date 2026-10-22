@@ -88,8 +88,9 @@ Datadog → Datadog migrations read all six `SOURCE_DD_*` and `TARGET_DD_*` vari
 
 | Variable | Required when | Where to find it |
 |---|---|---|
-| `DD_CLIENT_TOKEN` | always | Datadog → Organization Settings → Client Tokens |
+| `DD_CLIENT_TOKEN` | evaluating a migration or a client-only flag | Datadog → Organization Settings → Client Tokens |
 | `EPPO_SDK_KEY` | migration was from Eppo | Eppo → SDK Keys (server SDK key, one per environment) |
+| `EPPO_API_KEY` | evaluating a single flag | Eppo → Configuration → API Keys |
 | `LAUNCHDARKLY_API_KEY` | migration was from LaunchDarkly *(preferred)* | LaunchDarkly → Account settings → Authorization → Access tokens |
 
 ### Required for `bulk-permissions`, `bulk-enable`, and `sync-tags`
@@ -597,6 +598,10 @@ npx @datadog/dd-flag-migration evaluate \
   --flag-environment=production \
   --datadog-site=datadoghq.com
 ```
+
+### Evaluate a single flag
+
+Choose **A flag** to evaluate one flag migrated from Eppo for many random subjects (10,000 by default; set with `--subjects=<n>`) in both platforms. The command lists mismatches, exits with status 1 if any subject differs, and can export every evaluation to `.xlsx`.
 
 ---
 

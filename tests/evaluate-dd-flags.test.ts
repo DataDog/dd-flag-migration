@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import AxiosMockAdapter from 'axios-mock-adapter';
 import { ddClient } from '../src/datadog/api.js';
-import { fetchDDFlagData } from '../src/evaluate/dd-flags.js';
+import {
+	fetchDDFlagData,
+	migratedEppoFlags,
+} from '../src/evaluate/dd-flags.js';
 
 const API_KEY = 'test-api-key';
 const APP_KEY = 'test-app-key';
@@ -35,6 +38,8 @@ describe('fetchDDFlagData', () => {
 							provider: 'eppo',
 							source_key: 'src-a',
 						},
+						distribution_channel: 'CLIENT',
+						bucketing_mode: 'EPPO',
 					},
 				},
 				{
@@ -58,6 +63,10 @@ describe('fetchDDFlagData', () => {
 			provider: 'eppo',
 			source_key: 'src-a',
 		});
+		expect(result.distributionChannelByKey.get('flag-a')).toBe('CLIENT');
+		expect(result.distributionChannelByKey.has('flag-b')).toBe(false);
+		expect(result.bucketingModeByKey.get('flag-a')).toBe('EPPO');
+		expect(result.bucketingModeByKey.has('flag-b')).toBe(false);
 	});
 
 	it('paginates using next_offset metadata', async () => {
@@ -148,5 +157,47 @@ describe('fetchDDFlagData', () => {
 		await expect(
 			fetchDDFlagData(API_KEY, APP_KEY, SITE, ENV_ID),
 		).rejects.toThrow(/401 Unauthorized/);
+	});
+});
+
+describe('migratedEppoFlags', () => {
+	it('lists Datadog flags migrated from Eppo with their Eppo key and ID', () => {
+		const flags = migratedEppoFlags({
+			keys: new Set(['native', 'renamed', 'checkout', 'no-id']),
+			nameByKey: new Map([['checkout', 'Checkout']]),
+			migrationMetadataByKey: new Map([
+				['native', { provider: 'datadog', source_key: 'native' }],
+				[
+					'renamed',
+					{ provider: 'eppo', source_id: '7', source_key: 'Renamed' },
+				],
+				[
+					'checkout',
+					{ provider: 'eppo', source_id: '42', source_key: 'checkout' },
+				],
+				['no-id', { provider: 'eppo' }],
+			]),
+		});
+
+		expect(flags).toEqual([
+			{
+				datadogKey: 'checkout',
+				eppoKey: 'checkout',
+				eppoId: '42',
+				name: 'Checkout',
+			},
+			{
+				datadogKey: 'no-id',
+				eppoKey: 'no-id',
+				eppoId: undefined,
+				name: undefined,
+			},
+			{
+				datadogKey: 'renamed',
+				eppoKey: 'Renamed',
+				eppoId: '7',
+				name: undefined,
+			},
+		]);
 	});
 });

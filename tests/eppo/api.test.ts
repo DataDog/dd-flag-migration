@@ -15,7 +15,9 @@ import {
 	createEppoClient,
 	eppoClient,
 	extractEnvironments,
+	fetchEppoFlag,
 	fetchEppoFlags,
+	findEppoFlagByKey,
 } from '../../src/eppo/api.js';
 import type { EppoFlag } from '../../src/eppo/types.js';
 
@@ -380,4 +382,61 @@ describe('Eppo client 429 handling', () => {
 		);
 		expect(response.status).toBe(200);
 	}, 10000);
+});
+
+// ─── fetchEppoFlag / findEppoFlagByKey ──────────────────────────────────────
+
+describe('fetching a single Eppo flag', () => {
+	let mock: AxiosMockAdapter;
+
+	beforeEach(() => {
+		mock = new AxiosMockAdapter(eppoClient as never);
+	});
+
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('fetches a flag by ID with detailed allocations', async () => {
+		const flag = makeFlag({ id: 42, name: 'Checkout', key: 'checkout' });
+		mock.onGet('https://eppo.cloud/api/v1/feature-flags/42').reply((config) => {
+			expect(config.headers?.['x-eppo-token']).toBe('eppo-key');
+			expect(config.params).toEqual({ include_detailed_allocations: true });
+			return [200, flag];
+		});
+
+		await expect(fetchEppoFlag('eppo-key', '42')).resolves.toEqual(flag);
+	});
+
+	it('finds a flag by exact key among text-search results', async () => {
+		mock.onGet('https://eppo.cloud/api/v1/feature-flags').reply((config) => {
+			expect(config.params).toMatchObject({
+				query: 'checkout',
+				include_detailed_allocations: true,
+			});
+			return [
+				200,
+				[
+					makeFlag({ id: 1, name: 'Checkout v2', key: 'checkout-v2' }),
+					makeFlag({ id: 2, name: 'Checkout', key: 'checkout' }),
+				],
+			];
+		});
+
+		await expect(
+			findEppoFlagByKey('eppo-key', 'checkout'),
+		).resolves.toMatchObject({ id: 2, key: 'checkout' });
+	});
+
+	it('returns undefined when no result has the exact key', async () => {
+		mock
+			.onGet('https://eppo.cloud/api/v1/feature-flags')
+			.reply(200, [
+				makeFlag({ id: 1, name: 'Checkout v2', key: 'checkout-v2' }),
+			]);
+
+		await expect(
+			findEppoFlagByKey('eppo-key', 'checkout'),
+		).resolves.toBeUndefined();
+	});
 });

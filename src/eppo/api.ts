@@ -150,6 +150,57 @@ export async function fetchEppoFlags(
 	return all;
 }
 
+/** Fetch one flag, with its detailed allocations, by its Eppo ID. */
+export async function fetchEppoFlag(
+	apiKey: string,
+	flagId: string | number,
+): Promise<EppoFlag> {
+	const response = await eppoClient.get<EppoFlag>(
+		`${EPPO_BASE_URL}/api/v1/feature-flags/${encodeURIComponent(String(flagId))}`,
+		{
+			headers: {
+				'x-eppo-token': apiKey,
+				'Content-Type': 'application/json',
+			},
+			params: { include_detailed_allocations: true },
+		},
+	);
+	return response.data;
+}
+
+/**
+ * Find a flag by its exact key. Used when a migrated flag has no recorded
+ * Eppo ID; Eppo's `query` filter is a text search, so results are re-checked.
+ */
+export async function findEppoFlagByKey(
+	apiKey: string,
+	key: string,
+): Promise<EppoFlag | undefined> {
+	let offset = 0;
+	while (true) {
+		const response = await eppoClient.get<EppoFlagsResponse>(
+			`${EPPO_BASE_URL}/api/v1/feature-flags`,
+			{
+				headers: {
+					'x-eppo-token': apiKey,
+					'Content-Type': 'application/json',
+				},
+				params: {
+					query: key,
+					offset,
+					limit: EPPO_PAGE_SIZE,
+					include_detailed_allocations: true,
+				},
+			},
+		);
+		const page = unwrapPage(response.data);
+		const match = page.find((flag) => flag.key === key);
+		if (match) return match;
+		if (page.length < EPPO_PAGE_SIZE) return undefined;
+		offset += EPPO_PAGE_SIZE;
+	}
+}
+
 export function extractEnvironments(flags: EppoFlag[]): EppoFlagEnvironment[] {
 	const seen = new Map<number, EppoFlagEnvironment>();
 	for (const flag of flags) {

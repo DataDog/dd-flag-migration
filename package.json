@@ -24,6 +24,8 @@
 		"licenses:validate": "scripts/licenses-validate.sh"
 	},
 	"dependencies": {
+		"@datadog/flagging-core": "^3.2.0",
+		"@datadog/openfeature-node-server": "^2.5.0",
 		"@eppo/node-server-sdk": "^4.0.0",
 		"@launchdarkly/node-server-sdk": "^9.0.0",
 		"axios": "^1.15.1",

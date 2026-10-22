@@ -482,11 +482,20 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@bufbuild/protobuf@npm:^2.13.0":
+  version: 2.16.0
+  resolution: "@bufbuild/protobuf@npm:2.16.0"
+  checksum: 10c0/ba3bc677e801a71d9cf0bdc138174144e493706efec3a47865eb07e956423315a80ff12301f6835d352202ae4d6599f2946a7c67338cf0079ed2a06af1a18097
+  languageName: node
+  linkType: hard
+
 "@datadog/dd-flag-migration@workspace:.":
   version: 0.0.0-use.local
   resolution: "@datadog/dd-flag-migration@workspace:."
   dependencies:
     "@biomejs/biome": "npm:^2.4.12"
+    "@datadog/flagging-core": "npm:^3.2.0"
+    "@datadog/openfeature-node-server": "npm:^2.5.0"
     "@eppo/node-server-sdk": "npm:^4.0.0"
     "@launchdarkly/node-server-sdk": "npm:^9.0.0"
     "@lavamoat/allow-scripts": "npm:^3.4.3"
@@ -511,6 +520,25 @@ __metadata:
     dd-flag-migration: dist/cli.js
   languageName: unknown
   linkType: soft
+
+"@datadog/flagging-core@npm:3.2.0, @datadog/flagging-core@npm:^3.2.0":
+  version: 3.2.0
+  resolution: "@datadog/flagging-core@npm:3.2.0"
+  dependencies:
+    "@bufbuild/protobuf": "npm:^2.13.0"
+    spark-md5: "npm:^3.0.2"
+  checksum: 10c0/7e5a0384b1530d4edf616ea3a6acb5c1e17438532dd1cf8bd73f889ed7e7d9bc5d9da8a39d98dd4bfadf604a135eec868719284c5ae465d8c9645875e35e8f2b
+  languageName: node
+  linkType: hard
+
+"@datadog/openfeature-node-server@npm:^2.5.0":
+  version: 2.5.0
+  resolution: "@datadog/openfeature-node-server@npm:2.5.0"
+  dependencies:
+    "@datadog/flagging-core": "npm:3.2.0"
+  checksum: 10c0/31fbba7f1fcebc062d22d508d5b81e71afc88d0df67b6791ff2c66c6f878e45ba497c3cccb892a9514908e873958078782e7a3c9b5cbe8395671439a38fd4b5e
+  languageName: node
+  linkType: hard
 
 "@emnapi/core@npm:^1.4.3":
   version: 1.8.1
