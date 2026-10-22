@@ -400,6 +400,42 @@ export function HelpScreen(): JSX.Element {
 				</Text>
 			),
 		},
+		{
+			id: 'target',
+			render: () => (
+				<Text>
+					{
+						'  --target=<migration|flag>    Evaluate a migration or a single flag'
+					}
+				</Text>
+			),
+		},
+		{
+			id: 'flag-provider',
+			render: () => (
+				<Text>
+					{'  --provider=eppo              Provider for single-flag evaluation'}
+				</Text>
+			),
+		},
+		{
+			id: 'flag-key',
+			render: () => (
+				<Text>
+					{'  --flag=<key>                 Flag to evaluate for many subjects'}
+				</Text>
+			),
+		},
+		{
+			id: 'subjects',
+			render: () => (
+				<Text>
+					{
+						'  --subjects=<n>               Random subjects for a flag (default 10000)'
+					}
+				</Text>
+			),
+		},
 		{ id: 'space-evaluate', render: () => <Text> </Text> },
 		{ id: 'examples-title', render: () => <Text bold>Examples:</Text> },
 		{

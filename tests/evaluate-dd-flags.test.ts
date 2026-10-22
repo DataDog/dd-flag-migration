@@ -35,6 +35,8 @@ describe('fetchDDFlagData', () => {
 							provider: 'eppo',
 							source_key: 'src-a',
 						},
+						distribution_channel: 'CLIENT',
+						bucketing_mode: 'EPPO',
 					},
 				},
 				{
@@ -58,6 +60,10 @@ describe('fetchDDFlagData', () => {
 			provider: 'eppo',
 			source_key: 'src-a',
 		});
+		expect(result.distributionChannelByKey.get('flag-a')).toBe('CLIENT');
+		expect(result.distributionChannelByKey.has('flag-b')).toBe(false);
+		expect(result.bucketingModeByKey.get('flag-a')).toBe('EPPO');
+		expect(result.bucketingModeByKey.has('flag-b')).toBe(false);
 	});
 
 	it('paginates using next_offset metadata', async () => {

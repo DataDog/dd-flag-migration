@@ -1,4 +1,5 @@
 import type * as EppoSdk from '@eppo/node-server-sdk';
+import type { Assignment } from '../evaluate/flag-comparison.js';
 import type {
 	DDFlagValue,
 	DDStatus,
@@ -304,6 +305,84 @@ export async function evaluateEppoFlag(
 			error: err instanceof Error ? err.message : String(err),
 		};
 	}
+}
+
+/**
+ * Evaluate one flag for one subject and return the variant Eppo assigned, or
+ * `assigned: false` when Eppo served the code default.
+ */
+export function evaluateEppoAssignment(
+	eppoClient: EppoClient,
+	flagKey: string,
+	variationType: string,
+	subjectKey: string,
+	attributes: SubjectAttributes,
+): Assignment {
+	// Eppo SDK's Attributes type does not include null; null means "absent"
+	const eppoAttrs = Object.fromEntries(
+		Object.entries(attributes).filter(([, v]) => v !== null),
+	) as Record<string, string | number | boolean>;
+
+	let details: Pick<EppoSdk.IAssignmentDetails<object>, 'evaluationDetails'>;
+	switch (variationType.toUpperCase()) {
+		case 'BOOLEAN':
+			details = eppoClient.getBooleanAssignmentDetails(
+				flagKey,
+				subjectKey,
+				eppoAttrs,
+				false,
+			);
+			break;
+		case 'INTEGER':
+			details = eppoClient.getIntegerAssignmentDetails(
+				flagKey,
+				subjectKey,
+				eppoAttrs,
+				0,
+			);
+			break;
+		case 'NUMERIC':
+			details = eppoClient.getNumericAssignmentDetails(
+				flagKey,
+				subjectKey,
+				eppoAttrs,
+				0,
+			);
+			break;
+		case 'JSON':
+			details = eppoClient.getJSONAssignmentDetails(
+				flagKey,
+				subjectKey,
+				eppoAttrs,
+				{},
+			);
+			break;
+		default:
+			details = eppoClient.getStringAssignmentDetails(
+				flagKey,
+				subjectKey,
+				eppoAttrs,
+				'',
+			);
+			break;
+	}
+
+	const evaluation = details.evaluationDetails;
+	if (evaluation.flagEvaluationCode !== 'MATCH') {
+		return {
+			assigned: false,
+			value: undefined,
+			variant: null,
+			allocation: null,
+			detail: evaluation.flagEvaluationCode,
+		};
+	}
+	return {
+		assigned: true,
+		value: evaluation.variationValue,
+		variant: evaluation.variationKey,
+		allocation: evaluation.matchedAllocation?.key ?? null,
+	};
 }
 
 export async function evaluateEppoFlagAdvanced(

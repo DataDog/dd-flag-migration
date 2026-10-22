@@ -6,6 +6,7 @@ import axios from 'axios';
 import chalk from 'chalk';
 import { confirm } from './components/Confirm.js';
 import { EvaluationSummary } from './components/EvaluationSummary.js';
+import { filterableSelect } from './components/FilterableSelect.js';
 import { HEADER_SUBTITLES, Header } from './components/Header.js';
 import { input } from './components/Input.js';
 import { PromptCancelledError, renderStatic } from './components/mount.js';
@@ -23,17 +24,32 @@ import type {
 	MigrationMetadata,
 } from './datadog/types.js';
 import {
+	evaluateEppoAssignment,
 	evaluateEppoFlag,
 	evaluateEppoFlagAdvanced,
+	generateEppoTestCases,
 	initializeEppo,
 } from './eppo/evaluate.js';
-import type { MigrationFile } from './eppo/types.js';
+import type { EppoFlag, MigrationFile } from './eppo/types.js';
 import {
 	formatExampleTable,
 	parseCsv,
 	validateHeader,
 } from './evaluate/csv.js';
+import {
+	distributionChannelForFlag,
+	evaluateDatadogFlag,
+	fetchDatadogRulesConfiguration,
+} from './evaluate/datadog-rules.js';
 import { fetchDDFlagData } from './evaluate/dd-flags.js';
+import {
+	compareFlagForSubjects,
+	DEFAULT_SUBJECT_COUNT,
+	type FlagComparisonResult,
+	formatMismatchLine,
+	generateSubjectKeys,
+	mismatchesToCsv,
+} from './evaluate/flag-comparison.js';
 import {
 	CsvSource,
 	type FlagWithTestCases,
@@ -43,6 +59,7 @@ import {
 import { CONFIG_DIR } from './helpers/config.js';
 import { requireEnvVars } from './helpers/env.js';
 import { promptForDatadogSite } from './helpers/prompt-for-datadog-site.js';
+import { MIGRATION_PROVIDERS } from './helpers/providers.js';
 import { fetchEnvironmentSdkKey, findSdkKeyOwner } from './launchdarkly/api.js';
 import {
 	evaluateLDFlag,
@@ -150,14 +167,27 @@ async function validateLDSdkKey(
 
 // ─── Arg Parsing ──────────────────────────────────────────────────────────────
 
-function parseArgs(): {
+type EvaluationTarget = 'migration' | 'flag';
+
+type EvaluateArgs = {
+	target: EvaluationTarget | undefined;
 	testSubjectId: string | undefined;
 	useLatestMigration: boolean;
 	flagEnvironment: string | undefined;
 	datadogSite: string | undefined;
 	csvPath: string | undefined;
 	forceShowTable: boolean;
-} {
+	provider: string | undefined;
+	flagKey: string | undefined;
+	subjectCount: number | undefined;
+};
+
+function exitWithArgError(message: string): never {
+	process.stderr.write(chalk.red(`\n${message}\n\n`));
+	process.exit(1);
+}
+
+function parseArgs(): EvaluateArgs {
 	const args = process.argv.slice(2);
 	const useLatestMigration = args.includes('--use-latest-migration');
 	const forceShowTable = args.includes('--show-table');
@@ -179,19 +209,82 @@ function parseArgs(): {
 	}
 	const csvArg = args.find((a) => a.startsWith('--csv='));
 	const csvPath = csvArg ? csvArg.slice('--csv='.length) : undefined;
+
+	const argValue = (name: string): string | undefined => {
+		const arg = args.find((a) => a.startsWith(`--${name}=`));
+		return arg === undefined ? undefined : arg.slice(name.length + 3).trim();
+	};
+	const provider = argValue('provider')?.toLowerCase();
+	const flagKey = argValue('flag');
+	if (flagKey !== undefined && flagKey.length === 0) {
+		exitWithArgError('--flag must not be empty.');
+	}
+	const subjectsArg = argValue('subjects');
+	let subjectCount: number | undefined;
+	if (subjectsArg !== undefined) {
+		subjectCount = Number(subjectsArg);
+		if (!/^\d+$/.test(subjectsArg) || subjectCount <= 0) {
+			exitWithArgError('--subjects must be a positive integer.');
+		}
+	}
+
+	// Infer the target from mode-specific flags so existing scripted runs of
+	// migration evaluation keep working without a new prompt.
+	const targetArg = argValue('target');
+	if (
+		targetArg !== undefined &&
+		targetArg !== 'migration' &&
+		targetArg !== 'flag'
+	) {
+		exitWithArgError('--target must be "migration" or "flag".');
+	}
+	const usesFlagArgs =
+		provider !== undefined ||
+		flagKey !== undefined ||
+		subjectCount !== undefined;
+	const usesMigrationArgs =
+		testSubjectId !== undefined || csvPath !== undefined || forceShowTable;
+	if (usesFlagArgs && usesMigrationArgs) {
+		exitWithArgError(
+			'--provider, --flag, and --subjects evaluate a single flag; ' +
+				'--test-subject-id, --csv, and --show-table evaluate a migration. ' +
+				'Use options for one target.',
+		);
+	}
+	let target = targetArg as EvaluationTarget | undefined;
+	if (target === undefined && usesFlagArgs) target = 'flag';
+	if (target === undefined && usesMigrationArgs) target = 'migration';
+	if (target === 'flag' && usesMigrationArgs) {
+		exitWithArgError(
+			'--test-subject-id, --csv, and --show-table apply to --target=migration.',
+		);
+	}
+	if (target === 'migration' && usesFlagArgs) {
+		exitWithArgError(
+			'--provider, --flag, and --subjects apply to --target=flag.',
+		);
+	}
+
 	return {
+		target,
 		testSubjectId,
 		useLatestMigration,
 		flagEnvironment,
 		datadogSite,
 		csvPath,
 		forceShowTable,
+		provider,
+		flagKey,
+		subjectCount,
 	};
 }
 
 // ─── Migration File Selection ─────────────────────────────────────────────────
 
-async function selectMigrationFile(useLatest = false): Promise<MigrationFile> {
+async function selectMigrationFile(
+	useLatest = false,
+	provider?: string,
+): Promise<MigrationFile> {
 	if (!fs.existsSync(CONFIG_DIR)) {
 		console.log(chalk.red('\n  No migration files found.'));
 		console.log(
@@ -202,14 +295,35 @@ async function selectMigrationFile(useLatest = false): Promise<MigrationFile> {
 		process.exit(1);
 	}
 
+	const parsedFiles = new Map<string, MigrationFile>();
 	const files = fs
 		.readdirSync(CONFIG_DIR)
 		.filter((f) => f.startsWith('migration-') && f.endsWith('.json'))
+		.filter((f) => {
+			if (provider === undefined) return true;
+			try {
+				const parsed = JSON.parse(
+					fs.readFileSync(path.join(CONFIG_DIR, f), 'utf-8'),
+				) as MigrationFile;
+				parsedFiles.set(f, parsed);
+				return parsed.provider === provider;
+			} catch {
+				return false;
+			}
+		})
 		.sort()
 		.reverse(); // newest-first (ISO timestamps sort lexicographically)
 
 	if (files.length === 0) {
-		console.log(chalk.red('\n  No migration files found.'));
+		const providerName =
+			MIGRATION_PROVIDERS.find((p) => p.value === provider)?.name ?? provider;
+		console.log(
+			chalk.red(
+				provider === undefined
+					? '\n  No migration files found.'
+					: `\n  No ${providerName} migration files found.`,
+			),
+		);
 		console.log(
 			chalk.gray(
 				`  Run 'dd-flag-migration migrate' to perform a migration first.\n`,
@@ -239,6 +353,8 @@ async function selectMigrationFile(useLatest = false): Promise<MigrationFile> {
 		});
 	}
 
+	const cached = parsedFiles.get(chosen);
+	if (cached !== undefined) return cached;
 	const filepath = path.join(CONFIG_DIR, chosen);
 	const raw = fs.readFileSync(filepath, 'utf-8');
 	return JSON.parse(raw) as MigrationFile;
@@ -482,9 +598,346 @@ async function fetchDDFlags(
 	}
 }
 
+// ─── Single-Flag Evaluation ──────────────────────────────────────────────────
+
+async function promptForEvaluationTarget(
+	target: EvaluationTarget | undefined,
+): Promise<EvaluationTarget> {
+	if (target !== undefined) return target;
+	return select<EvaluationTarget>({
+		message: 'What do you want to evaluate?',
+		choices: [
+			{
+				name: 'A migration — test cases for all flags from a previous migration, for one subject',
+				value: 'migration',
+				short: 'A migration',
+			},
+			{
+				name: 'A flag — test cases for one flag, for many random subjects',
+				value: 'flag',
+				short: 'A flag',
+			},
+		],
+	});
+}
+
+/** Providers whose single-flag evaluation is implemented. */
+const FLAG_EVALUATION_PROVIDERS = new Set<string>(['eppo']);
+
+async function promptForFlagProvider(
+	provider: string | undefined,
+): Promise<string> {
+	if (provider !== undefined) {
+		if (!FLAG_EVALUATION_PROVIDERS.has(provider)) {
+			exitWithArgError(
+				`Single-flag evaluation does not support --provider=${provider} yet. ` +
+					`Supported: ${[...FLAG_EVALUATION_PROVIDERS].join(', ')}.`,
+			);
+		}
+		return provider;
+	}
+	return select<string>({
+		message: 'Which migration would you like to evaluate?',
+		choices: MIGRATION_PROVIDERS.map((p) => ({
+			name: p.name,
+			value: p.value,
+			short: p.name,
+			disabled: !FLAG_EVALUATION_PROVIDERS.has(p.value),
+			description: FLAG_EVALUATION_PROVIDERS.has(p.value)
+				? undefined
+				: 'Not supported for single-flag evaluation yet',
+		})),
+	});
+}
+
+async function selectFlagToEvaluate(
+	migration: MigrationFile,
+	flagKey: string | undefined,
+): Promise<EppoFlag> {
+	const unavailable = new Set([
+		...(migration.failures ?? []).map((f) => f.key),
+		...(migration.skippedFlags ?? []).map((f) => f.key),
+	]);
+	const flags = migration.flags.filter((f) => !unavailable.has(f.key));
+	if (flagKey !== undefined) {
+		const flag = migration.flags.find((f) => f.key === flagKey);
+		if (!flag) {
+			exitWithArgError(
+				`Flag "${flagKey}" is not in the selected migration file.`,
+			);
+		}
+		if (unavailable.has(flagKey)) {
+			exitWithArgError(
+				`Flag "${flagKey}" failed or was skipped in the selected migration.`,
+			);
+		}
+		console.log(chalk.gray(`  Using flag: ${chalk.cyan(flag.key)}\n`));
+		return flag;
+	}
+	if (flags.length === 0) {
+		exitWithArgError(
+			'The selected migration has no migrated flags to evaluate.',
+		);
+	}
+	const chosen = await filterableSelect<string>({
+		message: 'Select a flag to evaluate:',
+		choices: flags.map((f) => ({
+			name:
+				f.name && f.name !== f.key ? `${f.key}  ${chalk.gray(f.name)}` : f.key,
+			value: f.key,
+		})),
+	});
+	if (chosen === null) throw new PromptCancelledError();
+	// biome-ignore lint/style/noNonNullAssertion: chosen comes from flags
+	return flags.find((f) => f.key === chosen)!;
+}
+
+function formatPercent(count: number, total: number): string {
+	return total === 0 ? '0%' : `${((count / total) * 100).toFixed(1)}%`;
+}
+
+function printDistribution(
+	title: string,
+	distribution: Map<string, number>,
+	total: number,
+): void {
+	console.log(chalk.bold(title));
+	const entries = [...distribution.entries()].sort((a, b) => b[1] - a[1]);
+	const width = Math.max(...entries.map(([key]) => key.length));
+	for (const [key, count] of entries) {
+		console.log(
+			`  ${key.padEnd(width)}  ${String(count).padStart(7)}  ${chalk.gray(formatPercent(count, total))}`,
+		);
+	}
+	console.log();
+}
+
+const MAX_PRINTED_MISMATCHES = 50;
+
+function printFlagComparison(
+	result: FlagComparisonResult,
+	sourceLabel: string,
+): void {
+	console.log();
+	printDistribution(
+		`${sourceLabel} assignments (allocation → variant)`,
+		result.sourceDistribution,
+		result.evaluations,
+	);
+	printDistribution(
+		'Datadog assignments (allocation → variant)',
+		result.datadogDistribution,
+		result.evaluations,
+	);
+
+	if (result.mismatches.length > 0) {
+		console.log(chalk.bold.yellow('Mismatches'));
+		for (const mismatch of result.mismatches.slice(0, MAX_PRINTED_MISMATCHES)) {
+			console.log(`  ${formatMismatchLine(mismatch, sourceLabel)}`);
+		}
+		if (result.mismatches.length > MAX_PRINTED_MISMATCHES) {
+			const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+			const filename = `flag-evaluation-${result.flagKey}-${timestamp}.csv`;
+			const filepath = path.join(process.cwd(), filename);
+			fs.writeFileSync(
+				filepath,
+				mismatchesToCsv(result.mismatches, sourceLabel),
+			);
+			console.log(
+				chalk.gray(
+					`  … ${result.mismatches.length - MAX_PRINTED_MISMATCHES} more. ` +
+						`All mismatches written to ${filepath}`,
+				),
+			);
+		}
+		console.log();
+	}
+
+	console.log(chalk.bold('Summary'));
+	console.log(`  Flag:         ${result.flagKey}`);
+	console.log(`  Environment:  ${result.environment}`);
+	console.log(`  Subjects:     ${result.subjects}`);
+	console.log(`  Contexts:     ${result.contexts} per subject`);
+	console.log(`  Evaluations:  ${result.evaluations}`);
+	console.log(`  Matches:      ${chalk.green(result.matches)}`);
+	console.log(
+		`  Mismatches:   ${
+			result.mismatches.length > 0
+				? chalk.yellow(result.mismatches.length)
+				: chalk.green(0)
+		}`,
+	);
+	console.log();
+}
+
+async function runFlagEvaluation(
+	args: EvaluateArgs,
+	ddApiKey: string,
+	ddAppKey: string,
+): Promise<boolean> {
+	const provider = await promptForFlagProvider(args.provider);
+	const sourceLabel = 'Eppo';
+	console.log();
+
+	const migration = await selectMigrationFile(
+		args.useLatestMigration,
+		provider,
+	);
+	console.log(
+		chalk.gray(
+			`  Migrated at:  ${new Date(migration.migratedAt).toLocaleString()}\n`,
+		),
+	);
+	const flag = await selectFlagToEvaluate(migration, args.flagKey);
+	const variationType = (flag.variation_type ?? 'STRING').toUpperCase();
+
+	const ddSite = await promptForDatadogSite(args.datadogSite);
+	const eppoSdkKey = requireEnvVars(['EPPO_SDK_KEY']).EPPO_SDK_KEY;
+	const {
+		ddEnvName: ddEnv,
+		envId: ddEnvId,
+		sourceEnvName,
+	} = await selectDDEnvironment(
+		migration.environmentMapping ?? [],
+		ddApiKey,
+		ddAppKey,
+		ddSite,
+		args.flagEnvironment,
+	);
+	console.log();
+
+	const metadataSpinner = createSpinner(
+		`Fetching Datadog metadata for ${flag.key}…`,
+	).start();
+	const flagData = await fetchDDFlagData(ddApiKey, ddAppKey, ddSite, ddEnvId);
+	if (!flagData.keys.has(flag.key)) {
+		metadataSpinner.fail(`Flag ${flag.key} was not found in Datadog`);
+		return false;
+	}
+	const channel = distributionChannelForFlag(
+		flagData.distributionChannelByKey.get(flag.key),
+	);
+	const bucketingMode = flagData.bucketingModeByKey.get(flag.key) ?? 'DATADOG';
+	metadataSpinner.succeed(
+		`Found ${flag.key} in Datadog (${bucketingMode} bucketing, ${channel} distribution)`,
+	);
+	if (bucketingMode !== 'EPPO') {
+		console.log(
+			chalk.yellow(
+				`  ${flag.key} uses Datadog bucketing because it was migrated before Eppo ` +
+					'bucketing. Subjects in splits are expected to differ from Eppo.\n',
+			),
+		);
+	}
+	const clientToken =
+		channel === 'client'
+			? requireEnvVars(['DD_CLIENT_TOKEN']).DD_CLIENT_TOKEN
+			: undefined;
+
+	const loadSpinner = createSpinner(
+		`Loading ${sourceLabel} and Datadog flag configurations…`,
+	).start();
+	let eppoClient: EppoClient;
+	let ddConfiguration: Awaited<
+		ReturnType<typeof fetchDatadogRulesConfiguration>
+	>;
+	try {
+		[eppoClient, ddConfiguration] = await Promise.all([
+			initializeEppo(eppoSdkKey),
+			clientToken !== undefined
+				? fetchDatadogRulesConfiguration({
+						channel: 'client',
+						clientToken,
+						env: ddEnv,
+						site: ddSite,
+					})
+				: fetchDatadogRulesConfiguration({
+						channel: 'server',
+						apiKey: ddApiKey,
+						env: ddEnv,
+						site: ddSite,
+					}),
+		]);
+	} catch (err) {
+		loadSpinner.fail('Could not load flag configurations');
+		console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+		return false;
+	}
+	const preflight = evaluateDatadogFlag(
+		ddConfiguration,
+		variationType,
+		flag.key,
+		'preflight',
+		{},
+	);
+	if (preflight.detail === 'FLAG_NOT_FOUND') {
+		loadSpinner.fail(
+			`${flag.key} is not in the Datadog ${channel} configuration for DD_ENV "${ddEnv}"`,
+		);
+		return false;
+	}
+	loadSpinner.succeed(
+		`Loaded ${sourceLabel} and Datadog configurations for DD_ENV "${ddEnv}"`,
+	);
+
+	const contexts = generateEppoTestCases(flag);
+	const subjectKeys = generateSubjectKeys(
+		args.subjectCount ?? DEFAULT_SUBJECT_COUNT,
+	);
+	const total = subjectKeys.length * contexts.length;
+	const evalSpinner = createSpinner(
+		`Evaluating ${flag.key} for ${subjectKeys.length} subject(s)…`,
+	).start();
+	const result = await compareFlagForSubjects({
+		flagKey: flag.key,
+		environment: sourceEnvName,
+		subjectKeys,
+		contexts,
+		evaluateSource: (subjectKey, attributes) =>
+			evaluateEppoAssignment(
+				eppoClient,
+				flag.key,
+				variationType,
+				subjectKey,
+				attributes,
+			),
+		evaluateDatadog: (subjectKey, attributes) =>
+			evaluateDatadogFlag(
+				ddConfiguration,
+				variationType,
+				flag.key,
+				subjectKey,
+				attributes,
+			),
+		onProgress: (completed) => {
+			evalSpinner.text = `Evaluating ${flag.key}… ${completed}/${total}`;
+		},
+	});
+	evalSpinner.succeed(
+		`Evaluated ${flag.key}: ${result.evaluations} evaluation(s) across ` +
+			`${result.subjects} subject(s) and ${result.contexts} context(s)`,
+	);
+
+	printFlagComparison(result, sourceLabel);
+
+	if (result.mismatches.length > 0) {
+		console.log(
+			chalk.yellow(
+				`  Reminder: SDK keys are scoped to your environment. Be sure that your ` +
+					`EPPO_SDK_KEY ending in "${eppoSdkKey.slice(-4)}" belongs to your ` +
+					`"${sourceEnvName}" environment.`,
+			),
+		);
+		console.log();
+		return false;
+	}
+	return true;
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
+	const args = parseArgs();
 	const {
 		testSubjectId,
 		useLatestMigration,
@@ -492,21 +945,24 @@ async function main(): Promise<void> {
 		datadogSite,
 		csvPath,
 		forceShowTable,
-	} = parseArgs();
+	} = args;
 
 	// Validate Datadog env vars up front. Provider-specific SDK env vars are
 	// validated after the migration file is loaded so we know which provider
 	// was used.
-	const ddEnvVars = requireEnvVars([
-		'DD_API_KEY',
-		'DD_APP_KEY',
-		'DD_CLIENT_TOKEN',
-	]);
+	const ddEnvVars = requireEnvVars(['DD_API_KEY', 'DD_APP_KEY']);
 	const ddApiKey = ddEnvVars.DD_API_KEY;
 	const ddAppKey = ddEnvVars.DD_APP_KEY;
-	const ddClientToken = ddEnvVars.DD_CLIENT_TOKEN;
 
 	await printHeader();
+
+	if ((await promptForEvaluationTarget(args.target)) === 'flag') {
+		console.log();
+		const passed = await runFlagEvaluation(args, ddApiKey, ddAppKey);
+		process.exit(passed ? 0 : 1);
+	}
+	console.log();
+	const ddClientToken = requireEnvVars(['DD_CLIENT_TOKEN']).DD_CLIENT_TOKEN;
 
 	// 1. Select migration file
 	const migration = await selectMigrationFile(useLatestMigration);

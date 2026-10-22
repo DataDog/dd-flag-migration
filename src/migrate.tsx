@@ -21,6 +21,7 @@ import {
 import { requireEnvVars } from './helpers/env.js';
 import { withConsoleLogToStderr } from './helpers/output.js';
 import { promptForDatadogSite } from './helpers/prompt-for-datadog-site.js';
+import { MIGRATION_PROVIDERS } from './helpers/providers.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -30,12 +31,6 @@ const ALL_REQUIRED_PERMISSIONS = [
 	'feature_flag_config_read',
 	'feature_flag_environment_config_read',
 	'teams_read',
-] as const;
-
-const PROVIDERS = [
-	{ name: 'Eppo → Datadog', value: 'eppo' },
-	{ name: 'Datadog → Datadog', value: 'datadog' },
-	{ name: 'LaunchDarkly → Datadog', value: 'launchdarkly' },
 ] as const;
 
 // ─── Arg Parsing ──────────────────────────────────────────────────────────────
@@ -65,13 +60,15 @@ function clearScreen(): void {
 // ─── Prompt Steps ─────────────────────────────────────────────────────────────
 
 function providerLabel(provider: MigrateProviderValue): string {
-	return PROVIDERS.find((p) => p.value === provider)?.name ?? provider;
+	return (
+		MIGRATION_PROVIDERS.find((p) => p.value === provider)?.name ?? provider
+	);
 }
 
 async function selectProvider(): Promise<MigrateProviderValue> {
 	return select<MigrateProviderValue>({
 		message: 'Which migration would you like to run?',
-		choices: PROVIDERS.map((p) => ({
+		choices: MIGRATION_PROVIDERS.map((p) => ({
 			name: p.name,
 			value: p.value,
 			short: p.name,
