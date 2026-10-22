@@ -88,10 +88,9 @@ Datadog → Datadog migrations read all six `SOURCE_DD_*` and `TARGET_DD_*` vari
 
 | Variable | Required when | Where to find it |
 |---|---|---|
-| `DD_API_KEY`, `DD_APP_KEY` | always | Datadog → Organization Settings → API Keys / Application Keys |
-| `DD_CLIENT_TOKEN` | evaluating a migration, or a single client-distributed flag | Datadog → Organization Settings → Client Tokens |
+| `DD_CLIENT_TOKEN` | evaluating a migration or a client-only flag | Datadog → Organization Settings → Client Tokens |
 | `EPPO_SDK_KEY` | migration was from Eppo | Eppo → SDK Keys (server SDK key, one per environment) |
-| `EPPO_API_KEY` | evaluating a single Eppo flag | Eppo → Configuration → API Keys |
+| `EPPO_API_KEY` | evaluating a single flag | Eppo → Configuration → API Keys |
 | `LAUNCHDARKLY_API_KEY` | migration was from LaunchDarkly *(preferred)* | LaunchDarkly → Account settings → Authorization → Access tokens |
 
 ### Required for `bulk-permissions`, `bulk-enable`, and `sync-tags`
@@ -570,11 +569,10 @@ npx @datadog/dd-flag-migration evaluate
 
 The tool will:
 
-1. **Choose what to evaluate** — a migration (all flags, one subject) or a single flag (one flag, many subjects; see [below](#evaluate-a-single-flag-for-many-subjects))
-2. **Select a migration file** — pick from previous migrations (most recent first)
-3. **Select a Datadog environment** — choose which environment to evaluate against
-4. **Enter a test subject ID** — a user ID (or any string) to use for flag evaluation
-5. **Run evaluations** — the tool generates test cases from each flag's targeting rules and compares the provider and Datadog results side by side
+1. **Select a migration file** — pick from previous migrations (most recent first)
+2. **Select a Datadog environment** — choose which environment to evaluate against
+3. **Enter a test subject ID** — a user ID (or any string) to use for flag evaluation
+4. **Run evaluations** — the tool generates test cases from each flag's targeting rules and compares the provider and Datadog results side by side
 
 Datadog and provider credentials are read from environment variables (see [Credentials](#credentials-youll-need)).
 
@@ -601,39 +599,16 @@ npx @datadog/dd-flag-migration evaluate \
   --datadog-site=datadoghq.com
 ```
 
-### Evaluate a single flag for many subjects
+### Evaluate a single flag
 
-To check that a migrated flag buckets subjects the same way in both platforms, choose **A flag** when `evaluate` asks what to evaluate. Single-flag evaluation supports Eppo migrations and does not need a migration file:
-
-1. **Select a flag** — pick from the Datadog flags that were migrated from Eppo
-2. **Load the Eppo flag** — the tool reads the flag's current definition with `EPPO_API_KEY` and loads the configuration for the environment that `EPPO_SDK_KEY` belongs to
-3. **Select a Datadog environment** — the Datadog environment with the same name as the Eppo environment is selected by default
-
-The tool generates random subject keys (10,000 by default) and evaluates the flag for each one with the same generated attributes as a migration evaluation. Both platforms evaluate locally: the Eppo SDK loads its configuration once, and Datadog's rules-based flag configuration is fetched once for the environment. Subjects outside a partial rollout are compared too.
-
-The tool reports how many subjects each allocation and variant served on each platform, lists up to 50 mismatches with their subject key, environment, context, and the variant, value, and allocation from each platform, and exits with status 1 when any subject differs.
-
-You can export every evaluation to an `.xlsx` file in the current directory. Interactive runs ask after the results; scripted runs export with `--export`. The workbook has a Summary sheet and an Evaluations sheet with one row per subject and context. Mismatches are sorted first and rows are colored: green rows match, red rows got different values, and yellow rows were assigned by only one platform, which usually points at environment setup rather than bucketing. The Result column has a filter for showing only mismatches.
-
-Flags migrated before Eppo bucketing keep Datadog's bucketing, so their split assignments are expected to differ from Eppo.
+Choose **A flag** to evaluate one flag migrated from Eppo for many random subjects in both platforms. The command lists mismatches, exits with status 1 if any subject differs, and can export every evaluation to `.xlsx`.
 
 | Flag | Description |
 |---|---|
-| `--target=flag` | Evaluate a single flag. Implied by `--provider`, `--flag`, or `--subjects` |
-| `--provider=eppo` | Set the migration provider non-interactively |
+| `--provider=eppo` | Evaluate a single flag migrated from Eppo |
 | `--flag=<key>` | Set the flag key non-interactively |
-| `--subjects=<n>` | Number of random subjects to evaluate (default 10,000) |
-| `--export` | Export every evaluation to an `.xlsx` file without asking |
-
-`--flag-environment` (the Datadog environment name) and `--datadog-site` also apply.
-
-```bash
-npx @datadog/dd-flag-migration evaluate \
-  --provider=eppo \
-  --flag=new-checkout \
-  --flag-environment=production \
-  --datadog-site=datadoghq.com
-```
+| `--subjects=<n>` | Number of random subjects (default 10,000) |
+| `--export` | Export results to `.xlsx` without asking |
 
 ---
 
