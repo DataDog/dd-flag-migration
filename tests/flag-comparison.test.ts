@@ -4,8 +4,9 @@ import {
 	type Assignment,
 	assignmentsMatch,
 	compareFlagForSubjects,
+	evaluationOutcome,
+	formatMismatchLine,
 	generateSubjectKeys,
-	mismatchesToCsv,
 } from '../src/evaluate/flag-comparison.js';
 
 function assigned(
@@ -114,7 +115,18 @@ describe('compareFlagForSubjects', () => {
 				attributes: { country: 'US' },
 				source: assigned(true),
 				datadog: assigned(false, 'off', 'rollout'),
+				outcome: 'different-value',
 			},
+		]);
+		expect(
+			result.records.map((r) => `${r.subjectKey}/${r.context}/${r.outcome}`),
+		).toEqual([
+			'a/no attributes/match',
+			'a/country=US/match',
+			'b/no attributes/match',
+			'b/country=US/different-value',
+			'c/no attributes/match',
+			'c/country=US/match',
 		]);
 		expect(result.sourceDistribution).toEqual(
 			new Map([
@@ -140,25 +152,38 @@ describe('compareFlagForSubjects', () => {
 	});
 });
 
-describe('mismatchesToCsv', () => {
-	it('writes one escaped row per mismatch', () => {
-		const csv = mismatchesToCsv(
-			[
-				{
-					subjectKey: 'user,1',
-					environment: 'Production',
-					context: 'no attributes',
-					attributes: {},
-					source: assigned({ a: '"x"' }, 'json-a', 'alloc-1'),
-					datadog: unassigned('DEFAULT'),
-				},
-			],
-			'Eppo',
+describe('evaluationOutcome', () => {
+	it('separates value differences from one-sided assignments', () => {
+		expect(evaluationOutcome(assigned(true), assigned(true))).toBe('match');
+		expect(evaluationOutcome(unassigned(), unassigned())).toBe('match');
+		expect(evaluationOutcome(assigned(true), assigned(false))).toBe(
+			'different-value',
 		);
-		expect(csv).toBe(
-			'subject_key,environment,context,eppo_allocation,eppo_variant,eppo_value,' +
-				'datadog_allocation,datadog_variant,datadog_value\n' +
-				'"user,1",Production,no attributes,alloc-1,json-a,"{""a"":""\\""x\\""""}",,DEFAULT,\n',
+		expect(evaluationOutcome(assigned(true), unassigned())).toBe('only-source');
+		expect(evaluationOutcome(unassigned(), assigned(true))).toBe(
+			'only-datadog',
+		);
+	});
+});
+
+describe('formatMismatchLine', () => {
+	it('includes the subject, context, variants, values, and allocations', () => {
+		expect(
+			formatMismatchLine(
+				{
+					subjectKey: 'user-1',
+					environment: 'Production → Production',
+					context: 'country=US',
+					attributes: { country: 'US' },
+					source: assigned('on', 'treatment', 'split'),
+					datadog: unassigned('DISABLED'),
+					outcome: 'only-source',
+				},
+				'Eppo',
+			),
+		).toBe(
+			'subject=user-1  env=Production → Production  context=country=US  ' +
+				'Eppo: treatment = on [split]  Datadog: no assignment (DISABLED)',
 		);
 	});
 });

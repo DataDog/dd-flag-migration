@@ -436,6 +436,16 @@ export function HelpScreen(): JSX.Element {
 				</Text>
 			),
 		},
+		{
+			id: 'flag-export',
+			render: () => (
+				<Text>
+					{
+						'  --export                     Export a flag evaluation to .xlsx without asking'
+					}
+				</Text>
+			),
+		},
 		{ id: 'space-evaluate', render: () => <Text> </Text> },
 		{ id: 'examples-title', render: () => <Text bold>Examples:</Text> },
 		{

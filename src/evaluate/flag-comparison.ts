@@ -14,14 +14,30 @@ export type Assignment = {
 	detail?: string;
 };
 
-export type FlagMismatch = {
+/**
+ * - `match`: both platforms served the same value, or neither assigned one.
+ * - `different-value`: both assigned, with different values.
+ * - `only-source` / `only-datadog`: one platform assigned and the other served
+ *   its fallback. This usually points at setup, such as a disabled
+ *   environment or an SDK key for another environment.
+ */
+export type EvaluationOutcome =
+	| 'match'
+	| 'different-value'
+	| 'only-source'
+	| 'only-datadog';
+
+export type FlagEvaluationRecord = {
 	subjectKey: string;
 	environment: string;
 	context: string;
 	attributes: SubjectAttributes;
 	source: Assignment;
 	datadog: Assignment;
+	outcome: EvaluationOutcome;
 };
+
+export type FlagMismatch = FlagEvaluationRecord;
 
 export type FlagComparisonResult = {
 	flagKey: string;
@@ -30,6 +46,8 @@ export type FlagComparisonResult = {
 	contexts: number;
 	evaluations: number;
 	matches: number;
+	/** Every evaluation, in evaluation order. */
+	records: FlagEvaluationRecord[];
 	mismatches: FlagMismatch[];
 	/** Evaluations per source allocation and variant, to show rollout coverage. */
 	sourceDistribution: Map<string, number>;
@@ -116,21 +134,27 @@ export function formatAssignmentValue(value: unknown): string {
 }
 
 /**
- * Assignments match when neither platform assigned a variant, or when both
- * served the same value. Values are compared instead of variant keys because
- * the migration may slugify variant keys.
+ * Compares values instead of variant keys because the migration may slugify
+ * variant keys.
  */
+export function evaluationOutcome(
+	source: Assignment,
+	datadog: Assignment,
+): EvaluationOutcome {
+	if (source.assigned && !datadog.assigned) return 'only-source';
+	if (!source.assigned && datadog.assigned) return 'only-datadog';
+	if (!source.assigned && !datadog.assigned) return 'match';
+	return formatAssignmentValue(source.value) ===
+		formatAssignmentValue(unwrapJsonArray(source.value, datadog.value))
+		? 'match'
+		: 'different-value';
+}
+
 export function assignmentsMatch(
 	source: Assignment,
 	datadog: Assignment,
 ): boolean {
-	if (!source.assigned || !datadog.assigned) {
-		return source.assigned === datadog.assigned;
-	}
-	return (
-		formatAssignmentValue(source.value) ===
-		formatAssignmentValue(unwrapJsonArray(source.value, datadog.value))
-	);
+	return evaluationOutcome(source, datadog) === 'match';
 }
 
 export function distributionKey(assignment: Assignment): string {
@@ -165,6 +189,7 @@ export async function compareFlagForSubjects(
 		contexts: contexts.length,
 		evaluations: 0,
 		matches: 0,
+		records: [],
 		mismatches: [],
 		sourceDistribution: new Map(),
 		datadogDistribution: new Map(),
@@ -176,17 +201,20 @@ export async function compareFlagForSubjects(
 			const datadog = input.evaluateDatadog(subjectKey, context.attributes);
 			increment(result.sourceDistribution, distributionKey(source));
 			increment(result.datadogDistribution, distributionKey(datadog));
-			if (assignmentsMatch(source, datadog)) {
+			const record: FlagEvaluationRecord = {
+				subjectKey,
+				environment: input.environment,
+				context: context.label,
+				attributes: context.attributes,
+				source,
+				datadog,
+				outcome: evaluationOutcome(source, datadog),
+			};
+			result.records.push(record);
+			if (record.outcome === 'match') {
 				result.matches++;
 			} else {
-				result.mismatches.push({
-					subjectKey,
-					environment: input.environment,
-					context: context.label,
-					attributes: context.attributes,
-					source,
-					datadog,
-				});
+				result.mismatches.push(record);
 			}
 			result.evaluations++;
 			if (result.evaluations % PROGRESS_BATCH_SIZE === 0) {
@@ -201,11 +229,15 @@ export async function compareFlagForSubjects(
 
 // ─── Reporting ────────────────────────────────────────────────────────────────
 
-function describeAssignment(assignment: Assignment): string {
+export function describeAssignment(assignment: Assignment): string {
 	if (!assignment.assigned) {
 		return `no assignment${assignment.detail ? ` (${assignment.detail})` : ''}`;
 	}
-	return `${assignment.variant ?? '(unknown variant)'} = ${formatAssignmentValue(assignment.value)}`;
+	return (
+		`${assignment.variant ?? '(unknown variant)'} = ` +
+		`${formatAssignmentValue(assignment.value)} ` +
+		`[${assignment.allocation ?? 'unknown allocation'}]`
+	);
 }
 
 export function formatMismatchLine(
@@ -217,37 +249,4 @@ export function formatMismatchLine(
 		`context=${mismatch.context}  ${sourceLabel}: ${describeAssignment(mismatch.source)}  ` +
 		`Datadog: ${describeAssignment(mismatch.datadog)}`
 	);
-}
-
-function csvCell(value: string): string {
-	return /[",\n\r]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
-}
-
-export function mismatchesToCsv(
-	mismatches: FlagMismatch[],
-	sourceLabel: string,
-): string {
-	const header = [
-		'subject_key',
-		'environment',
-		'context',
-		`${sourceLabel.toLowerCase()}_allocation`,
-		`${sourceLabel.toLowerCase()}_variant`,
-		`${sourceLabel.toLowerCase()}_value`,
-		'datadog_allocation',
-		'datadog_variant',
-		'datadog_value',
-	];
-	const rows = mismatches.map((m) => [
-		m.subjectKey,
-		m.environment,
-		m.context,
-		m.source.allocation ?? '',
-		m.source.variant ?? m.source.detail ?? '',
-		formatAssignmentValue(m.source.value),
-		m.datadog.allocation ?? '',
-		m.datadog.variant ?? m.datadog.detail ?? '',
-		formatAssignmentValue(m.datadog.value),
-	]);
-	return `${[header, ...rows].map((row) => row.map(csvCell).join(',')).join('\n')}\n`;
 }

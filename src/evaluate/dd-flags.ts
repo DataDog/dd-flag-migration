@@ -9,6 +9,7 @@ import type { BucketingMode, MigrationMetadata } from '../datadog/types.js';
 type DDFlagListItem = {
 	attributes: {
 		key: string;
+		name?: string;
 		value_type?: string;
 		migration_metadata?: MigrationMetadata;
 		distribution_channel?: string;
@@ -32,21 +33,26 @@ type DDFlagListResponse = {
 	};
 };
 
-export async function fetchDDFlagData(
-	apiKey: string,
-	appKey: string,
-	site: string,
-	envId: string,
-): Promise<{
+export type DDFlagData = {
 	keys: Set<string>;
+	nameByKey: Map<string, string>;
 	enabledByKey: Map<string, boolean>;
 	valueTypeByKey: Map<string, string>;
 	migrationMetadataByKey: Map<string, MigrationMetadata>;
 	distributionChannelByKey: Map<string, string>;
 	bucketingModeByKey: Map<string, BucketingMode>;
-}> {
+};
+
+export async function fetchDDFlagData(
+	apiKey: string,
+	appKey: string,
+	site: string,
+	/** Omit to skip per-environment status. */
+	envId?: string,
+): Promise<DDFlagData> {
 	const baseUrl = `https://api.${site}`;
 	const keys = new Set<string>();
+	const nameByKey = new Map<string, string>();
 	const enabledByKey = new Map<string, boolean>();
 	const valueTypeByKey = new Map<string, string>();
 	const migrationMetadataByKey = new Map<string, MigrationMetadata>();
@@ -69,6 +75,8 @@ export async function fetchDDFlagData(
 			const flags = resp.data.data ?? [];
 			for (const f of flags) {
 				keys.add(f.attributes.key);
+				if (f.attributes.name)
+					nameByKey.set(f.attributes.key, f.attributes.name);
 				const envEntry = (f.attributes.feature_flag_environments ?? []).find(
 					(e) => e.environment_id === envId,
 				);
@@ -112,10 +120,37 @@ export async function fetchDDFlagData(
 	}
 	return {
 		keys,
+		nameByKey,
 		enabledByKey,
 		valueTypeByKey,
 		migrationMetadataByKey,
 		distributionChannelByKey,
 		bucketingModeByKey,
 	};
+}
+
+export type MigratedFlag = {
+	datadogKey: string;
+	eppoKey: string;
+	/** Eppo flag ID recorded by the migration, when present. */
+	eppoId: string | undefined;
+	name: string | undefined;
+};
+
+/** Datadog flags whose migration metadata says they came from Eppo. */
+export function migratedEppoFlags(
+	flagData: Pick<DDFlagData, 'keys' | 'migrationMetadataByKey' | 'nameByKey'>,
+): MigratedFlag[] {
+	const flags: MigratedFlag[] = [];
+	for (const key of flagData.keys) {
+		const metadata = flagData.migrationMetadataByKey.get(key);
+		if (metadata?.provider !== 'eppo') continue;
+		flags.push({
+			datadogKey: key,
+			eppoKey: metadata.source_key ?? key,
+			eppoId: metadata.source_id,
+			name: flagData.nameByKey.get(key),
+		});
+	}
+	return flags.sort((a, b) => a.datadogKey.localeCompare(b.datadogKey));
 }

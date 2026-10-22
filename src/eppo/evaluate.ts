@@ -307,6 +307,18 @@ export async function evaluateEppoFlag(
 	}
 }
 
+/** Name of the Eppo environment that the client's SDK key belongs to. */
+export function eppoSdkEnvironmentName(eppoClient: EppoClient): string {
+	// Every evaluation reports the environment of the loaded configuration,
+	// even for an unknown flag.
+	return eppoClient.getBooleanAssignmentDetails(
+		'__dd_flag_migration_environment_probe__',
+		'subject',
+		{},
+		false,
+	).evaluationDetails.environmentName;
+}
+
 /**
  * Evaluate one flag for one subject and return the variant Eppo assigned, or
  * `assigned: false` when Eppo served the code default.
