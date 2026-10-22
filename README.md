@@ -601,14 +601,7 @@ npx @datadog/dd-flag-migration evaluate \
 
 ### Evaluate a single flag
 
-Choose **A flag** to evaluate one flag migrated from Eppo for many random subjects in both platforms. The command lists mismatches, exits with status 1 if any subject differs, and can export every evaluation to `.xlsx`.
-
-| Flag | Description |
-|---|---|
-| `--provider=eppo` | Evaluate a single flag migrated from Eppo |
-| `--flag=<key>` | Set the flag key non-interactively |
-| `--subjects=<n>` | Number of random subjects (default 10,000) |
-| `--export` | Export results to `.xlsx` without asking |
+Choose **A flag** to evaluate one flag migrated from Eppo for many random subjects (10,000 by default; set with `--subjects=<n>`) in both platforms. The command lists mismatches, exits with status 1 if any subject differs, and can export every evaluation to `.xlsx`.
 
 ---
 
