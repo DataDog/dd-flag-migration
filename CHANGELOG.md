@@ -2,7 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [1.6.0] — 2026-10-22
+
+### CLI
+
+- Feat: support custom Datadog API request headers through `DD_HTTP_HEADERS` (#157)
+
+### Migration — Datadog
+
+- Feat: migrate flags between Datadog organizations, including saved filters (#163)
+- Feat: compare Datadog organizations with the read-only `org-diff` command and export differences to an `.xlsx` workbook (#163)
+
+### Migration — LaunchDarkly & Eppo
+
+- Feat: control tag synchronization with `--tag-mode`; non-interactive migrations now merge tags by default
+- Fix: preserve collision-suffixed flag names during re-migration and export LaunchDarkly dry-run plans with clear create/sync labels
+
+### Migration — LaunchDarkly
+
+- Fix: map user identity references to Datadog's `id` attribute consistently in flag targeting, saved filters, and evaluation (#159)
 
 ### Migration — Eppo
 
