@@ -12,6 +12,7 @@ import {
 	planVariantSync,
 } from './helpers.js';
 import type {
+	BucketingMode,
 	CreateSavedFilterRequest,
 	DatadogAllocationSyncRequest,
 	DatadogCreatedFlag,
@@ -235,6 +236,7 @@ type JsonApiFlag = {
 		name: string;
 		tags?: string[];
 		migration_metadata?: MigrationMetadata;
+		bucketing_mode?: BucketingMode;
 		feature_flag_environments?: Array<{
 			environment_id: string;
 			status: DatadogEnvironmentStatus;
@@ -307,6 +309,9 @@ export async function fetchDatadogFlags(
 				...(f.attributes.name !== undefined ? { name: f.attributes.name } : {}),
 				...(f.attributes.tags !== undefined ? { tags: f.attributes.tags } : {}),
 				migration_metadata: f.attributes.migration_metadata,
+				...(f.attributes.bucketing_mode !== undefined
+					? { bucketing_mode: f.attributes.bucketing_mode }
+					: {}),
 				...(flagEnvironments !== undefined
 					? {
 							environmentStatuses: new Map(
@@ -1200,6 +1205,9 @@ export async function syncAllocationsForEnvironment(
 				variant_weights: alloc.variant_weights.map((vw) => ({
 					variant_id: resolveVariantId(vw.variant_key),
 					value: vw.value,
+					...(vw.eppo_variant_weight_id !== undefined
+						? { eppo_variant_weight_id: vw.eppo_variant_weight_id }
+						: {}),
 				})),
 			},
 		})),

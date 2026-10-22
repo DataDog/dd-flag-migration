@@ -642,6 +642,20 @@ Some LaunchDarkly and Eppo features have no direct equivalent in Datadog. The to
 | Archived flags | LaunchDarkly | Archived flags are excluded from the migration entirely. |
 | `BANDIT` and `LAYER` flag types | Eppo | These flag types are not yet supported and are skipped. |
 
+### Flags that fail migration
+
+Eppo flags are migrated with Eppo-compatible bucketing, so every subject keeps the variation and exposure it had in Eppo. A flag fails with a reason, and nothing is written for it, when Datadog can't reproduce how Eppo assigns its subjects:
+
+| Case | How to fix it |
+|---|---|
+| Eppo's production environment has no default, a targeted default, or a default below 100% exposure, whether or not it's mapped or active | Set a default variation in Eppo. In interactive mode, the tool instead asks you to choose the variant that matches the fallback value in your code (or skip the flag); that variant also becomes the default of every other environment without one. Existing flags migrated with Eppo-compatible bucketing keep the defaults chosen when they were created and aren't asked again. |
+| Another active environment has no default, a targeted default, or a default below 100% exposure | Set a default variation in Eppo. Unmatched subjects would otherwise receive the SDK fallback value, which Datadog can't represent. Disabled environments don't need a default; they get the production default. |
+| A split's active variations all have zero weight | Give one variation a weight in Eppo. |
+| Eppo returns no variation weight IDs for a split | Use an Eppo API version that returns them; they set the split order. |
+| Two targeting filters would get the same key | Rename one of the Eppo allocations. Datadog requires targeting filter keys to be unique per org. |
+| A Datadog flag with the same key exists but wasn't migrated from Eppo | Rename or delete the Datadog flag. The tool never overwrites it. |
+| The Eppo flag is linked to a Datadog flag with a different key | The key is part of every Eppo bucketing salt, so the keys must match. |
+
 ### Flags that are migrated with adjustments
 
 | Feature | Provider | How it's handled |
@@ -666,10 +680,13 @@ Some LaunchDarkly and Eppo features have no direct equivalent in Datadog. The to
 
 For each selected flag, the tool:
 
-- Reads the flag's variations, targeting filters, and targeting rules from Eppo
-- Creates an equivalent flag in Datadog via the Feature Flags API
-- Synchronizes the Eppo display name when re-migrating an existing Datadog flag
+- Reads the flag's variations, targeting filters, and targeting rules from Eppo, skipping disabled targeting filters and deactivated variations
+- Creates an equivalent flag in Datadog via the Feature Flags API with Eppo-compatible bucketing: Eppo's raw weights, allocation and variation weight IDs, and a default variant are sent so Datadog assigns subjects exactly as Eppo does. Partial exposure becomes a rollout that starts immediately
+- Sets each environment's default variant before enabling any environment
+- Synchronizes the Eppo display name when re-migrating an existing Datadog flag, and the targeting of every mapped environment, including disabled ones
 - Enables the flag in the Datadog environments that correspond to active Eppo environments
+
+Flags migrated before Eppo-compatible bucketing follow the same rules when re-migrated, including the failures below, but keep Datadog bucketing: no Eppo IDs are sent and their targeting filter keys never change. A warning is recorded, because subjects in splits and partial rollouts are not assigned as in Eppo.
 
 Flags of type `BANDIT` or `LAYER` are skipped (not yet supported).
 

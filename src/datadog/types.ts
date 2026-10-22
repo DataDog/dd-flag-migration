@@ -13,12 +13,21 @@ export interface MigrationMetadata {
 
 export type DatadogEnvironmentStatus = 'ENABLED' | 'DISABLED';
 
+/**
+ * Subject bucketing scheme of a Datadog flag. `EPPO` reproduces Eppo's
+ * bucketing so subjects keep their assignments; it is set only when the Eppo
+ * migration creates a flag and can never change afterwards.
+ */
+export type BucketingMode = 'DATADOG' | 'EPPO';
+
 export interface DatadogFlagEntry {
 	id: string;
 	key: string;
 	name?: string;
 	tags?: string[];
 	migration_metadata?: MigrationMetadata;
+	/** Absent when the Datadog API predates bucketing modes (treat as `DATADOG`). */
+	bucketing_mode?: BucketingMode;
 	environmentStatuses?: Map<string, DatadogEnvironmentStatus>;
 }
 
@@ -114,13 +123,40 @@ export interface DatadogTargetingRule {
 	conditions: DatadogCondition[];
 }
 
+export interface DatadogVariantWeightRequest {
+	variant_key: string;
+	value: number;
+	/** Source Eppo `variation_weights.id`; accepted only on `EPPO` flags. */
+	eppo_variant_weight_id?: number;
+}
+
+/**
+ * A single-step exposure schedule. The Eppo migration sends one that starts
+ * immediately to carry over an allocation's partial exposure.
+ */
+export interface DatadogExposureScheduleRequest {
+	rollout_options: {
+		strategy: 'NO_ROLLOUT';
+		scheduled_start: 'now';
+	};
+	rollout_steps: Array<{
+		exposure_ratio: number;
+		interval_ms: null;
+		is_pause_record: false;
+		grouped_step_index: number;
+	}>;
+}
+
 export interface DatadogAllocationForFlagCreation {
 	environment_id: string;
 	name: string;
 	key: string;
 	type: 'FEATURE_GATE';
-	variant_weights: Array<{ variant_key: string; value: number }>;
+	variant_weights: DatadogVariantWeightRequest[];
 	targeting_rules?: DatadogTargetingRule[];
+	exposure_schedule?: DatadogExposureScheduleRequest;
+	/** Source Eppo `allocations.id`; accepted only on `EPPO` flags. */
+	eppo_allocation_id?: number;
 }
 
 export type DatadogAllocationSyncRequest = Omit<
@@ -134,11 +170,20 @@ export interface DatadogCreateFlagRequest {
 	description?: string;
 	value_type: 'BOOLEAN' | 'INTEGER' | 'NUMERIC' | 'STRING' | 'JSON';
 	json_schema?: string;
-	variants: Array<{ key: string; name: string; value: string }>;
+	variants: Array<{
+		key: string;
+		name: string;
+		value: string;
+		migration_metadata?: VariantMigrationMetadata;
+	}>;
 	allocations?: DatadogAllocationForFlagCreation[];
 	migration_metadata?: MigrationMetadata;
 	tags?: string[];
 	distribution_channel?: 'CLIENT' | 'SERVER' | 'BOTH' | 'ALL';
+	/** Defaults to `DATADOG`. `EPPO` requires `default_variant_key`. */
+	bucketing_mode?: BucketingMode;
+	/** Default variant applied to every environment when the flag is created. */
+	default_variant_key?: string;
 }
 
 export interface DatadogCreatedFlag {

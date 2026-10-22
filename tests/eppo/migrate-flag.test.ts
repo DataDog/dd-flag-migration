@@ -899,7 +899,7 @@ describe('migrate a flag with integer variation type', () => {
 	});
 });
 
-describe('migrate a flag with weight normalization from non-100 totals', () => {
+describe('migrate a flag with weights that do not total 100', () => {
 	const flag = makeFlag({
 		id: 16,
 		key: 'weighted-flag',
@@ -926,11 +926,11 @@ describe('migrate a flag with weight normalization from non-100 totals', () => {
 	const envMapping = new Map<number, DatadogEnvironment>([[100, ddProd]]);
 	const result = migrateFlag(flag, envMapping);
 
-	it('normalizes weights from total=4 to percentages', () => {
+	it("sends Eppo's raw weights; Datadog divides by the total", () => {
 		const alloc = result.request.allocations?.[0];
 		expect(alloc?.variant_weights).toEqual([
-			{ variant_key: 'a', value: 25 },
-			{ variant_key: 'b', value: 75 },
+			{ variant_key: 'a', value: 1 },
+			{ variant_key: 'b', value: 3 },
 		]);
 	});
 });

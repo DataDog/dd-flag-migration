@@ -110,7 +110,21 @@ function eppoFlag(): EppoFlag {
 		environments: [
 			{ id: 100, name: 'Production', active: false, is_production: true },
 		],
-		allocations: [],
+		// Active environments need an Eppo default to migrate.
+		allocations: [
+			{
+				id: 1000,
+				key: 'default-allocation',
+				name: 'Default',
+				environment_id: 100,
+				type: 'FEATURE_GATE',
+				enabled: true,
+				percent_exposure: 1,
+				is_default: true,
+				variation_weight: [{ id: 5000, variation_id: 20, weight: 100 }],
+				targeting_rules: [],
+			},
+		],
 	};
 }
 
@@ -702,9 +716,10 @@ describe('flag-level migration failures', () => {
 				expect(flagUpdateAttributes(ddMock, 'dd-flag-1')).toContainEqual(
 					expect.objectContaining({ tags: expect.any(Array) }),
 				);
+				// Eppo also syncs targeting in inactive mapped environments.
 				expect(
 					ddMock.history.put.filter((r) => r.url?.endsWith('/allocations')),
-				).toHaveLength(active ? 1 : 0);
+				).toHaveLength(active || provider === 'eppo' ? 1 : 0);
 			}
 		});
 	});
@@ -1045,6 +1060,11 @@ describe('flag-level migration failures', () => {
 			]),
 		);
 		ddMock.onPut(`${DD_BASE}/api/v2/feature-flags/dd-flag-1`).reply(200, {});
+		ddMock
+			.onPut(
+				`${DD_BASE}/api/v2/feature-flags/dd-flag-1/environments/dd-prod/allocations`,
+			)
+			.reply(200, {});
 		ddMock
 			.onPost(
 				`${DD_BASE}/api/v2/feature-flags/dd-flag-1/environments/dd-prod/disable`,
