@@ -215,6 +215,10 @@ This checks that every npm package in `yarn.lock` has a corresponding entry in t
 No external tools or tokens are needed — it runs in CI the same way. If it fails, run
 `yarn licenses:generate` and commit the result.
 
+## Helper scripts
+
+`scripts/get-datadog-flag.sh` fetches a single feature flag from the Datadog API by key or ID. It requires `DD_SITE`, `DD_API_KEY`, and `DD_APP_KEY`, and does not accept a site argument.
+
 ## Code Style
 
 - Use TypeScript for all new code

@@ -6,7 +6,7 @@ This guide covers copying feature flags from one Datadog org (the source) to ano
 
 ## Credentials you'll need
 
-Credentials are read from environment variables. See [Credentials you'll need](README.md#credentials-youll-need) in the main README for general behavior.
+Credentials are read from environment variables. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running the tool. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1. Credentials are never read from or written to the tool's config file.
 
 ### Required for `migrate`, `migration-status`, and `org-diff`
 
@@ -19,7 +19,15 @@ Datadog → Datadog migrations read all six `SOURCE_DD_*` and `TARGET_DD_*` vari
 
 ### Datadog Application Key permissions
 
-Both application keys need the read scopes listed in [Datadog Application Key permissions](README.md#datadog-application-key-permissions). A Datadog → Datadog migration also needs `feature_flag_config_write` on the target org's key.
+Enable these scopes on the keys in `SOURCE_DD_APP_KEY` and `TARGET_DD_APP_KEY`:
+
+| Scope | Required on | Required by | Description |
+|---|---|---|---|
+| `feature_flag_config_read` | both keys | `migrate`, `migration-status`, `org-diff` | View Feature Flag Configurations |
+| `feature_flag_environment_config_read` | both keys | `migrate`, `migration-status`, `org-diff` | View Feature Flag Environment settings |
+| `feature_flag_config_write` | target key | `migrate` | Edit Feature Flag Configurations |
+
+To set these permissions, go to **Organization Settings → Application Keys** in each org, select your key, and enable the scopes under **Feature Flags**.
 
 ### Example
 

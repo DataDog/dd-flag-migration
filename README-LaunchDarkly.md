@@ -6,7 +6,9 @@ This guide covers migrating feature flags from LaunchDarkly to Datadog Feature F
 
 ## Credentials you'll need
 
-Credentials are read from environment variables. See [Credentials you'll need](README.md#credentials-youll-need) in the main README for general behavior and the [Datadog Application Key permissions](README.md#datadog-application-key-permissions).
+Credentials are read from environment variables. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running the tool. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1. Credentials are never read from or written to the tool's config file.
+
+`DD_SITE` is optional for interactive commands and pre-fills the Datadog site prompt when set. For non-interactive runs, use either `DD_SITE` or `--datadog-site`; the explicit CLI option takes precedence. See [Non-US Datadog sites](README.md#non-us-datadog-sites) for site values.
 
 ### Required for `migrate` and `migration-status`
 
@@ -31,6 +33,19 @@ Your LaunchDarkly access token needs **Reader** role permissions (or a custom ro
 ### Required for `sync-tags`
 
 `sync-tags` needs `DD_API_KEY`, `DD_APP_KEY`, and `LAUNCHDARKLY_API_KEY`.
+
+### Datadog Application Key permissions
+
+Enable these scopes on the key in `DD_APP_KEY`:
+
+| Scope | Required by | Description |
+|---|---|---|
+| `feature_flag_config_read` | `migrate`, `migration-status`, `sync-tags` | View Feature Flag Configurations |
+| `feature_flag_config_write` | `migrate`, `sync-tags` | Edit Feature Flag Configurations |
+| `feature_flag_environment_config_read` | `migrate`, `migration-status`, `sync-tags` | View Feature Flag Environment settings |
+| `teams_read` | `migrate`, `sync-tags` | View Teams for team-based access controls |
+
+To set these permissions, go to **Organization Settings → Application Keys**, select your key, and enable the scopes. The feature flag scopes are under **Feature Flags** and `teams_read` is under **Teams**. For the scopes used by `bulk-permissions` and `bulk-enable`, see [Bulk Permission Management](README.md#bulk-permission-management) and [Bulk Environment Enablement](README.md#bulk-environment-enablement).
 
 ### Examples
 

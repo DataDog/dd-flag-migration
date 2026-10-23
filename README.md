@@ -57,47 +57,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
-## Credentials you'll need
-
-Credentials are read from environment variables. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running `migrate`, `migration-status`, `org-diff`, `evaluate`, `bulk-permissions`, `bulk-enable`, or `sync-tags`. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1.
-
-`DD_SITE` is optional for interactive commands and pre-fills the Datadog site prompt when set. For non-interactive `migrate` runs, use either `DD_SITE` or `--datadog-site`; the explicit CLI option takes precedence. The standalone `scripts/get-datadog-flag.sh` script requires `DD_SITE` and does not accept a site argument.
-
-The variables needed for `migrate`, `migration-status`, `org-diff`, and `evaluate` depend on your migration. See the credentials section of your migration guide:
-
-- [Eppo → Datadog credentials](README-Eppo.md#credentials-youll-need)
-- [LaunchDarkly → Datadog credentials](README-LaunchDarkly.md#credentials-youll-need)
-- [Datadog → Datadog credentials](README-Datadog.md#credentials-youll-need)
-
-### Required for `bulk-permissions`, `bulk-enable`, and `sync-tags`
-
-| Variable | Required when | Where to find it |
-|---|---|---|
-| `DD_API_KEY` | always | Datadog → Organization Settings → API Keys |
-| `DD_APP_KEY` | always | Datadog → Organization Settings → Application Keys |
-
-`sync-tags` also needs the source provider's credentials (`EPPO_API_KEY` or `LAUNCHDARKLY_API_KEY`) depending on the provider you select — the same variables used by `migrate`.
-
-### Datadog Application Key permissions
-
-Enable the scopes required for the command you are running:
-
-| Scope | Required by | Description |
-|---|---|---|
-| `feature_flag_approvals_override` | Optional for `bulk-enable` | Bypasses Feature Flag approval requirements. Without it, approval-protected changes are submitted as approval requests and reported as such. |
-| `feature_flag_config_read` | `migrate`, `migration-status`, `org-diff`, `bulk-permissions`, `bulk-enable`, `sync-tags` | View Feature Flag Configurations |
-| `feature_flag_config_write` | `migrate`, `bulk-enable`, `sync-tags` | Edit Feature Flag Configurations |
-| `feature_flag_environment_config_read` | `migrate`, `migration-status`, `org-diff`, `bulk-enable`, `sync-tags` | View Feature Flag Environment settings |
-| `teams_read` | `migrate` (Eppo and LaunchDarkly), `bulk-permissions`, `sync-tags` | View Teams for team-based access controls |
-| `restriction_policies_read` | `bulk-permissions` | View restriction policies |
-| `restriction_policies_write` | `bulk-permissions` | Edit restriction policies |
-
-For Datadog → Datadog migrations and `org-diff`, both application keys need the read scopes. A Datadog → Datadog migration also needs `feature_flag_config_write` on the target org's key.
-
-To set these permissions, go to **Organization Settings → Application Keys**, select your key, and enable the scopes for the command. The feature flag scopes are under **Feature Flags**, `teams_read` is under **Teams**, and restriction-policy scopes are only used by `bulk-permissions`.
-
----
-
 ## Step 1 — Migrate flags
 
 ```bash
@@ -117,7 +76,7 @@ Each migration guide describes the additional steps for its source:
 - [LaunchDarkly → Datadog workflow](README-LaunchDarkly.md#migrate-flags)
 - [Datadog → Datadog workflow](README-Datadog.md#migrate-flags)
 
-API keys are read from environment variables (see [Credentials](#credentials-youll-need)).
+API keys are read from environment variables (see the credentials section of your [migration guide](#migration-guides)).
 Set `DD_SITE` to pre-fill the Datadog site prompt, or pass `--datadog-site=<site>` to provide an explicit site without a prompt. Datadog → Datadog migrations don't prompt for a site; they read `SOURCE_DD_SITE` and `TARGET_DD_SITE`. For fully scripted runs, see [Non-interactive mode](#non-interactive-mode) below.
 
 When the migration completes, a record is saved to `~/.dd-flag-migration/migration-<timestamp>.json`. In interactive mode you'll be prompted to export results to an `.xlsx` file; in non-interactive mode pass `--export=true` to generate one.
@@ -221,6 +180,8 @@ npx @datadog/dd-flag-migration bulk-permissions
 yarn bulk-permissions
 ```
 
+This command needs `DD_API_KEY` and `DD_APP_KEY`. The application key needs the `feature_flag_config_read`, `teams_read`, `restriction_policies_read`, and `restriction_policies_write` scopes. The restriction-policy scopes are only used by this command.
+
 The interactive flow lets you:
 
 1. Choose **Add teams to flags** or **Remove teams from flags**.
@@ -246,6 +207,8 @@ npx @datadog/dd-flag-migration bulk-enable
 yarn bulk-enable
 ```
 
+This command needs `DD_API_KEY` and `DD_APP_KEY`. The application key needs the `feature_flag_config_read`, `feature_flag_config_write`, and `feature_flag_environment_config_read` scopes. The optional `feature_flag_approvals_override` scope bypasses Feature Flag approval requirements; without it, approval-protected changes are submitted as approval requests and reported as such.
+
 First select one or more Datadog environments, then select the migrated flags to enable. The flag picker supports filtering by flag key or tag; press **Tab** for advanced filters scoped to the selected environments. Select **needs-enabling** to hide flags that are already enabled in every selected environment. Flags whose status cannot be confirmed remain visible under **needs-enabling** so they are not silently omitted. Production environments are clearly marked and require an explicit confirmation.
 
 Updates run one at a time and use the shared Datadog rate-limit and retry handling. A failure for one flag/environment pair does not stop the remaining updates. Every confirmed update writes a `bulk-enable-export-<timestamp>.xlsx` report in the current directory. The report distinguishes newly enabled pairs, already-enabled pairs, approval requests, failures, and successful writes whose prior status could not be read.
@@ -262,6 +225,8 @@ npx @datadog/dd-flag-migration sync-tags
 # When running from this repository:
 yarn sync-tags
 ```
+
+This command needs `DD_API_KEY`, `DD_APP_KEY`, and the source provider's API key. See the credentials section of the [Eppo](README-Eppo.md#credentials-youll-need) or [LaunchDarkly](README-LaunchDarkly.md#credentials-youll-need) guide.
 
 The interactive flow mirrors the `migrate` command's provider and flag selection:
 
