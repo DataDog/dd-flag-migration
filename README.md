@@ -96,9 +96,9 @@ What is synced, and how existing flags are matched, depends on your migration. S
 
 Pass `--interactive=false` to run the migration entirely from CLI arguments, with no prompts. This is useful for scripted or CI environments. See the options and examples in your migration guide:
 
-- [Eppo → Datadog](README-Eppo.md#non-interactive-mode)
-- [LaunchDarkly → Datadog](README-LaunchDarkly.md#non-interactive-mode)
-- [Datadog → Datadog](README-Datadog.md#non-interactive-mode)
+- [Eppo → Datadog](README-Eppo.md#non-interactive-migrations)
+- [LaunchDarkly → Datadog](README-LaunchDarkly.md#non-interactive-migrations)
+- [Datadog → Datadog](README-Datadog.md#non-interactive-migrations)
 
 ### Dry run
 

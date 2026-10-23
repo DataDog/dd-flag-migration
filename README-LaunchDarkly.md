@@ -4,6 +4,31 @@ This guide covers migrating feature flags from LaunchDarkly to Datadog Feature F
 
 ---
 
+## Contents
+
+- [Credentials you'll need](#credentials-youll-need)
+  - [Required for `migrate` and `migration-status`](#required-for-migrate-and-migration-status)
+  - [Required for `evaluate`](#required-for-evaluate)
+  - [Required for `sync-tags`](#required-for-sync-tags)
+  - [Datadog Application Key permissions](#datadog-application-key-permissions)
+  - [Examples](#examples)
+- [Migrate flags](#migrate-flags)
+  - [Advanced filtering](#advanced-filtering)
+  - [Re-syncing existing flags](#re-syncing-existing-flags)
+- [Non-interactive migrations](#non-interactive-migrations)
+- [Migration status](#migration-status)
+- [Tag sync](#tag-sync)
+  - [Non-interactive tag sync](#non-interactive-tag-sync)
+- [Evaluate the migration](#evaluate-the-migration)
+  - [Mobile context kinds](#mobile-context-kinds)
+- [Unsupported features](#unsupported-features)
+  - [Flags that are skipped](#flags-that-are-skipped)
+  - [Flags that are migrated with adjustments](#flags-that-are-migrated-with-adjustments)
+  - [Features with limited evaluation support](#features-with-limited-evaluation-support)
+- [How it works](#how-it-works)
+
+---
+
 ## Credentials you'll need
 
 Credentials are read from environment variables. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running the tool. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1. Credentials are never read from or written to the tool's config file.
@@ -139,7 +164,9 @@ such as `Flag (1)`, while applying source name changes. If an updated name is
 already taken, the tool tries another numbered suffix without changing the
 flag's key or ID. Dry runs cannot check whether a new name is already taken.
 
-### Non-interactive mode
+---
+
+## Non-interactive migrations
 
 Pass `--interactive=false` to run the migration entirely from CLI arguments, with no prompts. This is useful for scripted or CI environments. Set `DD_SITE` in the job environment or pass `--datadog-site`; you do not need to provide both.
 

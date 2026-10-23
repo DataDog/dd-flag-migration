@@ -4,6 +4,26 @@ This guide covers copying feature flags from one Datadog org (the source) to ano
 
 ---
 
+## Contents
+
+- [Credentials you'll need](#credentials-youll-need)
+  - [Required for `migrate`, `migration-status`, and `org-diff`](#required-for-migrate-migration-status-and-org-diff)
+  - [Datadog Application Key permissions](#datadog-application-key-permissions)
+  - [Example](#example)
+- [Migrate flags](#migrate-flags)
+  - [Filtering by tag](#filtering-by-tag)
+  - [Advanced filtering](#advanced-filtering)
+  - [Saved filters](#saved-filters)
+  - [What is synced](#what-is-synced)
+- [Non-interactive migrations](#non-interactive-migrations)
+- [Migration status](#migration-status)
+- [Org Diff](#org-diff)
+- [Unsupported features](#unsupported-features)
+  - [Flags that are skipped](#flags-that-are-skipped)
+  - [Not copied](#not-copied)
+
+---
+
 ## Credentials you'll need
 
 Credentials are read from environment variables. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running the tool. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1. Credentials are never read from or written to the tool's config file.
@@ -92,7 +112,9 @@ Flags are matched by key. Variant keys are copied as-is. Name, description, JSON
 
 See [Re-syncing existing flags](README.md#re-syncing-existing-flags) for general behavior.
 
-### Non-interactive mode
+---
+
+## Non-interactive migrations
 
 Pass `--interactive=false` to run the migration entirely from CLI arguments, with no prompts. This is useful for scripted or CI environments. Credentials and sites come from the `SOURCE_DD_*` and `TARGET_DD_*` variables, so `--datadog-site` isn't supported and `--project` isn't used.
 
