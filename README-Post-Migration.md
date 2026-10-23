@@ -88,16 +88,60 @@ The interactive flow mirrors the `migrate` command's provider and flag selection
 - **Additive Merge** (default) — adds the source tags to each Datadog flag while preserving any tags that already exist in Datadog. Source tags are unioned with the existing Datadog tags; nothing is removed. This is the safe default and never deletes tags.
 - **Full Replace** — replaces the Datadog flag's tags with exactly the source tags. Tags that exist only in Datadog are removed, so removals in the source platform propagate to Datadog. Use this when the source platform is the source of truth for tags.
 
-The source tag set depends on the provider:
+### Which tags get synced
 
-- [Eppo tag sync](README-Eppo.md#tag-sync)
-- [LaunchDarkly tag sync](README-LaunchDarkly.md#tag-sync)
+- **Eppo** — the flag's `tag_names` as-is.
+- **LaunchDarkly** — the flag's own LD tags plus the `project:<key>` migration-link tag (so the Datadog→LaunchDarkly link is preserved on Full Replace). Team tags derived from the LaunchDarkly RBAC editor-team walk are not re-synced here — they belong to the restriction-policy flow.
+
+Datadog → Datadog migrations don't use `sync-tags`; `migrate` syncs tags on every run.
+
+### Report
 
 Every completed tag-sync run writes a `sync-tags-export-<timestamp>.xlsx` report in the current directory, including dry runs. The **Tag Sync** sheet records the source, existing, target, added, and removed tags for every Datadog operation; when source flags are skipped because no safe Datadog match exists, a **Skipped Flags** sheet records the reason.
 
 ### Non-interactive mode
 
-Pass `--interactive=false` to run the tag sync entirely from CLI arguments. See the options and examples in the [Eppo](README-Eppo.md#non-interactive-tag-sync) or [LaunchDarkly](README-LaunchDarkly.md#non-interactive-tag-sync) guide.
+Pass `--interactive=false` to run the tag sync entirely from CLI arguments. Non-interactive runs write a JSON result document to stdout, including the report's `exportPath`; status messages and spreadsheet confirmation go to stderr.
+
+**Required flags**
+
+| Flag | Description |
+|---|---|
+| `--provider <Eppo\|LaunchDarkly>` | Source provider (case-insensitive) |
+| `--datadog-site <site>` | Datadog site (e.g. `datadoghq.com`) |
+| `--feature-flag <key>` | Flag key to sync tags for. Repeat for each flag |
+| `--project <key>` | LaunchDarkly project key *(LaunchDarkly only)* |
+
+**Optional flags**
+
+| Flag | Description |
+|---|---|
+| `--dry-run` | Preview tag changes without writing to Datadog |
+| `--tag-mode <additive\|replace>` | Tag sync strategy (default: `additive`). Also accepts `merge` and `full` as aliases |
+
+**Examples**
+
+Preview an additive tag sync for an Eppo flag:
+
+```bash
+npx @datadog/dd-flag-migration sync-tags --interactive=false \
+  --provider Eppo \
+  --datadog-site datadoghq.com \
+  --dry-run \
+  --feature-flag my-flag
+```
+
+Sync tags for two LaunchDarkly flags using Full Replace:
+
+```bash
+npx @datadog/dd-flag-migration sync-tags --interactive=false \
+  --provider LaunchDarkly \
+  --project my-ld-project \
+  --datadog-site datadoghq.com \
+  --tag-mode replace \
+  --feature-flag flag-one \
+  --feature-flag flag-two
+```
 
 ### Dry run
 

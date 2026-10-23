@@ -16,8 +16,6 @@ This guide covers migrating feature flags from Eppo to Datadog Feature Flags. Fo
   - [Advanced filtering](#advanced-filtering)
   - [Re-syncing existing flags](#re-syncing-existing-flags)
 - [Non-interactive migrations](#non-interactive-migrations)
-- [Tag sync](#tag-sync)
-  - [Non-interactive tag sync](#non-interactive-tag-sync)
 - [Evaluate the migration](#evaluate-the-migration)
   - [Evaluate a single flag](#evaluate-a-single-flag)
 - [Unsupported features](#unsupported-features)
@@ -54,7 +52,7 @@ Credentials are read from environment variables. Set them in your shell (or `.en
 
 ### Required for `sync-tags`
 
-`sync-tags` needs `DD_API_KEY`, `DD_APP_KEY`, and `EPPO_API_KEY`.
+`sync-tags` needs `DD_API_KEY`, `DD_APP_KEY`, and `EPPO_API_KEY`. See [Tag sync](README-Post-Migration.md#tag-sync) for how to use it.
 
 ### Datadog Application Key permissions
 
@@ -162,45 +160,6 @@ npx @datadog/dd-flag-migration migrate --interactive=false \
   --provider Eppo \
   --datadog-site datadoghq.com \
   --env-map production,Production \
-  --feature-flag my-flag
-```
-
----
-
-## Tag sync
-
-See [Tag Sync](README-Post-Migration.md#tag-sync) for the workflow and sync strategies.
-
-For Eppo flags, the source tag set is the flag's `tag_names` as-is.
-
-### Non-interactive tag sync
-
-Pass `--interactive=false` to run the tag sync entirely from CLI arguments. Non-interactive runs write a JSON result document to stdout, including the report's `exportPath`; status messages and spreadsheet confirmation go to stderr.
-
-**Required flags**
-
-| Flag | Description |
-|---|---|
-| `--provider Eppo` | Source provider (case-insensitive) |
-| `--datadog-site <site>` | Datadog site (e.g. `datadoghq.com`) |
-| `--feature-flag <key>` | Flag key to sync tags for. Repeat for each flag |
-
-**Optional flags**
-
-| Flag | Description |
-|---|---|
-| `--dry-run` | Preview tag changes without writing to Datadog |
-| `--tag-mode <additive\|replace>` | Tag sync strategy (default: `additive`). Also accepts `merge` and `full` as aliases |
-
-**Examples**
-
-Preview an additive tag sync for an Eppo flag:
-
-```bash
-npx @datadog/dd-flag-migration sync-tags --interactive=false \
-  --provider Eppo \
-  --datadog-site datadoghq.com \
-  --dry-run \
   --feature-flag my-flag
 ```
 

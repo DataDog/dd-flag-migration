@@ -17,8 +17,6 @@ This guide covers migrating feature flags from LaunchDarkly to Datadog Feature F
   - [Re-syncing existing flags](#re-syncing-existing-flags)
 - [Non-interactive migrations](#non-interactive-migrations)
 - [Migration status](#migration-status)
-- [Tag sync](#tag-sync)
-  - [Non-interactive tag sync](#non-interactive-tag-sync)
 - [Evaluate the migration](#evaluate-the-migration)
   - [Mobile context kinds](#mobile-context-kinds)
 - [Unsupported features](#unsupported-features)
@@ -57,7 +55,7 @@ Your LaunchDarkly access token needs **Reader** role permissions (or a custom ro
 
 ### Required for `sync-tags`
 
-`sync-tags` needs `DD_API_KEY`, `DD_APP_KEY`, and `LAUNCHDARKLY_API_KEY`.
+`sync-tags` needs `DD_API_KEY`, `DD_APP_KEY`, and `LAUNCHDARKLY_API_KEY`. See [Tag sync](README-Post-Migration.md#tag-sync) for how to use it.
 
 ### Datadog Application Key permissions
 
@@ -252,48 +250,6 @@ The interactive workflow uses the same environment selection and one-to-many map
 The command reports the selected flags as **Not yet migrated**, **Partially migrated**, **Out of sync**, **In sync**, or **Needs review**. Environment sync is calculated only for the selected mappings; unselected Datadog environments do not affect the result. A `migration-status-launchdarkly-<project>-<timestamp>.xlsx` workbook is written automatically to the current directory with a global summary and one status tab per selected Datadog environment. Each environment tab includes scoped status counts at the top.
 
 The report compares current configuration and does not identify which platform changed after migration. Tags, permissions, restriction policies, and saved-filter contents are not assessed.
-
----
-
-## Tag sync
-
-See [Tag Sync](README-Post-Migration.md#tag-sync) for the workflow and sync strategies.
-
-For LaunchDarkly flags, the source tag set is the flag's own LD tags plus the `project:<key>` migration-link tag (so the Datadog→LaunchDarkly link is preserved on Full Replace). Team tags derived from the LaunchDarkly RBAC editor-team walk are not re-synced here — they belong to the restriction-policy flow.
-
-### Non-interactive tag sync
-
-Pass `--interactive=false` to run the tag sync entirely from CLI arguments. Non-interactive runs write a JSON result document to stdout, including the report's `exportPath`; status messages and spreadsheet confirmation go to stderr.
-
-**Required flags**
-
-| Flag | Description |
-|---|---|
-| `--provider LaunchDarkly` | Source provider (case-insensitive) |
-| `--project <key>` | LaunchDarkly project key |
-| `--datadog-site <site>` | Datadog site (e.g. `datadoghq.com`) |
-| `--feature-flag <key>` | Flag key to sync tags for. Repeat for each flag |
-
-**Optional flags**
-
-| Flag | Description |
-|---|---|
-| `--dry-run` | Preview tag changes without writing to Datadog |
-| `--tag-mode <additive\|replace>` | Tag sync strategy (default: `additive`). Also accepts `merge` and `full` as aliases |
-
-**Examples**
-
-Sync tags for two LaunchDarkly flags using Full Replace:
-
-```bash
-npx @datadog/dd-flag-migration sync-tags --interactive=false \
-  --provider LaunchDarkly \
-  --project my-ld-project \
-  --datadog-site datadoghq.com \
-  --tag-mode replace \
-  --feature-flag flag-one \
-  --feature-flag flag-two
-```
 
 ---
 
