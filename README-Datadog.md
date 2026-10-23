@@ -92,19 +92,9 @@ Flags are matched by key. Variant keys are copied as-is. Name, description, JSON
 
 See [Re-syncing existing flags](README.md#re-syncing-existing-flags) for general behavior.
 
-### Non-interactive examples
+### Non-interactive mode
 
-See [Non-interactive mode](README.md#non-interactive-mode) for all options. `--datadog-site` and `--project` are not used for `Datadog`.
-
-Copy flags from the `SOURCE_DD_*` org to the `TARGET_DD_*` org. Environment names in `--env-map` are `source-org-environment,target-org-environment`:
-
-```bash
-npx @datadog/dd-flag-migration migrate --interactive=false \
-  --provider Datadog \
-  --env-map Production,Production \
-  --env-map Staging,Staging \
-  --feature-flag flag-one
-```
+See [README-Non-Interactive.md](README-Non-Interactive.md) for scripted `--interactive=false` runs, with a [Datadog → Datadog example](README-Non-Interactive.md#datadog--datadog).
 
 ---
 

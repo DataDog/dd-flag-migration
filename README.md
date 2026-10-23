@@ -18,6 +18,8 @@ This README covers installation and the primary commands — `migrate`, `migrati
 
 Commands for managing flags after migration are covered in [README-Post-Migration.md](README-Post-Migration.md).
 
+Scripted (`--interactive=false`) runs of `migrate` and `sync-tags` are covered in [README-Non-Interactive.md](README-Non-Interactive.md).
+
 ---
 
 ## Prerequisites
@@ -71,7 +73,7 @@ Each migration guide describes the additional steps for its source:
 - [Datadog → Datadog workflow](README-Datadog.md#migrate-flags)
 
 API keys are read from environment variables (see the credentials section of your [migration guide](#migration-guides)).
-Set `DD_SITE` to pre-fill the Datadog site prompt, or pass `--datadog-site=<site>` to provide an explicit site without a prompt. Datadog → Datadog migrations don't prompt for a site; they read `SOURCE_DD_SITE` and `TARGET_DD_SITE`. For fully scripted runs, see [Non-interactive mode](#non-interactive-mode) below.
+Set `DD_SITE` to pre-fill the Datadog site prompt, or pass `--datadog-site=<site>` to provide an explicit site without a prompt. Datadog → Datadog migrations don't prompt for a site; they read `SOURCE_DD_SITE` and `TARGET_DD_SITE`. For fully scripted runs, see [README-Non-Interactive.md](README-Non-Interactive.md).
 
 When the migration completes, a record is saved to `~/.dd-flag-migration/migration-<timestamp>.json`. In interactive mode you'll be prompted to export results to an `.xlsx` file; in non-interactive mode pass `--export=true` to generate one.
 
@@ -81,7 +83,7 @@ For large flag sets, the tool supports splitting work across multiple runs:
 
 - **Progress bar** — a sticky progress bar shows how many flags have been migrated so far, updating in real time
 - **Tab to filter** — during flag selection, press **Tab** to open the advanced-filter screen and narrow the list by category, such as `not-yet-migrated`. Combined with **Ctrl+A**, this makes it easy to select only the remaining flags for the next run
-- **Ctrl+C to save progress** — pressing **Ctrl+C** during migration saves a partial migration file (`~/.dd-flag-migration/migration-<timestamp>.json`) with all flags that completed successfully before the interruption. You can resume later by filtering to `not-yet-migrated` with **Tab**
+- **Ctrl+C to save progress** — pressing **Ctrl+C** during migration saves a partial migration file (`~/.dd-flag-migration/migration-<timestamp>.json`) with all flags that completed successfully before the interruption. You can resume later by filtering to `not-yet-migrated` with **Tab** on the flag selection screen.
 
 ### Re-syncing existing flags
 
@@ -94,38 +96,7 @@ What is synced, and how existing flags are matched, depends on your migration. S
 
 ### Non-interactive mode
 
-Pass `--interactive=false` to run the migration entirely from CLI arguments, with no prompts. This is useful for scripted or CI environments. Set `DD_SITE` in the job environment or pass `--datadog-site`; you do not need to provide both.
-
-Non-interactive migrations use `--tag-mode merge` by default, preserving tags that exist only in Datadog. Use `--tag-mode replace` to replace existing tags with the source-derived tags, including LaunchDarkly's `project:<key>` tag. In interactive mode, specifying `--tag-mode` skips the tag-mode prompt.
-
-JSON flag schemas follow the source on re-migration. LaunchDarkly and Eppo expose no flag schema, so re-migrating their JSON flags clears any schema in Datadog. Environments awaiting enable approval are reported separately and do not count as enabled.
-
-Non-interactive migrations write a JSON result document to stdout. Status messages, progress output, and export messages are written to stderr so stdout can be piped into tools such as `jq`.
-
-**Required flags**
-
-| Flag | Description |
-|---|---|
-| `--provider <Eppo\|LaunchDarkly\|Datadog>` | Source provider (case-insensitive). `Datadog` copies flags between the `SOURCE_DD_*` and `TARGET_DD_*` orgs |
-| `--datadog-site <site>` | Datadog site (e.g. `datadoghq.com`); optional when `DD_SITE` is set. Not used for `Datadog` |
-| `--env-map <source,target>` | Map a source environment to a Datadog environment. Repeat the option—including the same source—to map one source environment to multiple Datadog environments |
-| `--feature-flag <key>` | Flag key to migrate. Repeat for each flag. For LaunchDarkly, use `<source-key>,<datadog-key>` to rename the Datadog flag |
-| `--project <key>` | LaunchDarkly project key *(LaunchDarkly only)* |
-
-**Optional flags**
-
-| Flag | Description |
-|---|---|
-| `--dry-run` | Preview changes without writing to Datadog |
-| `--export=<bool>` | Export results to an `.xlsx` file in the current directory (default: `false`). LaunchDarkly dry-run reports label planned changes as “Would create” or “Would sync”. |
-| `--distribution-channel <auto\|client\|server\|all>` | LaunchDarkly distribution-channel behavior (default: `auto`); applies to new and existing flags in non-interactive mode |
-| `--tag-mode <merge\|replace>` | Tag sync behavior for both providers (non-interactive default: `merge`) |
-
-Examples for each provider are in the migration guides:
-
-- [Eppo → Datadog examples](README-Eppo.md#non-interactive-examples)
-- [LaunchDarkly → Datadog examples](README-LaunchDarkly.md#non-interactive-examples)
-- [Datadog → Datadog examples](README-Datadog.md#non-interactive-examples)
+Pass `--interactive=false` to run the migration entirely from CLI arguments, with no prompts. See [README-Non-Interactive.md](README-Non-Interactive.md) for the options and examples.
 
 ### Dry run
 

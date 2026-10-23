@@ -98,19 +98,9 @@ such as `Flag (1)`, while applying source name changes. If an updated name is
 already taken, the tool tries another numbered suffix without changing the
 flag's key or ID. Dry runs cannot check whether a new name is already taken.
 
-### Non-interactive examples
+### Non-interactive mode
 
-See [Non-interactive mode](README.md#non-interactive-mode) for all options. Eppo migrations don't need a project key.
-
-Migrate an Eppo flag:
-
-```bash
-npx @datadog/dd-flag-migration migrate --interactive=false \
-  --provider Eppo \
-  --datadog-site datadoghq.com \
-  --env-map production,Production \
-  --feature-flag my-flag
-```
+See [README-Non-Interactive.md](README-Non-Interactive.md) for scripted `--interactive=false` runs, with [Eppo examples](README-Non-Interactive.md#eppo--datadog).
 
 ---
 
@@ -120,15 +110,7 @@ See [Tag Sync](README-Post-Migration.md#tag-sync) for the workflow and sync stra
 
 For Eppo flags, the source tag set is the flag's `tag_names` as-is.
 
-Preview an additive tag sync for an Eppo flag:
-
-```bash
-npx @datadog/dd-flag-migration sync-tags --interactive=false \
-  --provider Eppo \
-  --datadog-site datadoghq.com \
-  --dry-run \
-  --feature-flag my-flag
-```
+For a non-interactive example, see [`sync-tags` examples](README-Non-Interactive.md#sync-tags-examples).
 
 ---
 

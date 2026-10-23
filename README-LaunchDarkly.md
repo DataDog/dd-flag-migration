@@ -139,45 +139,9 @@ such as `Flag (1)`, while applying source name changes. If an updated name is
 already taken, the tool tries another numbered suffix without changing the
 flag's key or ID. Dry runs cannot check whether a new name is already taken.
 
-### Non-interactive examples
+### Non-interactive mode
 
-See [Non-interactive mode](README.md#non-interactive-mode) for all options. LaunchDarkly migrations require `--project`.
-
-Map one LaunchDarkly environment to two Datadog environments:
-
-```bash
-npx @datadog/dd-flag-migration migrate --interactive=false \
-  --provider LaunchDarkly \
-  --project my-ld-project \
-  --datadog-site datadoghq.com \
-  --env-map Production,Production \
-  --env-map Production,QA \
-  --feature-flag flag-one
-```
-
-Migrate two LaunchDarkly flags across two environments:
-
-```bash
-npx @datadog/dd-flag-migration migrate --interactive=false \
-  --provider LaunchDarkly \
-  --project my-ld-project \
-  --datadog-site datadoghq.com \
-  --env-map Production,Production \
-  --env-map Staging,QA \
-  --feature-flag flag-one \
-  --feature-flag flag-two
-```
-
-Rename a LaunchDarkly flag while migrating it:
-
-```bash
-npx @datadog/dd-flag-migration migrate --interactive=false \
-  --provider LaunchDarkly \
-  --project my-ld-project \
-  --datadog-site datadoghq.com \
-  --env-map Production,Production \
-  --feature-flag my-flag-1,my-renamed-flag-1
-```
+See [README-Non-Interactive.md](README-Non-Interactive.md) for scripted `--interactive=false` runs, with [LaunchDarkly examples](README-Non-Interactive.md#launchdarkly--datadog).
 
 ---
 
@@ -207,17 +171,7 @@ See [Tag Sync](README-Post-Migration.md#tag-sync) for the workflow and sync stra
 
 For LaunchDarkly flags, the source tag set is the flag's own LD tags plus the `project:<key>` migration-link tag (so the Datadog→LaunchDarkly link is preserved on Full Replace). Team tags derived from the LaunchDarkly RBAC editor-team walk are not re-synced here — they belong to the restriction-policy flow.
 
-Sync tags for two LaunchDarkly flags using Full Replace:
-
-```bash
-npx @datadog/dd-flag-migration sync-tags --interactive=false \
-  --provider LaunchDarkly \
-  --project my-ld-project \
-  --datadog-site datadoghq.com \
-  --tag-mode replace \
-  --feature-flag flag-one \
-  --feature-flag flag-two
-```
+For a non-interactive example, see [`sync-tags` examples](README-Non-Interactive.md#sync-tags-examples).
 
 ---
 

@@ -97,25 +97,7 @@ Every completed tag-sync run writes a `sync-tags-export-<timestamp>.xlsx` report
 
 ### Non-interactive mode
 
-Pass `--interactive=false` to run the tag sync entirely from CLI arguments. Non-interactive runs write a JSON result document to stdout, including the report's `exportPath`; status messages and spreadsheet confirmation go to stderr.
-
-**Required flags**
-
-| Flag | Description |
-|---|---|
-| `--provider <Eppo\|LaunchDarkly>` | Source provider (case-insensitive) |
-| `--datadog-site <site>` | Datadog site (e.g. `datadoghq.com`) |
-| `--feature-flag <key>` | Flag key to sync tags for. Repeat for each flag |
-| `--project <key>` | LaunchDarkly project key *(LaunchDarkly only)* |
-
-**Optional flags**
-
-| Flag | Description |
-|---|---|
-| `--dry-run` | Preview tag changes without writing to Datadog |
-| `--tag-mode <additive\|replace>` | Tag sync strategy (default: `additive`). Also accepts `merge` and `full` as aliases |
-
-Examples for each provider are in the [Eppo](README-Eppo.md#tag-sync) and [LaunchDarkly](README-LaunchDarkly.md#tag-sync) guides.
+Pass `--interactive=false` to run the tag sync entirely from CLI arguments. See [README-Non-Interactive.md](README-Non-Interactive.md#sync-tags) for the options and examples.
 
 ### Dry run
 
