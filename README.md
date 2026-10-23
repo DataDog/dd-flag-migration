@@ -16,7 +16,7 @@ This README covers installation and the primary commands — `migrate`, `migrati
 | LaunchDarkly → Datadog | [README-LaunchDarkly.md](README-LaunchDarkly.md) |
 | Datadog → Datadog | [README-Datadog.md](README-Datadog.md), including `org-diff` for comparing two orgs |
 
-Commands for managing flags after migration are covered in [README-Post-Migration.md](README-Post-Migration.md).
+See [Post-migration actions](README-Post-Migration.md) for bulk management of migrated flags.
 
 ---
 
