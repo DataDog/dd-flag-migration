@@ -1,94 +1,26 @@
 # Eppo → Datadog migration
 
-This guide covers migrating feature flags from Eppo to Datadog Feature Flags. For installation, shared commands, and options that apply to every migration, see the [main README](README.md).
+This guide covers migrating feature flags from Eppo to Datadog Feature Flags. For installation and the workflow shared by every migration, see the [main README](README.md). For bulk management of migrated flags, see [Post-migration actions](README-Post-Migration.md).
+
+Credentials are read from environment variables, and each section below lists the ones it needs. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running the tool. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1. Credentials are never read from or written to the tool's config file.
 
 ---
 
 ## Contents
 
-- [Credentials you'll need](#credentials-youll-need)
-  - [Required for `migrate`](#required-for-migrate)
-  - [Required for `evaluate`](#required-for-evaluate)
-  - [Required for `sync-tags`](#required-for-sync-tags)
-  - [Datadog Application Key permissions](#datadog-application-key-permissions)
-  - [Examples](#examples)
 - [Migrate flags](#migrate-flags)
+  - [Migration credentials](#migration-credentials)
   - [Advanced filtering](#advanced-filtering)
   - [Re-syncing existing flags](#re-syncing-existing-flags)
 - [Non-interactive migrations](#non-interactive-migrations)
 - [Evaluate the migration](#evaluate-the-migration)
+  - [Evaluation credentials](#evaluation-credentials)
   - [Evaluate a single flag](#evaluate-a-single-flag)
 - [Unsupported features](#unsupported-features)
   - [Flags that are skipped](#flags-that-are-skipped)
   - [Flags that fail migration](#flags-that-fail-migration)
   - [Flags that are migrated with adjustments](#flags-that-are-migrated-with-adjustments)
 - [How it works](#how-it-works)
-
----
-
-## Credentials you'll need
-
-Credentials are read from environment variables. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running the tool. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1. Credentials are never read from or written to the tool's config file.
-
-`DD_SITE` is optional for interactive commands and pre-fills the Datadog site prompt when set. For non-interactive runs, use either `DD_SITE` or `--datadog-site`; the explicit CLI option takes precedence. See [Non-US Datadog sites](README.md#non-us-datadog-sites) for site values.
-
-### Required for `migrate`
-
-| Variable | Where to find it |
-|---|---|
-| `DD_API_KEY` | Datadog → Organization Settings → API Keys |
-| `DD_APP_KEY` | Datadog → Organization Settings → Application Keys |
-| `EPPO_API_KEY` | Eppo → Configuration → API Keys |
-
-`EPPO_*` variables are checked only when you select Eppo as the source provider.
-
-### Required for `evaluate`
-
-| Variable | Required when | Where to find it |
-|---|---|---|
-| `DD_CLIENT_TOKEN` | evaluating a migration or a client-only flag | Datadog → Organization Settings → Client Tokens |
-| `EPPO_SDK_KEY` | always | Eppo → SDK Keys (server SDK key, one per environment) |
-| `EPPO_API_KEY` | evaluating a single flag | Eppo → Configuration → API Keys |
-
-### Required for `sync-tags`
-
-`sync-tags` needs `DD_API_KEY`, `DD_APP_KEY`, and `EPPO_API_KEY`. See [Tag sync](README-Post-Migration.md#tag-sync) for how to use it.
-
-### Datadog Application Key permissions
-
-Enable these scopes on the key in `DD_APP_KEY`:
-
-| Scope | Required by | Description |
-|---|---|---|
-| `feature_flag_config_read` | `migrate`, `sync-tags` | View Feature Flag Configurations |
-| `feature_flag_config_write` | `migrate`, `sync-tags` | Edit Feature Flag Configurations |
-| `feature_flag_environment_config_read` | `migrate`, `sync-tags` | View Feature Flag Environment settings |
-| `teams_read` | `migrate`, `sync-tags` | View Teams for team-based access controls |
-
-To set these permissions, go to **Organization Settings → Application Keys**, select your key, and enable the scopes. The feature flag scopes are under **Feature Flags** and `teams_read` is under **Teams**. For the scopes used by `bulk-permissions` and `bulk-enable`, see [Bulk Permission Management](README-Post-Migration.md#bulk-permission-management) and [Bulk Environment Enablement](README-Post-Migration.md#bulk-environment-enablement).
-
-### Examples
-
-**Migrate from Eppo**
-
-```bash
-export DD_API_KEY=...
-export DD_APP_KEY=...
-export EPPO_API_KEY=...
-
-npx @datadog/dd-flag-migration migrate
-```
-
-**Evaluate an Eppo migration**
-
-```bash
-export DD_API_KEY=...
-export DD_APP_KEY=...
-export DD_CLIENT_TOKEN=...
-export EPPO_SDK_KEY=...
-
-npx @datadog/dd-flag-migration evaluate
-```
 
 ---
 
@@ -99,6 +31,35 @@ npx @datadog/dd-flag-migration migrate   # choose "Eppo → Datadog"
 ```
 
 The tool follows the [general migration workflow](README.md#step-1--migrate-flags): map each Eppo environment to one or more Datadog environments, select flags, then confirm.
+
+### Migration credentials
+
+| Variable | Where to find it |
+|---|---|
+| `DD_API_KEY` | Datadog → Organization Settings → API Keys |
+| `DD_APP_KEY` | Datadog → Organization Settings → Application Keys |
+| `EPPO_API_KEY` | Eppo → Configuration → API Keys |
+
+`DD_SITE` is optional for interactive runs and pre-fills the Datadog site prompt when set. For non-interactive runs, use either `DD_SITE` or `--datadog-site`; the explicit CLI option takes precedence. See [Non-US Datadog sites](README.md#non-us-datadog-sites) for site values.
+
+Enable these scopes on the key in `DD_APP_KEY`:
+
+| Scope | Description |
+|---|---|
+| `feature_flag_config_read` | View Feature Flag Configurations |
+| `feature_flag_config_write` | Edit Feature Flag Configurations |
+| `feature_flag_environment_config_read` | View Feature Flag Environment settings |
+| `teams_read` | View Teams for team-based access controls |
+
+To set these permissions, go to **Organization Settings → Application Keys**, select your key, and enable the scopes. The feature flag scopes are under **Feature Flags** and `teams_read` is under **Teams**.
+
+```bash
+export DD_API_KEY=...
+export DD_APP_KEY=...
+export EPPO_API_KEY=...
+
+npx @datadog/dd-flag-migration migrate
+```
 
 ### Advanced filtering
 
@@ -121,11 +82,11 @@ The tool preserves numbered suffixes added to resolve duplicate display names, s
 
 ## Non-interactive migrations
 
-Pass `--interactive=false` to run the migration entirely from CLI arguments, with no prompts. This is useful for scripted or CI environments. Set `DD_SITE` in the job environment or pass `--datadog-site`; you do not need to provide both.
+Pass `--interactive=false` to run the migration entirely from CLI arguments, with no prompts. This is useful for scripted or CI environments. It uses the same [credentials](#migration-credentials) as an interactive migration. Set `DD_SITE` in the job environment or pass `--datadog-site`; you do not need to provide both.
 
-Non-interactive migrations use `--tag-mode merge` by default, preserving tags that exist only in Datadog. Use `--tag-mode replace` to replace existing tags with the tags derived from Eppo. In interactive mode, specifying `--tag-mode` skips the tag-mode prompt.
+Non-interactive migrations use `--tag-mode merge` by default, preserving tags that exist only in Datadog. Use `--tag-mode replace` to replace existing tags with the tags derived from Eppo.
 
-Eppo exposes no flag schema, so re-migrating a JSON flag clears any schema in Datadog. Environments awaiting enable approval are reported separately and do not count as enabled.
+Environments awaiting enable approval are reported separately and do not count as enabled.
 
 Non-interactive migrations write a JSON result document to stdout. Status messages, progress output, and export messages are written to stderr so stdout can be piped into tools such as `jq`.
 
@@ -148,8 +109,6 @@ Non-interactive migrations write a JSON result document to stdout. Status messag
 
 **Examples**
 
-Eppo migrations don't need a project key.
-
 Migrate an Eppo flag:
 
 ```bash
@@ -166,11 +125,29 @@ npx @datadog/dd-flag-migration migrate --interactive=false \
 
 See [Step 2 — Evaluate the migration](README.md#step-2--evaluate-the-migration) for the general workflow and options. Results show the Eppo value next to the Datadog value.
 
+### Evaluation credentials
+
+| Variable | Required when | Where to find it |
+|---|---|---|
+| `DD_API_KEY`, `DD_APP_KEY` | always | Datadog → Organization Settings → API Keys and Application Keys |
+| `DD_CLIENT_TOKEN` | evaluating a migration or a client-only flag | Datadog → Organization Settings → Client Tokens |
+| `EPPO_SDK_KEY` | always | Eppo → SDK Keys (server SDK key, one per environment) |
+| `EPPO_API_KEY` | evaluating a single flag | Eppo → Configuration → API Keys |
+
+```bash
+export DD_API_KEY=...
+export DD_APP_KEY=...
+export DD_CLIENT_TOKEN=...
+export EPPO_SDK_KEY=...
+
+npx @datadog/dd-flag-migration evaluate
+```
+
 ### Evaluate a single flag
 
 Choose **A flag** to evaluate one flag migrated from Eppo for many random subjects (10,000 by default; set with `--subjects=<n>`) in both platforms. The command lists mismatches, exits with status 1 if any subject differs, and can export every evaluation to `.xlsx`.
 
-It needs `EPPO_API_KEY` and `EPPO_SDK_KEY`, and compares the Eppo environment of `EPPO_SDK_KEY` with the Datadog environment you choose. Flags migrated before Eppo-compatible bucketing use Datadog bucketing, so subjects in their splits are expected to differ from Eppo.
+It compares the Eppo environment of `EPPO_SDK_KEY` with the Datadog environment you choose. Flags migrated before Eppo-compatible bucketing use Datadog bucketing, so subjects in their splits are expected to differ from Eppo.
 
 ---
 
@@ -218,5 +195,3 @@ For each selected flag, the tool:
 - Enables the flag in the Datadog environments that correspond to active Eppo environments
 
 Flags migrated before Eppo-compatible bucketing follow the same rules when re-migrated, including the failures above, but keep Datadog bucketing: no Eppo IDs are sent and their targeting filter keys never change. A warning is recorded, because subjects in splits and partial rollouts are not assigned as in Eppo.
-
-Flags of type `BANDIT` or `LAYER` are skipped (not yet supported).

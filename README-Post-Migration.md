@@ -33,12 +33,15 @@ This command needs `DD_API_KEY` and `DD_APP_KEY`. The application key needs the 
 The interactive flow lets you:
 
 1. Choose **Add teams to flags** or **Remove teams from flags**.
-2. Select migrated flags. Type to filter by flag key or tag (for example, `project:health-100`). Whitespace-separated searches use union semantics, so a flag remains visible when either its key or one of its tags matches.
+2. Select migrated flags. Type to filter by flag key or tag (for example, `project:health-100`). Separate several terms with spaces to show flags whose key or tags match any of them.
 3. Select one or more Datadog teams.
 4. For additions, optionally choose an `editor` or `contributor` permission policy for each selected team. The default is `editor`.
 5. Choose whether to sync matching `team:<handle>` tags.
 
-Additions grant each selected team its chosen relation. Datadog feature flags support team principals as `editor` or `contributor`; the `viewer` relation remains organization-wide and does not support team principals. Removals delete the selected teams from every explicit relation while preserving unrelated principals and bindings. When team tag syncing is enabled, additions add matching team tags and removals remove them while preserving unrelated tags. Team tags are metadata for migration visibility and do not control permission access; explicit Datadog permissions remain the source of access control after migration. Repeating either operation is an idempotent no-op when the requested state already exists.
+- **Additions** grant each selected team its chosen relation, `editor` or `contributor`. Teams can't be granted `viewer`, which stays organization-wide.
+- **Removals** remove the selected teams from every explicit relation, and keep every other principal and binding.
+- **Team tags**, when syncing is enabled, are added with additions and removed with removals; other tags are kept. Team tags only make ownership visible. Access is controlled by the explicit Datadog permissions.
+- **Repeats** change nothing when the requested state already exists.
 
 Every confirmed update writes a `bulk-permissions-export-<timestamp>.xlsx` report in the current directory. The report distinguishes changed permissions, idempotent no-ops, and failures for each selected flag/team pair. When team-tag syncing is enabled, a separate **Tag Sync** sheet records its per-flag results and errors without changing the permission outcomes.
 
@@ -59,7 +62,7 @@ This command needs `DD_API_KEY` and `DD_APP_KEY`. The application key needs the 
 
 First select one or more Datadog environments, then select the migrated flags to enable. The flag picker supports filtering by flag key or tag; press **Tab** for advanced filters scoped to the selected environments. Select **needs-enabling** to hide flags that are already enabled in every selected environment. Flags whose status cannot be confirmed remain visible under **needs-enabling** so they are not silently omitted. Production environments are clearly marked and require an explicit confirmation.
 
-Updates run one at a time and use the shared Datadog rate-limit and retry handling. A failure for one flag/environment pair does not stop the remaining updates. Every confirmed update writes a `bulk-enable-export-<timestamp>.xlsx` report in the current directory. The report distinguishes newly enabled pairs, already-enabled pairs, approval requests, failures, and successful writes whose prior status could not be read.
+A failure for one flag/environment pair does not stop the remaining updates. Every confirmed update writes a `bulk-enable-export-<timestamp>.xlsx` report in the current directory. The report distinguishes newly enabled pairs, already-enabled pairs, approval requests, failures, and successful writes whose prior status could not be read.
 
 ---
 
@@ -74,7 +77,7 @@ npx @datadog/dd-flag-migration sync-tags
 yarn sync-tags
 ```
 
-This command needs `DD_API_KEY`, `DD_APP_KEY`, and the source provider's API key. See the credentials section of the [Eppo](README-Eppo.md#credentials-youll-need) or [LaunchDarkly](README-LaunchDarkly.md#credentials-youll-need) guide.
+This command needs `DD_API_KEY`, `DD_APP_KEY`, and the source provider's API key: `EPPO_API_KEY` or `LAUNCHDARKLY_API_KEY`. The application key needs the `feature_flag_config_read`, `feature_flag_config_write`, `feature_flag_environment_config_read`, and `teams_read` scopes.
 
 The interactive flow mirrors the `migrate` command's provider and flag selection:
 

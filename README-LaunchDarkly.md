@@ -1,110 +1,28 @@
 # LaunchDarkly → Datadog migration
 
-This guide covers migrating feature flags from LaunchDarkly to Datadog Feature Flags. For installation, shared commands, and options that apply to every migration, see the [main README](README.md).
+This guide covers migrating feature flags from LaunchDarkly to Datadog Feature Flags. For installation and the workflow shared by every migration, see the [main README](README.md). For bulk management of migrated flags, see [Post-migration actions](README-Post-Migration.md).
+
+Credentials are read from environment variables, and each section below lists the ones it needs. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running the tool. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1. Credentials are never read from or written to the tool's config file.
 
 ---
 
 ## Contents
 
-- [Credentials you'll need](#credentials-youll-need)
-  - [Required for `migrate` and `migration-status`](#required-for-migrate-and-migration-status)
-  - [Required for `evaluate`](#required-for-evaluate)
-  - [Required for `sync-tags`](#required-for-sync-tags)
-  - [Datadog Application Key permissions](#datadog-application-key-permissions)
-  - [Examples](#examples)
 - [Migrate flags](#migrate-flags)
+  - [Migration credentials](#migration-credentials)
   - [Advanced filtering](#advanced-filtering)
   - [Re-syncing existing flags](#re-syncing-existing-flags)
 - [Non-interactive migrations](#non-interactive-migrations)
 - [Migration status](#migration-status)
+  - [Migration status credentials](#migration-status-credentials)
 - [Evaluate the migration](#evaluate-the-migration)
+  - [Evaluation credentials](#evaluation-credentials)
   - [Mobile context kinds](#mobile-context-kinds)
 - [Unsupported features](#unsupported-features)
   - [Flags that are skipped](#flags-that-are-skipped)
   - [Flags that are migrated with adjustments](#flags-that-are-migrated-with-adjustments)
   - [Features with limited evaluation support](#features-with-limited-evaluation-support)
 - [How it works](#how-it-works)
-
----
-
-## Credentials you'll need
-
-Credentials are read from environment variables. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running the tool. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1. Credentials are never read from or written to the tool's config file.
-
-`DD_SITE` is optional for interactive commands and pre-fills the Datadog site prompt when set. For non-interactive runs, use either `DD_SITE` or `--datadog-site`; the explicit CLI option takes precedence. See [Non-US Datadog sites](README.md#non-us-datadog-sites) for site values.
-
-### Required for `migrate` and `migration-status`
-
-| Variable | Where to find it |
-|---|---|
-| `DD_API_KEY` | Datadog → Organization Settings → API Keys |
-| `DD_APP_KEY` | Datadog → Organization Settings → Application Keys |
-| `LAUNCHDARKLY_API_KEY` | LaunchDarkly → Account settings → Authorization → Access tokens |
-
-Your LaunchDarkly access token needs **Reader** role permissions (or a custom role with `viewProject` access) to read projects, environments, and flag configurations.
-
-`LAUNCHDARKLY_*` variables are checked only when you select LaunchDarkly as the source provider.
-
-### Required for `evaluate`
-
-| Variable | Required when | Where to find it |
-|---|---|---|
-| `DD_CLIENT_TOKEN` | always | Datadog → Organization Settings → Client Tokens |
-| `LAUNCHDARKLY_API_KEY` | *(preferred)* the SDK key is fetched automatically | LaunchDarkly → Account settings → Authorization → Access tokens |
-| `LAUNCHDARKLY_SDK_KEY` | you don't have the API key available | LaunchDarkly server-side SDK key, scoped to one environment |
-
-### Required for `sync-tags`
-
-`sync-tags` needs `DD_API_KEY`, `DD_APP_KEY`, and `LAUNCHDARKLY_API_KEY`. See [Tag sync](README-Post-Migration.md#tag-sync) for how to use it.
-
-### Datadog Application Key permissions
-
-Enable these scopes on the key in `DD_APP_KEY`:
-
-| Scope | Required by | Description |
-|---|---|---|
-| `feature_flag_config_read` | `migrate`, `migration-status`, `sync-tags` | View Feature Flag Configurations |
-| `feature_flag_config_write` | `migrate`, `sync-tags` | Edit Feature Flag Configurations |
-| `feature_flag_environment_config_read` | `migrate`, `migration-status`, `sync-tags` | View Feature Flag Environment settings |
-| `teams_read` | `migrate`, `sync-tags` | View Teams for team-based access controls |
-
-To set these permissions, go to **Organization Settings → Application Keys**, select your key, and enable the scopes. The feature flag scopes are under **Feature Flags** and `teams_read` is under **Teams**. For the scopes used by `bulk-permissions` and `bulk-enable`, see [Bulk Permission Management](README-Post-Migration.md#bulk-permission-management) and [Bulk Environment Enablement](README-Post-Migration.md#bulk-environment-enablement).
-
-### Examples
-
-**Migrate from LaunchDarkly**
-
-```bash
-export DD_API_KEY=...
-export DD_APP_KEY=...
-export LAUNCHDARKLY_API_KEY=...
-
-npx @datadog/dd-flag-migration migrate
-```
-
-**Evaluate a LaunchDarkly migration**
-
-If `LAUNCHDARKLY_API_KEY` is already set (from running `migrate`), the SDK key is fetched automatically:
-
-```bash
-export DD_API_KEY=...
-export DD_APP_KEY=...
-export DD_CLIENT_TOKEN=...
-export LAUNCHDARKLY_API_KEY=...   # SDK key fetched automatically
-
-npx @datadog/dd-flag-migration evaluate
-```
-
-Or set the SDK key directly if you don't have the API key available:
-
-```bash
-export DD_API_KEY=...
-export DD_APP_KEY=...
-export DD_CLIENT_TOKEN=...
-export LAUNCHDARKLY_SDK_KEY=...   # server-side key, scoped to one environment
-
-npx @datadog/dd-flag-migration evaluate
-```
 
 ---
 
@@ -125,6 +43,37 @@ When migrating from LaunchDarkly, the [general migration workflow](README.md#ste
 The tool translates LaunchDarkly targeting rules, individual user targets, percentage rollouts, and fallthrough variations into equivalent Datadog targeting filters. Before migrating flags, the tool runs a segment migration phase that converts referenced LaunchDarkly segments into Datadog saved filters and substitutes them into targeting rules. Flags that use unsupported operators (`before`, `after`) are automatically skipped with an explanation. Flags with prerequisites are migrated with a warning, since Datadog does not enforce prerequisites.
 
 In **Auto** distribution-channel mode, flags with semantic-version targeting are set to Client. Existing non-semver flags keep their current channel, and new non-semver flags use Datadog's default. Explicit Client, Server, and All modes set the corresponding channel on every selected flag.
+
+### Migration credentials
+
+| Variable | Where to find it |
+|---|---|
+| `DD_API_KEY` | Datadog → Organization Settings → API Keys |
+| `DD_APP_KEY` | Datadog → Organization Settings → Application Keys |
+| `LAUNCHDARKLY_API_KEY` | LaunchDarkly → Account settings → Authorization → Access tokens |
+
+Your LaunchDarkly access token needs **Reader** role permissions (or a custom role with `viewProject` access) to read projects, environments, and flag configurations.
+
+`DD_SITE` is optional for interactive runs and pre-fills the Datadog site prompt when set. For non-interactive runs, use either `DD_SITE` or `--datadog-site`; the explicit CLI option takes precedence. See [Non-US Datadog sites](README.md#non-us-datadog-sites) for site values.
+
+Enable these scopes on the key in `DD_APP_KEY`:
+
+| Scope | Description |
+|---|---|
+| `feature_flag_config_read` | View Feature Flag Configurations |
+| `feature_flag_config_write` | Edit Feature Flag Configurations |
+| `feature_flag_environment_config_read` | View Feature Flag Environment settings |
+| `teams_read` | View Teams for team-based access controls |
+
+To set these permissions, go to **Organization Settings → Application Keys**, select your key, and enable the scopes. The feature flag scopes are under **Feature Flags** and `teams_read` is under **Teams**.
+
+```bash
+export DD_API_KEY=...
+export DD_APP_KEY=...
+export LAUNCHDARKLY_API_KEY=...
+
+npx @datadog/dd-flag-migration migrate
+```
 
 ### Advanced filtering
 
@@ -155,11 +104,11 @@ The tool preserves numbered suffixes added to resolve duplicate display names, s
 
 ## Non-interactive migrations
 
-Pass `--interactive=false` to run the migration entirely from CLI arguments, with no prompts. This is useful for scripted or CI environments. Set `DD_SITE` in the job environment or pass `--datadog-site`; you do not need to provide both.
+Pass `--interactive=false` to run the migration entirely from CLI arguments, with no prompts. This is useful for scripted or CI environments. It uses the same [credentials](#migration-credentials) as an interactive migration. Set `DD_SITE` in the job environment or pass `--datadog-site`; you do not need to provide both.
 
-Non-interactive migrations use `--tag-mode merge` by default, preserving tags that exist only in Datadog. Use `--tag-mode replace` to replace existing tags with the source-derived tags, including the `project:<key>` tag. In interactive mode, specifying `--tag-mode` skips the tag-mode prompt.
+Non-interactive migrations use `--tag-mode merge` by default, preserving tags that exist only in Datadog. Use `--tag-mode replace` to replace existing tags with the source-derived tags, including the `project:<key>` tag.
 
-LaunchDarkly exposes no flag schema, so re-migrating a JSON flag clears any schema in Datadog. Environments awaiting enable approval are reported separately and do not count as enabled.
+Environments awaiting enable approval are reported separately and do not count as enabled.
 
 Non-interactive migrations write a JSON result document to stdout. Status messages, progress output, and export messages are written to stderr so stdout can be piped into tools such as `jq`.
 
@@ -240,11 +189,46 @@ The command reports the selected flags as **Not yet migrated**, **Partially migr
 
 The report compares current configuration and does not identify which platform changed after migration. Tags, permissions, restriction policies, and saved-filter contents are not assessed.
 
+### Migration status credentials
+
+`migration-status` uses the same variables as [Migrate flags](#migration-credentials): `DD_API_KEY`, `DD_APP_KEY`, and `LAUNCHDARKLY_API_KEY`. The application key needs the `feature_flag_config_read` and `feature_flag_environment_config_read` scopes.
+
 ---
 
 ## Evaluate the migration
 
 See [Step 2 — Evaluate the migration](README.md#step-2--evaluate-the-migration) for the general workflow and options. Results show the LaunchDarkly value next to the Datadog value. Single-flag evaluation (**A flag**) isn't available for LaunchDarkly yet; evaluate **A migration** instead.
+
+### Evaluation credentials
+
+| Variable | Required when | Where to find it |
+|---|---|---|
+| `DD_API_KEY`, `DD_APP_KEY` | always | Datadog → Organization Settings → API Keys and Application Keys |
+| `DD_CLIENT_TOKEN` | always | Datadog → Organization Settings → Client Tokens |
+| `LAUNCHDARKLY_API_KEY` | *(preferred)* the SDK key is fetched automatically | LaunchDarkly → Account settings → Authorization → Access tokens |
+| `LAUNCHDARKLY_SDK_KEY` | you don't have the API key available | LaunchDarkly server-side SDK key, scoped to one environment |
+
+If `LAUNCHDARKLY_API_KEY` is already set (from running `migrate`), the SDK key is fetched automatically:
+
+```bash
+export DD_API_KEY=...
+export DD_APP_KEY=...
+export DD_CLIENT_TOKEN=...
+export LAUNCHDARKLY_API_KEY=...   # SDK key fetched automatically
+
+npx @datadog/dd-flag-migration evaluate
+```
+
+Or set the SDK key directly if you don't have the API key available:
+
+```bash
+export DD_API_KEY=...
+export DD_APP_KEY=...
+export DD_CLIENT_TOKEN=...
+export LAUNCHDARKLY_SDK_KEY=...   # server-side key, scoped to one environment
+
+npx @datadog/dd-flag-migration evaluate
+```
 
 ### Mobile context kinds
 

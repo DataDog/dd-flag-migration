@@ -52,10 +52,10 @@ npx @datadog/dd-flag-migration migrate
 
 The tool will walk you through:
 
-1. **Select your migration** — Eppo → Datadog, Datadog → Datadog, or LaunchDarkly → Datadog
+1. **Select your migration** — Eppo → Datadog, LaunchDarkly → Datadog, or Datadog → Datadog
 2. **Map environments** — link each source environment (e.g. `production`) to one or more corresponding Datadog environments
 3. **Select flags** — choose which flags to migrate; flags already in Datadog are marked
-4. **Confirm and migrate** — flags are created in Datadog and enabled in the mapped environments. A progress bar tracks migration status in real time
+4. **Confirm and migrate** — new flags are created in Datadog, existing flags are synced, and both are enabled in the mapped environments. A progress bar tracks migration status in real time
 
 Each migration guide describes the additional steps for its source:
 
@@ -80,6 +80,8 @@ For large flag sets, the tool supports splitting work across multiple runs:
 Selecting a flag that already exists in Datadog syncs it from the source instead of creating it again. The source stays the source of truth, so you can keep editing flags there and re-run `migrate` until you switch over.
 
 **Re-syncing can overwrite changes made directly in Datadog.** To preserve those changes, exclude the flag from your selection. Use `--dry-run` to preview updates.
+
+When a migration updates existing Datadog flags, interactive runs ask whether to merge the source tags into the existing Datadog tags or replace them. Pass `--tag-mode` to skip the prompt.
 
 What is synced, and how existing flags are matched, depends on your migration. See your [migration guide](#guides).
 
@@ -116,7 +118,7 @@ You can evaluate either of these:
 - **A migration** — a quick check that a migration went as expected. Every flag from a previous migration is evaluated for one test subject, using test cases generated from each flag's targeting rules (or your own test cases from a CSV file). Use it after each migration run to catch targeting that didn't translate correctly.
 - **A flag** — a thorough check of one flag's percentage splits and rollouts. The flag is evaluated for many random subjects (10,000 by default), and the tool reports how each platform distributes subjects across variants and lists every subject that gets a different value; it exits with status 1 if any do. Use it before switching over a flag that splits traffic, to confirm subjects keep the variant they had. Available for flags migrated from Eppo.
 
-Datadog and provider credentials are read from environment variables. See the credentials section of the [Eppo](README-Eppo.md#credentials-youll-need) or [LaunchDarkly](README-LaunchDarkly.md#credentials-youll-need) guide.
+Datadog and provider credentials are read from environment variables. See the evaluation credentials in the [Eppo](README-Eppo.md#evaluation-credentials) or [LaunchDarkly](README-LaunchDarkly.md#evaluation-credentials) guide.
 
 Matching values are shown in green and differences in yellow. You can export the full results to an `.xlsx` file.
 

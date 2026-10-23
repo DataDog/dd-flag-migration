@@ -1,16 +1,15 @@
 # Datadog → Datadog migration
 
-This guide covers copying feature flags from one Datadog org (the source) to another (the target), and comparing two orgs that should stay in sync. For installation, shared commands, and options that apply to every migration, see the [main README](README.md).
+This guide covers copying feature flags from one Datadog org (the source) to another (the target), and comparing two orgs that should stay in sync. For installation and the workflow shared by every migration, see the [main README](README.md). For bulk management of migrated flags, see [Post-migration actions](README-Post-Migration.md).
+
+Credentials are read from environment variables, and each section below lists the ones it needs. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running the tool. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1. Credentials are never read from or written to the tool's config file.
 
 ---
 
 ## Contents
 
-- [Credentials you'll need](#credentials-youll-need)
-  - [Required for `migrate`, `migration-status`, and `org-diff`](#required-for-migrate-migration-status-and-org-diff)
-  - [Datadog Application Key permissions](#datadog-application-key-permissions)
-  - [Example](#example)
 - [Migrate flags](#migrate-flags)
+  - [Migration credentials](#migration-credentials)
   - [Filtering by tag](#filtering-by-tag)
   - [Advanced filtering](#advanced-filtering)
   - [Saved filters](#saved-filters)
@@ -24,32 +23,36 @@ This guide covers copying feature flags from one Datadog org (the source) to ano
 
 ---
 
-## Credentials you'll need
+## Migrate flags
 
-Credentials are read from environment variables. Set them in your shell (or `.envrc`, `.env` loader, secret manager, etc.) before running the tool. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1. Credentials are never read from or written to the tool's config file.
+```bash
+npx @datadog/dd-flag-migration migrate   # choose "Datadog → Datadog"
+```
 
-### Required for `migrate`, `migration-status`, and `org-diff`
+The [general migration workflow](README.md#step-1--migrate-flags) runs these steps:
+
+1. **Select source org environments** — choose which environments in the source org to copy from
+2. **Link environments** — map each source environment to one or more target org environments. Target environments with the same name are pre-selected
+3. **Select flags** — flags whose key already exists in the target org are marked and are synced instead of created. Each flag's tags are shown next to its key, and you can [filter by tag](#filtering-by-tag)
+
+### Migration credentials
 
 | Variable | Where to find it |
 |---|---|
-| `SOURCE_DD_API_KEY`, `SOURCE_DD_APP_KEY`, `SOURCE_DD_SITE` | API key, application key, and site of the org you copy flags **from** (for `org-diff`, the first org) |
-| `TARGET_DD_API_KEY`, `TARGET_DD_APP_KEY`, `TARGET_DD_SITE` | API key, application key, and site of the org you copy flags **to** (for `org-diff`, the second org) |
+| `SOURCE_DD_API_KEY`, `SOURCE_DD_APP_KEY`, `SOURCE_DD_SITE` | API key, application key, and site of the org you copy flags **from** |
+| `TARGET_DD_API_KEY`, `TARGET_DD_APP_KEY`, `TARGET_DD_SITE` | API key, application key, and site of the org you copy flags **to** |
 
-Datadog → Datadog migrations read all six `SOURCE_DD_*` and `TARGET_DD_*` variables and ignore `DD_API_KEY`, `DD_APP_KEY`, and `DD_SITE`. `DD_BASE_URL` and `DD_HTTP_HEADERS` can't be used with two orgs, because they would apply to both.
-
-### Datadog Application Key permissions
+Datadog → Datadog migrations read all six `SOURCE_DD_*` and `TARGET_DD_*` variables and ignore `DD_API_KEY`, `DD_APP_KEY`, and `DD_SITE`, so they don't prompt for a site. `DD_BASE_URL` and `DD_HTTP_HEADERS` can't be used with two orgs, because they would apply to both.
 
 Enable these scopes on the keys in `SOURCE_DD_APP_KEY` and `TARGET_DD_APP_KEY`:
 
-| Scope | Required on | Required by | Description |
-|---|---|---|---|
-| `feature_flag_config_read` | both keys | `migrate`, `migration-status`, `org-diff` | View Feature Flag Configurations |
-| `feature_flag_environment_config_read` | both keys | `migrate`, `migration-status`, `org-diff` | View Feature Flag Environment settings |
-| `feature_flag_config_write` | target key | `migrate` | Edit Feature Flag Configurations |
+| Scope | Required on | Description |
+|---|---|---|
+| `feature_flag_config_read` | both keys | View Feature Flag Configurations |
+| `feature_flag_environment_config_read` | both keys | View Feature Flag Environment settings |
+| `feature_flag_config_write` | target key | Edit Feature Flag Configurations |
 
 To set these permissions, go to **Organization Settings → Application Keys** in each org, select your key, and enable the scopes under **Feature Flags**.
-
-### Example
 
 ```bash
 export SOURCE_DD_API_KEY=...
@@ -61,20 +64,6 @@ export TARGET_DD_SITE=datadoghq.eu
 
 npx @datadog/dd-flag-migration migrate   # choose "Datadog → Datadog"
 ```
-
----
-
-## Migrate flags
-
-```bash
-npx @datadog/dd-flag-migration migrate   # choose "Datadog → Datadog"
-```
-
-Datadog → Datadog migrations don't prompt for a site; they read `SOURCE_DD_SITE` and `TARGET_DD_SITE`. The [general migration workflow](README.md#step-1--migrate-flags) runs these steps:
-
-1. **Select source org environments** — choose which environments in the source org to copy from
-2. **Link environments** — map each source environment to one or more target org environments. Target environments with the same name are pre-selected
-3. **Select flags** — flags whose key already exists in the target org are marked and are synced instead of created. Each flag's tags are shown next to its key, and you can [filter by tag](#filtering-by-tag)
 
 ### Filtering by tag
 
@@ -98,17 +87,24 @@ The available categories are:
 
 ### Saved filters
 
-Before copying flags, the tool copies the saved filters that the selected flags reference, following the same rules as LaunchDarkly segments. A saved filter that was copied before is updated in place, so edits in the source org carry over. A new saved filter is created with migration metadata that points back to its source filter.
+Before copying flags, the tool copies the saved filters they reference. A saved filter copied on an earlier run is updated in place, so edits in the source org carry over. A new saved filter is created with migration metadata that points back to its source filter. Saved filters are never deleted from the target org.
 
-If a target org filter without that metadata already has the same name, you can skip the conflicting filter, add a prefix to its name, or adopt the existing filter. Adopting replaces the existing filter's targeting with the source targeting and adds migration metadata, so later runs keep it in sync.
+If the target org already has a saved filter with the same name that this tool didn't copy, you choose how to handle the conflicts:
 
-Before it adopts anything, the tool checks every target org flag for references to the filter. A filter is safe to adopt only when the usage check succeeds for every target flag and none uses it. Matching targeting avoids an immediate change, but later source edits could affect flags that still reference the adopted filter. References from selected flags still count because their targeting is rewritten later and that step may be skipped or fail. If a filter is in use or usage could not be fully checked, you choose whether to adopt it anyway, skip it, or prefix it.
+- **Skip** the conflicting filters.
+- **Add a prefix** to the copied filters' names, so they're created alongside the existing ones.
+- **Adopt** the existing filters. Their targeting is replaced with the source targeting and migration metadata is added, so later runs keep them in sync.
 
-Filters managed by another migration, or whose name matches more than one target filter, cannot be adopted. Non-interactive runs skip conflicts. Saved filters are never deleted from the target org.
+Adopting a filter changes how every target org flag that uses it evaluates, now or after later edits in the source org. Before adopting, the tool checks every target org flag for references to the filter:
+
+- A filter that no flag uses is safe to adopt.
+- If a flag uses the filter, or the check couldn't finish for every flag, you choose whether to adopt it anyway, or skip or prefix it instead. Flags you selected for this migration count as users too, because their targeting is rewritten in a later step that may be skipped or fail.
+
+Filters managed by another migration, or whose name matches more than one target filter, can't be adopted. Non-interactive runs skip all conflicts.
 
 ### What is synced
 
-Flags are matched by key. Variant keys are copied as-is. Name, description, JSON schema (including removal), distribution channel, and tags sync on every run; tags follow `--tag-mode` or the tag prompt. Targeting and default variants sync in each mapped environment where the source flag is enabled, and each mapped target environment is enabled or disabled to match its source environment. Restriction policies and team permissions aren't copied.
+Flags are matched by key. Variant keys are copied as-is. Name, description, JSON schema (including removal), distribution channel, and tags sync on every run; tags follow `--tag-mode` or the tag prompt. Targeting and default variants sync in each mapped environment where the source flag is enabled, and each mapped target environment is enabled or disabled to match its source environment.
 
 See [Re-syncing existing flags](README.md#re-syncing-existing-flags) for general behavior.
 
@@ -116,9 +112,9 @@ See [Re-syncing existing flags](README.md#re-syncing-existing-flags) for general
 
 ## Non-interactive migrations
 
-Pass `--interactive=false` to run the migration entirely from CLI arguments, with no prompts. This is useful for scripted or CI environments. Credentials and sites come from the `SOURCE_DD_*` and `TARGET_DD_*` variables, so `--datadog-site` isn't supported and `--project` isn't used.
+Pass `--interactive=false` to run the migration entirely from CLI arguments, with no prompts. This is useful for scripted or CI environments. It uses the same [credentials](#migration-credentials) as an interactive migration, including the sites in `SOURCE_DD_SITE` and `TARGET_DD_SITE`, so `--datadog-site` isn't supported and `--project` isn't used.
 
-Non-interactive migrations use `--tag-mode merge` by default, preserving tags that exist only in the target org. Use `--tag-mode replace` to replace them with the source org's tags. In interactive mode, specifying `--tag-mode` skips the tag-mode prompt. Saved-filter name conflicts are skipped. Environments awaiting enable approval are reported separately and do not count as enabled.
+Non-interactive migrations use `--tag-mode merge` by default, preserving tags that exist only in the target org. Use `--tag-mode replace` to replace them with the source org's tags. Saved-filter name conflicts are skipped. Environments awaiting enable approval are reported separately and do not count as enabled.
 
 Non-interactive migrations write a JSON result document to stdout. Status messages, progress output, and export messages are written to stderr so stdout can be piped into tools such as `jq`.
 
@@ -158,7 +154,7 @@ npx @datadog/dd-flag-migration migrate --interactive=false \
 npx @datadog/dd-flag-migration migration-status   # choose "Datadog → Datadog"
 ```
 
-**Datadog → Datadog** compares the `SOURCE_DD_*` and `TARGET_DD_*` orgs and produces the same report as [Org diff](#org-diff).
+**Datadog → Datadog** compares the `SOURCE_DD_*` and `TARGET_DD_*` orgs and produces the same report as [Org diff](#org-diff). It uses the same `SOURCE_DD_*` and `TARGET_DD_*` variables as a [migration](#migration-credentials); both application keys need the `feature_flag_config_read` and `feature_flag_environment_config_read` scopes.
 
 ---
 
@@ -173,7 +169,7 @@ npx @datadog/dd-flag-migration org-diff
 yarn org-diff
 ```
 
-Credentials come from `SOURCE_DD_*` and `TARGET_DD_*` (see [Credentials you'll need](#credentials-youll-need)). The comparison is read-only and symmetric: neither org is treated as the source of truth. The source/target names only identify the two credential sets.
+Credentials come from the same `SOURCE_DD_*` and `TARGET_DD_*` variables as a [migration](#migration-credentials), with `SOURCE_*` for the first org and `TARGET_*` for the second. Both application keys need the `feature_flag_config_read` and `feature_flag_environment_config_read` scopes. The comparison is read-only and symmetric: neither org is treated as the source of truth. The source/target names only identify the two credential sets.
 
 1. Select the source org environments to compare.
 2. Link each one to one or more target org environments. Environments with the same name are pre-selected.
