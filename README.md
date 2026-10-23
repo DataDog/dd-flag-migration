@@ -38,10 +38,6 @@ npx @datadog/dd-flag-migration migration-status
 npx @datadog/dd-flag-migration evaluate
 ```
 
-### Post-migration actions
-
-After migrating, you can manage team permissions (`bulk-permissions`), enable flags across environments (`bulk-enable`), and sync tags from your source provider (`sync-tags`). See [README-Post-Migration.md](README-Post-Migration.md).
-
 ### Contributing / running from source
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -58,7 +54,7 @@ The tool will walk you through:
 
 1. **Select your migration** — Eppo → Datadog, Datadog → Datadog, or LaunchDarkly → Datadog
 2. **Map environments** — link each source environment (e.g. `production`) to one or more corresponding Datadog environments
-3. **Select flags** — choose which flags to migrate; flags already in Datadog are marked. Press **Tab** to open the advanced-filter screen and narrow the list by category, then **Ctrl+A** to select all remaining flags
+3. **Select flags** — choose which flags to migrate; flags already in Datadog are marked
 4. **Confirm and migrate** — flags are created in Datadog and enabled in the mapped environments. A progress bar tracks migration status in real time
 
 Each migration guide describes the additional steps for its source:
@@ -67,8 +63,7 @@ Each migration guide describes the additional steps for its source:
 - [LaunchDarkly → Datadog workflow](README-LaunchDarkly.md#migrate-flags)
 - [Datadog → Datadog workflow](README-Datadog.md#migrate-flags)
 
-API keys are read from environment variables (see the credentials section of your [migration guide](#guides)).
-Set `DD_SITE` to pre-fill the Datadog site prompt, or pass `--datadog-site=<site>` to provide an explicit site without a prompt. Datadog → Datadog migrations don't prompt for a site; they read `SOURCE_DD_SITE` and `TARGET_DD_SITE`. For fully scripted runs, see [Non-interactive mode](#non-interactive-mode) below.
+Credentials and the Datadog site are read from environment variables; see the credentials section of your [migration guide](#guides). For fully scripted runs, see [Non-interactive mode](#non-interactive-mode) below.
 
 When the migration completes, a record is saved to `~/.dd-flag-migration/migration-<timestamp>.json`. In interactive mode you'll be prompted to export results to an `.xlsx` file; in non-interactive mode pass `--export=true` to generate one.
 
@@ -78,14 +73,13 @@ For large flag sets, the tool supports splitting work across multiple runs:
 
 - **Progress bar** — a sticky progress bar shows how many flags have been migrated so far, updating in real time
 - **Tab to filter** — during flag selection, press **Tab** to open the advanced-filter screen and narrow the list by category, such as `not-yet-migrated`. Combined with **Ctrl+A**, this makes it easy to select only the remaining flags for the next run
-- **Ctrl+C to save progress** — pressing **Ctrl+C** during migration saves a partial migration file (`~/.dd-flag-migration/migration-<timestamp>.json`) with all flags that completed successfully before the interruption. You can resume later by filtering to `not-yet-migrated` with **Tab** on the flag selection screen.
+- **Ctrl+C to save progress** — pressing **Ctrl+C** during migration saves a partial migration file (`~/.dd-flag-migration/migration-<timestamp>.json`) with all flags that completed successfully before the interruption. You can resume later by filtering to `not-yet-migrated` with **Tab** on the flag selection screen
 
 ### Re-syncing existing flags
 
 Selecting a flag that already exists in Datadog syncs it from the source instead of creating it again. The source stays the source of truth, so you can keep editing flags there and re-run `migrate` until you switch over.
 
-**Re-syncing can overwrite changes made directly in Datadog.** To preserve those
-changes, exclude the flag from your selection. Use `--dry-run` to preview updates.
+**Re-syncing can overwrite changes made directly in Datadog.** To preserve those changes, exclude the flag from your selection. Use `--dry-run` to preview updates.
 
 What is synced, and how existing flags are matched, depends on your migration. See your [migration guide](#guides).
 
@@ -106,24 +100,6 @@ npx @datadog/dd-flag-migration migrate --dry-run
 ```
 
 This writes the full list of API requests that would be sent to a `dry-run-<timestamp>.json` file in the current directory.
-
----
-
-## Migration Status
-
-Generate a read-only migration status report with:
-
-```bash
-npx @datadog/dd-flag-migration migration-status
-
-# When running from this repository:
-yarn migration-status
-```
-
-First choose the migration to check: **LaunchDarkly → Datadog** or **Datadog → Datadog**. **Eppo → Datadog** is listed as coming soon and can't be selected yet.
-
-- [LaunchDarkly → Datadog migration status](README-LaunchDarkly.md#migration-status)
-- [Datadog → Datadog migration status](README-Datadog.md#migration-status)
 
 ---
 
@@ -188,9 +164,30 @@ Provider-specific evaluation details:
 
 ### How evaluation works
 
-The evaluation tool generates test cases automatically from each flag's targeting rules — producing inputs that should match each rule and inputs that should not. It then calls the source provider's SDK and the Datadog feature flag CDN with the same subject ID and attributes, and compares the results.
+Both options generate test cases from each flag's targeting rules — inputs that should match each rule and inputs that should not — and evaluate them in both platforms with the same subject and attributes. When evaluating a migration, you can provide your own test cases in a CSV file instead.
+
+- **A migration** evaluates each test case for your test subject with the source provider's SDK and Datadog's precomputed assignments for that subject (using `DD_CLIENT_TOKEN`).
+- **A flag** evaluates each test case for every random subject with the Eppo SDK and the flag's Datadog configuration, loaded from the server or client channel to match the flag's distribution channel. It compares the variant each subject gets, so it also checks how subjects are bucketed into splits and rollouts.
 
 This lets you verify that flag targeting logic was translated correctly before you cut over your application.
+
+---
+
+## Migration status
+
+Generate a read-only migration status report with:
+
+```bash
+npx @datadog/dd-flag-migration migration-status
+
+# When running from this repository:
+yarn migration-status
+```
+
+First choose the migration to check: **LaunchDarkly → Datadog** or **Datadog → Datadog**. **Eppo → Datadog** is listed as coming soon and can't be selected yet.
+
+- [LaunchDarkly → Datadog migration status](README-LaunchDarkly.md#migration-status)
+- [Datadog → Datadog migration status](README-Datadog.md#migration-status)
 
 ---
 

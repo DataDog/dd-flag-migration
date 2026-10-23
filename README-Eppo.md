@@ -115,10 +115,7 @@ Eppo does not expose flag usage-recency data, so lifecycle categories such as La
 
 Selecting an Eppo flag that already exists in Datadog syncs it from Eppo. See [Re-syncing existing flags](README.md#re-syncing-existing-flags) for general behavior.
 
-The tool preserves numbered suffixes added to resolve duplicate display names,
-such as `Flag (1)`, while applying source name changes. If an updated name is
-already taken, the tool tries another numbered suffix without changing the
-flag's key or ID. Dry runs cannot check whether a new name is already taken.
+The tool preserves numbered suffixes added to resolve duplicate display names, such as `Flag (1)`, while applying source name changes. If an updated name is already taken, the tool tries another numbered suffix without changing the flag's key or ID. Dry runs cannot check whether a new name is already taken.
 
 ---
 

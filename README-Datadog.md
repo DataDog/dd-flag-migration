@@ -17,7 +17,7 @@ This guide covers copying feature flags from one Datadog org (the source) to ano
   - [What is synced](#what-is-synced)
 - [Non-interactive migrations](#non-interactive-migrations)
 - [Migration status](#migration-status)
-- [Org Diff](#org-diff)
+- [Org diff](#org-diff)
 - [Unsupported features](#unsupported-features)
   - [Flags that are skipped](#flags-that-are-skipped)
   - [Not copied](#not-copied)
@@ -158,11 +158,11 @@ npx @datadog/dd-flag-migration migrate --interactive=false \
 npx @datadog/dd-flag-migration migration-status   # choose "Datadog → Datadog"
 ```
 
-**Datadog → Datadog** compares the `SOURCE_DD_*` and `TARGET_DD_*` orgs and produces the same report as [Org Diff](#org-diff).
+**Datadog → Datadog** compares the `SOURCE_DD_*` and `TARGET_DD_*` orgs and produces the same report as [Org diff](#org-diff).
 
 ---
 
-## Org Diff
+## Org diff
 
 Compare feature flag configuration between two Datadog orgs that should stay in sync with:
 

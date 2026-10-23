@@ -124,10 +124,7 @@ When migrating from LaunchDarkly, the [general migration workflow](README.md#ste
 
 The tool translates LaunchDarkly targeting rules, individual user targets, percentage rollouts, and fallthrough variations into equivalent Datadog targeting filters. Before migrating flags, the tool runs a segment migration phase that converts referenced LaunchDarkly segments into Datadog saved filters and substitutes them into targeting rules. Flags that use unsupported operators (`before`, `after`) are automatically skipped with an explanation. Flags with prerequisites are migrated with a warning, since Datadog does not enforce prerequisites.
 
-In **Auto** distribution-channel mode, flags with semantic-version targeting
-are set to Client. Existing non-semver flags keep their current channel, and
-new non-semver flags use Datadog's default. Explicit Client, Server, and All
-modes set the corresponding channel on every selected flag.
+In **Auto** distribution-channel mode, flags with semantic-version targeting are set to Client. Existing non-semver flags keep their current channel, and new non-semver flags use Datadog's default. Explicit Client, Server, and All modes set the corresponding channel on every selected flag.
 
 ### Advanced filtering
 
@@ -146,21 +143,13 @@ The four lifecycle categories (**new**, **active**, **inactive**, and **launched
 
 ### Re-syncing existing flags
 
-In both interactive and non-interactive modes, the tool syncs selected
-LaunchDarkly flags with existing Datadog flags, including those created manually.
-If a Datadog flag is linked to a different source flag or project, the tool
-reports a conflict instead of overwriting it.
+In both interactive and non-interactive modes, the tool syncs selected LaunchDarkly flags with existing Datadog flags, including those created manually. If a Datadog flag is linked to a different source flag or project, the tool reports a conflict instead of overwriting it.
 
-Interactive mode uses migration metadata to identify previously migrated flags.
-Non-interactive mode uses the specified Datadog key; pass
-`--feature-flag source-key,datadog-key` when the source and target keys differ.
+Interactive mode uses migration metadata to identify previously migrated flags. Non-interactive mode uses the specified Datadog key; pass `--feature-flag source-key,datadog-key` when the source and target keys differ.
 
 See [Re-syncing existing flags](README.md#re-syncing-existing-flags) for general behavior.
 
-The tool preserves numbered suffixes added to resolve duplicate display names,
-such as `Flag (1)`, while applying source name changes. If an updated name is
-already taken, the tool tries another numbered suffix without changing the
-flag's key or ID. Dry runs cannot check whether a new name is already taken.
+The tool preserves numbered suffixes added to resolve duplicate display names, such as `Flag (1)`, while applying source name changes. If an updated name is already taken, the tool tries another numbered suffix without changing the flag's key or ID. Dry runs cannot check whether a new name is already taken.
 
 ---
 
@@ -307,14 +296,11 @@ For each selected flag, the tool:
 
 - Reads the flag's variations, targeting rules, individual targets, and rollout configuration from LaunchDarkly
 - Maps the flag type (`boolean` or `multivariate`) to the corresponding Datadog value type (`BOOLEAN`, `STRING`, `NUMERIC`, or `JSON`)
-- Converts individual user targets into targeting filters with `ONE_OF` conditions on the `key` attribute
+- Converts individual targets into targeting filters with `ONE_OF` conditions on the `id` attribute for user contexts, or `<kind>.key` for other context kinds
 - Translates each targeting rule's clauses into Datadog targeting rule conditions, mapping operators like `in`, `contains`, `startsWith`, `endsWith`, `matches`, and semver comparisons to their Datadog equivalents; replaces `segmentMatch` clauses with the saved filter IDs created in the segment phase
 - Converts percentage rollouts from LaunchDarkly's 100,000-weight scale to Datadog's 0-100 scale
-- Maps a single-variation fallthrough to the environment's Datadog default
-  variant; retains split or progressive fallthroughs as catch-all targeting
-  filters
-- Updates existing Datadog flags with the LaunchDarkly display name and replaces
-  their targeting in mapped environments where the source flag is enabled
+- Maps a single-variation fallthrough to the environment's Datadog default variant; retains split or progressive fallthroughs as catch-all targeting filters
+- Updates existing Datadog flags with the LaunchDarkly display name and replaces their targeting in mapped environments where the source flag is enabled
 - Enables the flag in Datadog environments where it was enabled (`on: true`) in LaunchDarkly
 
 Archived flags and flags using unsupported operators (`before`, `after`) are skipped automatically. Individual segment rules that use unsupported features (multi-context membership, nested `segmentMatch`, or negation explosions) are skipped with a warning; the flags that reference them are still migrated with their other targeting rules intact.
