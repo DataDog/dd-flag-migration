@@ -18,8 +18,6 @@ This README covers installation and the primary commands — `migrate`, `migrati
 
 Commands for managing flags after migration are covered in [README-Post-Migration.md](README-Post-Migration.md).
 
-Scripted (`--interactive=false`) runs of `migrate` and `sync-tags` are covered in [README-Non-Interactive.md](README-Non-Interactive.md).
-
 ---
 
 ## Prerequisites
@@ -73,7 +71,7 @@ Each migration guide describes the additional steps for its source:
 - [Datadog → Datadog workflow](README-Datadog.md#migrate-flags)
 
 API keys are read from environment variables (see the credentials section of your [migration guide](#migration-guides)).
-Set `DD_SITE` to pre-fill the Datadog site prompt, or pass `--datadog-site=<site>` to provide an explicit site without a prompt. Datadog → Datadog migrations don't prompt for a site; they read `SOURCE_DD_SITE` and `TARGET_DD_SITE`. For fully scripted runs, see [README-Non-Interactive.md](README-Non-Interactive.md).
+Set `DD_SITE` to pre-fill the Datadog site prompt, or pass `--datadog-site=<site>` to provide an explicit site without a prompt. Datadog → Datadog migrations don't prompt for a site; they read `SOURCE_DD_SITE` and `TARGET_DD_SITE`. For fully scripted runs, see [Non-interactive mode](#non-interactive-mode) below.
 
 When the migration completes, a record is saved to `~/.dd-flag-migration/migration-<timestamp>.json`. In interactive mode you'll be prompted to export results to an `.xlsx` file; in non-interactive mode pass `--export=true` to generate one.
 
@@ -96,7 +94,11 @@ What is synced, and how existing flags are matched, depends on your migration. S
 
 ### Non-interactive mode
 
-Pass `--interactive=false` to run the migration entirely from CLI arguments, with no prompts. See [README-Non-Interactive.md](README-Non-Interactive.md) for the options and examples.
+Pass `--interactive=false` to run the migration entirely from CLI arguments, with no prompts. This is useful for scripted or CI environments. See the options and examples in your migration guide:
+
+- [Eppo → Datadog](README-Eppo.md#non-interactive-mode)
+- [LaunchDarkly → Datadog](README-LaunchDarkly.md#non-interactive-mode)
+- [Datadog → Datadog](README-Datadog.md#non-interactive-mode)
 
 ### Dry run
 

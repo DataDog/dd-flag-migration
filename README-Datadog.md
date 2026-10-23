@@ -94,7 +94,39 @@ See [Re-syncing existing flags](README.md#re-syncing-existing-flags) for general
 
 ### Non-interactive mode
 
-See [README-Non-Interactive.md](README-Non-Interactive.md) for scripted `--interactive=false` runs, with a [Datadog → Datadog example](README-Non-Interactive.md#datadog--datadog).
+Pass `--interactive=false` to run the migration entirely from CLI arguments, with no prompts. This is useful for scripted or CI environments. Credentials and sites come from the `SOURCE_DD_*` and `TARGET_DD_*` variables, so `--datadog-site` isn't supported and `--project` isn't used.
+
+Non-interactive migrations use `--tag-mode merge` by default, preserving tags that exist only in the target org. Use `--tag-mode replace` to replace them with the source org's tags. In interactive mode, specifying `--tag-mode` skips the tag-mode prompt. Saved-filter name conflicts are skipped. Environments awaiting enable approval are reported separately and do not count as enabled.
+
+Non-interactive migrations write a JSON result document to stdout. Status messages, progress output, and export messages are written to stderr so stdout can be piped into tools such as `jq`.
+
+**Required flags**
+
+| Flag | Description |
+|---|---|
+| `--provider Datadog` | Copies flags from the `SOURCE_DD_*` org to the `TARGET_DD_*` org (case-insensitive) |
+| `--env-map <source,target>` | Map a source org environment to a target org environment. Repeat the option—including the same source—to map one source environment to multiple target environments |
+| `--feature-flag <key>` | Flag key to migrate. Repeat for each flag |
+
+**Optional flags**
+
+| Flag | Description |
+|---|---|
+| `--dry-run` | Preview changes without writing to Datadog |
+| `--export=<bool>` | Export results to an `.xlsx` file in the current directory (default: `false`) |
+| `--tag-mode <merge\|replace>` | Tag sync behavior (non-interactive default: `merge`) |
+
+**Examples**
+
+Copy flags from the `SOURCE_DD_*` org to the `TARGET_DD_*` org. Environment names in `--env-map` are `source-org-environment,target-org-environment`:
+
+```bash
+npx @datadog/dd-flag-migration migrate --interactive=false \
+  --provider Datadog \
+  --env-map Production,Production \
+  --env-map Staging,Staging \
+  --feature-flag flag-one
+```
 
 ---
 

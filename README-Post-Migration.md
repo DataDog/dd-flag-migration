@@ -97,7 +97,7 @@ Every completed tag-sync run writes a `sync-tags-export-<timestamp>.xlsx` report
 
 ### Non-interactive mode
 
-Pass `--interactive=false` to run the tag sync entirely from CLI arguments. See [README-Non-Interactive.md](README-Non-Interactive.md#sync-tags) for the options and examples.
+Pass `--interactive=false` to run the tag sync entirely from CLI arguments. See the options and examples in the [Eppo](README-Eppo.md#non-interactive-tag-sync) or [LaunchDarkly](README-LaunchDarkly.md#non-interactive-tag-sync) guide.
 
 ### Dry run
 

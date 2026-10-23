@@ -100,7 +100,44 @@ flag's key or ID. Dry runs cannot check whether a new name is already taken.
 
 ### Non-interactive mode
 
-See [README-Non-Interactive.md](README-Non-Interactive.md) for scripted `--interactive=false` runs, with [Eppo examples](README-Non-Interactive.md#eppo--datadog).
+Pass `--interactive=false` to run the migration entirely from CLI arguments, with no prompts. This is useful for scripted or CI environments. Set `DD_SITE` in the job environment or pass `--datadog-site`; you do not need to provide both.
+
+Non-interactive migrations use `--tag-mode merge` by default, preserving tags that exist only in Datadog. Use `--tag-mode replace` to replace existing tags with the tags derived from Eppo. In interactive mode, specifying `--tag-mode` skips the tag-mode prompt.
+
+Eppo exposes no flag schema, so re-migrating a JSON flag clears any schema in Datadog. Environments awaiting enable approval are reported separately and do not count as enabled.
+
+Non-interactive migrations write a JSON result document to stdout. Status messages, progress output, and export messages are written to stderr so stdout can be piped into tools such as `jq`.
+
+**Required flags**
+
+| Flag | Description |
+|---|---|
+| `--provider Eppo` | Source provider (case-insensitive) |
+| `--datadog-site <site>` | Datadog site (e.g. `datadoghq.com`); optional when `DD_SITE` is set |
+| `--env-map <source,target>` | Map a source environment to a Datadog environment. Repeat the option—including the same source—to map one source environment to multiple Datadog environments |
+| `--feature-flag <key>` | Flag key to migrate. Repeat for each flag |
+
+**Optional flags**
+
+| Flag | Description |
+|---|---|
+| `--dry-run` | Preview changes without writing to Datadog |
+| `--export=<bool>` | Export results to an `.xlsx` file in the current directory (default: `false`) |
+| `--tag-mode <merge\|replace>` | Tag sync behavior (non-interactive default: `merge`) |
+
+**Examples**
+
+Eppo migrations don't need a project key.
+
+Migrate an Eppo flag:
+
+```bash
+npx @datadog/dd-flag-migration migrate --interactive=false \
+  --provider Eppo \
+  --datadog-site datadoghq.com \
+  --env-map production,Production \
+  --feature-flag my-flag
+```
 
 ---
 
@@ -110,7 +147,36 @@ See [Tag Sync](README-Post-Migration.md#tag-sync) for the workflow and sync stra
 
 For Eppo flags, the source tag set is the flag's `tag_names` as-is.
 
-For a non-interactive example, see [`sync-tags` examples](README-Non-Interactive.md#sync-tags-examples).
+### Non-interactive tag sync
+
+Pass `--interactive=false` to run the tag sync entirely from CLI arguments. Non-interactive runs write a JSON result document to stdout, including the report's `exportPath`; status messages and spreadsheet confirmation go to stderr.
+
+**Required flags**
+
+| Flag | Description |
+|---|---|
+| `--provider Eppo` | Source provider (case-insensitive) |
+| `--datadog-site <site>` | Datadog site (e.g. `datadoghq.com`) |
+| `--feature-flag <key>` | Flag key to sync tags for. Repeat for each flag |
+
+**Optional flags**
+
+| Flag | Description |
+|---|---|
+| `--dry-run` | Preview tag changes without writing to Datadog |
+| `--tag-mode <additive\|replace>` | Tag sync strategy (default: `additive`). Also accepts `merge` and `full` as aliases |
+
+**Examples**
+
+Preview an additive tag sync for an Eppo flag:
+
+```bash
+npx @datadog/dd-flag-migration sync-tags --interactive=false \
+  --provider Eppo \
+  --datadog-site datadoghq.com \
+  --dry-run \
+  --feature-flag my-flag
+```
 
 ---
 

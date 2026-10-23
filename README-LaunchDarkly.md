@@ -141,7 +141,70 @@ flag's key or ID. Dry runs cannot check whether a new name is already taken.
 
 ### Non-interactive mode
 
-See [README-Non-Interactive.md](README-Non-Interactive.md) for scripted `--interactive=false` runs, with [LaunchDarkly examples](README-Non-Interactive.md#launchdarkly--datadog).
+Pass `--interactive=false` to run the migration entirely from CLI arguments, with no prompts. This is useful for scripted or CI environments. Set `DD_SITE` in the job environment or pass `--datadog-site`; you do not need to provide both.
+
+Non-interactive migrations use `--tag-mode merge` by default, preserving tags that exist only in Datadog. Use `--tag-mode replace` to replace existing tags with the source-derived tags, including the `project:<key>` tag. In interactive mode, specifying `--tag-mode` skips the tag-mode prompt.
+
+LaunchDarkly exposes no flag schema, so re-migrating a JSON flag clears any schema in Datadog. Environments awaiting enable approval are reported separately and do not count as enabled.
+
+Non-interactive migrations write a JSON result document to stdout. Status messages, progress output, and export messages are written to stderr so stdout can be piped into tools such as `jq`.
+
+**Required flags**
+
+| Flag | Description |
+|---|---|
+| `--provider LaunchDarkly` | Source provider (case-insensitive) |
+| `--project <key>` | LaunchDarkly project key |
+| `--datadog-site <site>` | Datadog site (e.g. `datadoghq.com`); optional when `DD_SITE` is set |
+| `--env-map <source,target>` | Map a source environment to a Datadog environment. Repeat the option—including the same source—to map one source environment to multiple Datadog environments |
+| `--feature-flag <key>` | Flag key to migrate. Repeat for each flag. Use `<source-key>,<datadog-key>` to rename the Datadog flag |
+
+**Optional flags**
+
+| Flag | Description |
+|---|---|
+| `--dry-run` | Preview changes without writing to Datadog |
+| `--export=<bool>` | Export results to an `.xlsx` file in the current directory (default: `false`). Dry-run reports label planned changes as “Would create” or “Would sync”. |
+| `--distribution-channel <auto\|client\|server\|all>` | Distribution-channel behavior (default: `auto`); applies to new and existing flags |
+| `--tag-mode <merge\|replace>` | Tag sync behavior (non-interactive default: `merge`) |
+
+**Examples**
+
+Map one LaunchDarkly environment to two Datadog environments:
+
+```bash
+npx @datadog/dd-flag-migration migrate --interactive=false \
+  --provider LaunchDarkly \
+  --project my-ld-project \
+  --datadog-site datadoghq.com \
+  --env-map Production,Production \
+  --env-map Production,QA \
+  --feature-flag flag-one
+```
+
+Migrate two LaunchDarkly flags across two environments:
+
+```bash
+npx @datadog/dd-flag-migration migrate --interactive=false \
+  --provider LaunchDarkly \
+  --project my-ld-project \
+  --datadog-site datadoghq.com \
+  --env-map Production,Production \
+  --env-map Staging,QA \
+  --feature-flag flag-one \
+  --feature-flag flag-two
+```
+
+Rename a LaunchDarkly flag while migrating it:
+
+```bash
+npx @datadog/dd-flag-migration migrate --interactive=false \
+  --provider LaunchDarkly \
+  --project my-ld-project \
+  --datadog-site datadoghq.com \
+  --env-map Production,Production \
+  --feature-flag my-flag-1,my-renamed-flag-1
+```
 
 ---
 
@@ -171,7 +234,39 @@ See [Tag Sync](README-Post-Migration.md#tag-sync) for the workflow and sync stra
 
 For LaunchDarkly flags, the source tag set is the flag's own LD tags plus the `project:<key>` migration-link tag (so the Datadog→LaunchDarkly link is preserved on Full Replace). Team tags derived from the LaunchDarkly RBAC editor-team walk are not re-synced here — they belong to the restriction-policy flow.
 
-For a non-interactive example, see [`sync-tags` examples](README-Non-Interactive.md#sync-tags-examples).
+### Non-interactive tag sync
+
+Pass `--interactive=false` to run the tag sync entirely from CLI arguments. Non-interactive runs write a JSON result document to stdout, including the report's `exportPath`; status messages and spreadsheet confirmation go to stderr.
+
+**Required flags**
+
+| Flag | Description |
+|---|---|
+| `--provider LaunchDarkly` | Source provider (case-insensitive) |
+| `--project <key>` | LaunchDarkly project key |
+| `--datadog-site <site>` | Datadog site (e.g. `datadoghq.com`) |
+| `--feature-flag <key>` | Flag key to sync tags for. Repeat for each flag |
+
+**Optional flags**
+
+| Flag | Description |
+|---|---|
+| `--dry-run` | Preview tag changes without writing to Datadog |
+| `--tag-mode <additive\|replace>` | Tag sync strategy (default: `additive`). Also accepts `merge` and `full` as aliases |
+
+**Examples**
+
+Sync tags for two LaunchDarkly flags using Full Replace:
+
+```bash
+npx @datadog/dd-flag-migration sync-tags --interactive=false \
+  --provider LaunchDarkly \
+  --project my-ld-project \
+  --datadog-site datadoghq.com \
+  --tag-mode replace \
+  --feature-flag flag-one \
+  --feature-flag flag-two
+```
 
 ---
 
