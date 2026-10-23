@@ -154,4 +154,4 @@ An `org-diff-<source-site>-<target-site>-<timestamp>.xlsx` workbook is written t
 
 | Feature | How to handle it |
 |---|---|
-| Restriction policies and team permissions | Not copied between orgs. To grant team permissions in the target org, use [`bulk-permissions`](README.md#bulk-permission-management). |
+| Restriction policies and team permissions | Not copied between orgs. To grant team permissions in the target org, use [`bulk-permissions`](README-Post-Migration.md#bulk-permission-management). |

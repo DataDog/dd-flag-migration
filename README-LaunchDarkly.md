@@ -45,7 +45,7 @@ Enable these scopes on the key in `DD_APP_KEY`:
 | `feature_flag_environment_config_read` | `migrate`, `migration-status`, `sync-tags` | View Feature Flag Environment settings |
 | `teams_read` | `migrate`, `sync-tags` | View Teams for team-based access controls |
 
-To set these permissions, go to **Organization Settings → Application Keys**, select your key, and enable the scopes. The feature flag scopes are under **Feature Flags** and `teams_read` is under **Teams**. For the scopes used by `bulk-permissions` and `bulk-enable`, see [Bulk Permission Management](README.md#bulk-permission-management) and [Bulk Environment Enablement](README.md#bulk-environment-enablement).
+To set these permissions, go to **Organization Settings → Application Keys**, select your key, and enable the scopes. The feature flag scopes are under **Feature Flags** and `teams_read` is under **Teams**. For the scopes used by `bulk-permissions` and `bulk-enable`, see [Bulk Permission Management](README-Post-Migration.md#bulk-permission-management) and [Bulk Environment Enablement](README-Post-Migration.md#bulk-environment-enablement).
 
 ### Examples
 
@@ -203,7 +203,7 @@ The report compares current configuration and does not identify which platform c
 
 ## Tag sync
 
-See [Tag Sync](README.md#tag-sync) for the workflow and sync strategies.
+See [Tag Sync](README-Post-Migration.md#tag-sync) for the workflow and sync strategies.
 
 For LaunchDarkly flags, the source tag set is the flag's own LD tags plus the `project:<key>` migration-link tag (so the Datadog→LaunchDarkly link is preserved on Full Replace). Team tags derived from the LaunchDarkly RBAC editor-team walk are not re-synced here — they belong to the restriction-policy flow.
 

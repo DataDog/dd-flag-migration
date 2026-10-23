@@ -43,7 +43,7 @@ Enable these scopes on the key in `DD_APP_KEY`:
 | `feature_flag_environment_config_read` | `migrate`, `sync-tags` | View Feature Flag Environment settings |
 | `teams_read` | `migrate`, `sync-tags` | View Teams for team-based access controls |
 
-To set these permissions, go to **Organization Settings → Application Keys**, select your key, and enable the scopes. The feature flag scopes are under **Feature Flags** and `teams_read` is under **Teams**. For the scopes used by `bulk-permissions` and `bulk-enable`, see [Bulk Permission Management](README.md#bulk-permission-management) and [Bulk Environment Enablement](README.md#bulk-environment-enablement).
+To set these permissions, go to **Organization Settings → Application Keys**, select your key, and enable the scopes. The feature flag scopes are under **Feature Flags** and `teams_read` is under **Teams**. For the scopes used by `bulk-permissions` and `bulk-enable`, see [Bulk Permission Management](README-Post-Migration.md#bulk-permission-management) and [Bulk Environment Enablement](README-Post-Migration.md#bulk-environment-enablement).
 
 ### Examples
 
@@ -116,7 +116,7 @@ npx @datadog/dd-flag-migration migrate --interactive=false \
 
 ## Tag sync
 
-See [Tag Sync](README.md#tag-sync) for the workflow and sync strategies.
+See [Tag Sync](README-Post-Migration.md#tag-sync) for the workflow and sync strategies.
 
 For Eppo flags, the source tag set is the flag's `tag_names` as-is.
 
