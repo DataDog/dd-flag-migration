@@ -46,7 +46,18 @@ Datadog → Datadog migrations don't prompt for a site; they read `SOURCE_DD_SIT
 
 1. **Select source org environments** — choose which environments in the source org to copy from
 2. **Link environments** — map each source environment to one or more target org environments. Target environments with the same name are pre-selected
-3. **Select flags** — flags whose key already exists in the target org are marked and are synced instead of created. Each flag's tags are shown, and typing a tag (such as `team:checkout`) in the filter narrows the list, as in `bulk-enable`
+3. **Select flags** — flags whose key already exists in the target org are marked and are synced instead of created. Each flag's tags are shown next to its key, and you can [filter by tag](#filtering-by-tag)
+
+### Filtering by tag
+
+The flag picker lists each source org flag's tags in brackets after its key, for example `[team:checkout, env:prod]`. Type in the filter to narrow the list: the text is matched against each flag's name, key, and source org tags, so typing a tag such as `team:checkout` shows only the flags with that tag.
+
+- Matching is case-insensitive and matches part of a value, so `team:` shows every flag with a `team` tag.
+- Separate several terms with spaces to show flags that match any of them. For example, `team:checkout team:payments` shows flags owned by either team.
+- Press **Ctrl+A** to select every visible flag, such as all flags with a given tag.
+- The tag filter can be combined with the [advanced filters](#advanced-filtering), for example to select only the `team:checkout` flags that are **not-yet-migrated**.
+
+Tag filtering is only available in interactive mode. Non-interactive runs select flags with `--feature-flag`.
 
 ### Advanced filtering
 
