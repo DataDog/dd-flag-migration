@@ -63,7 +63,16 @@ npx @datadog/dd-flag-migration migrate   # choose "Eppo → Datadog"
 
 The tool follows the [general migration workflow](README.md#step-1--migrate-flags): map each Eppo environment to one or more Datadog environments, select flags, then confirm.
 
-Eppo does not expose flag usage-recency data, so only the **previously-migrated** and **not-yet-migrated** categories are available in [Advanced filtering](README.md#advanced-filtering).
+### Advanced filtering
+
+During flag selection, press **Tab** to open a multi-select filter screen. Categories start unchecked, which means no category filter is applied and all flags remain visible. Check one or more categories to narrow the flag list, then press **Enter** to apply the filter selection and return to flag selection, or **Escape** to cancel filter changes. Checking every category is equivalent to applying no category filter. Any selected flags that no longer match the applied filters are automatically unselected on return.
+
+The available categories are:
+
+- **previously-migrated** — a matching flag already exists in Datadog; its targeting rules may still differ
+- **not-yet-migrated** — no matching flag exists in Datadog yet
+
+Eppo does not expose flag usage-recency data, so lifecycle categories such as LaunchDarkly's **active** and **inactive** aren't available.
 
 ### Re-syncing existing flags
 

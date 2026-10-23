@@ -48,6 +48,15 @@ Datadog → Datadog migrations don't prompt for a site; they read `SOURCE_DD_SIT
 2. **Link environments** — map each source environment to one or more target org environments. Target environments with the same name are pre-selected
 3. **Select flags** — flags whose key already exists in the target org are marked and are synced instead of created. Each flag's tags are shown, and typing a tag (such as `team:checkout`) in the filter narrows the list, as in `bulk-enable`
 
+### Advanced filtering
+
+During flag selection, press **Tab** to open a multi-select filter screen. Categories start unchecked, which means no category filter is applied and all flags remain visible. Check one or more categories to narrow the flag list, then press **Enter** to apply the filter selection and return to flag selection, or **Escape** to cancel filter changes. Checking every category is equivalent to applying no category filter. Any selected flags that no longer match the applied filters are automatically unselected on return.
+
+The available categories are:
+
+- **previously-migrated** — a flag with the same key already exists in the target org; its targeting rules may still differ
+- **not-yet-migrated** — no flag with this key exists in the target org yet
+
 ### Saved filters
 
 Before copying flags, the tool copies the saved filters that the selected flags reference, following the same rules as LaunchDarkly segments. A saved filter that was copied before is updated in place, so edits in the source org carry over. A new saved filter is created with migration metadata that points back to its source filter.

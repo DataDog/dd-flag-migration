@@ -91,11 +91,20 @@ are set to Client. Existing non-semver flags keep their current channel, and
 new non-semver flags use Datadog's default. Explicit Client, Server, and All
 modes set the corresponding channel on every selected flag.
 
-### Lifecycle filters
+### Advanced filtering
 
-In addition to the migration-state categories, [Advanced filtering](README.md#advanced-filtering) offers four LaunchDarkly lifecycle categories: **new**, **active**, **inactive**, and **launched**.
+During flag selection, press **Tab** to open a multi-select filter screen. Categories start unchecked, which means no category filter is applied and all flags remain visible. Check one or more categories to narrow the flag list, then press **Enter** to apply the filter selection and return to flag selection, or **Escape** to cancel filter changes. Checking every category is equivalent to applying no category filter. Any selected flags that no longer match the applied filters are automatically unselected on return.
 
-These categories are derived from [LaunchDarkly flag statuses](https://launchdarkly.com/docs/api/feature-flags/get-feature-flag-status-across-environments), which are tracked per environment. Environment selection still controls what gets migrated; lifecycle filters look across all non-archived LaunchDarkly environments in the project so they can answer whether a flag appears to be used anywhere. If a status fetch fails, the tool does not treat that missing data as inactive.
+The available categories are:
+
+- **new** — any environment — LaunchDarkly reports new for at least one non-archived environment
+- **active** — any environment — LaunchDarkly reports active for at least one non-archived environment
+- **inactive** — all environments — LaunchDarkly reports inactive for every non-archived environment whose status could be loaded
+- **launched** — any environment — LaunchDarkly reports launched for at least one non-archived environment
+- **previously-migrated** — flag — a matching flag already exists in Datadog; its targeting rules may still differ
+- **not-yet-migrated** — flag — no matching flag exists in Datadog yet
+
+The four lifecycle categories (**new**, **active**, **inactive**, and **launched**) are derived from [LaunchDarkly flag statuses](https://launchdarkly.com/docs/api/feature-flags/get-feature-flag-status-across-environments), which are tracked per environment. Environment selection still controls what gets migrated; lifecycle filters look across all non-archived LaunchDarkly environments in the project so they can answer whether a flag appears to be used anywhere. If a status fetch fails, the tool does not treat that missing data as inactive.
 
 ### Re-syncing existing flags
 
@@ -168,7 +177,7 @@ The interactive workflow uses the same environment selection and one-to-many map
 1. Select a LaunchDarkly project.
 2. Select the LaunchDarkly environments to analyze.
 3. Map each selected LaunchDarkly environment to one or more Datadog environments.
-4. Select the flags to check. This is the same flag picker as migration, including the **Tab** advanced filters (see [Advanced filtering](README.md#advanced-filtering)); press **Ctrl+A** to check every visible flag.
+4. Select the flags to check. This is the same flag picker as migration, including the **Tab** advanced filters (see [Advanced filtering](#advanced-filtering)); press **Ctrl+A** to check every visible flag.
 5. Confirm the analysis scope.
 
 The command reports the selected flags as **Not yet migrated**, **Partially migrated**, **Out of sync**, **In sync**, or **Needs review**. Environment sync is calculated only for the selected mappings; unselected Datadog environments do not affect the result. A `migration-status-launchdarkly-<project>-<timestamp>.xlsx` workbook is written automatically to the current directory with a global summary and one status tab per selected Datadog environment. Each environment tab includes scoped status counts at the top.
