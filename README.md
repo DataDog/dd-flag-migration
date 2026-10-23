@@ -14,6 +14,7 @@ A CLI tool for migrating feature flags from your current provider into [Datadog 
 | [LaunchDarkly → Datadog](README-LaunchDarkly.md) | Migrate flags from LaunchDarkly |
 | [Datadog → Datadog](README-Datadog.md) | Copy flags between Datadog orgs, and compare two orgs with `org-diff` |
 | [Post-migration actions](README-Post-Migration.md) | Bulk management of migrated flags: team permissions, environment enablement, and tag sync |
+| [Evaluate flags without APM or Infrastructure Monitoring](README-Without-APM.md) | Configure the Datadog Agent and your services to evaluate flags with APM tracing and Infrastructure Monitoring turned off |
 
 ---
 
