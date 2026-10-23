@@ -129,35 +129,38 @@ First choose the migration to check: **LaunchDarkly → Datadog** or **Datadog �
 
 ## Step 2 — Evaluate the migration
 
-Once flags have been migrated, run the evaluation to compare how flags are evaluated in your source provider vs. Datadog for the same inputs:
+Once flags have been migrated, evaluate them in your source provider and in Datadog with the same inputs, and compare the results:
 
 ```bash
 npx @datadog/dd-flag-migration evaluate
 ```
 
-The tool will:
+You can evaluate either of these:
 
-1. **Select a migration file** — pick from previous migrations (most recent first)
-2. **Select a Datadog environment** — choose which environment to evaluate against
-3. **Enter a test subject ID** — a user ID (or any string) to use for flag evaluation
-4. **Run evaluations** — the tool generates test cases from each flag's targeting rules and compares the provider and Datadog results side by side
+- **A migration** — a quick check that a migration went as expected. Every flag from a previous migration is evaluated for one test subject, using test cases generated from each flag's targeting rules (or your own test cases from a CSV file). Use it after each migration run to catch targeting that didn't translate correctly.
+- **A flag** — a thorough check of one flag's percentage splits and rollouts. The flag is evaluated for many random subjects (10,000 by default), and the tool reports how each platform distributes subjects across variants and lists every subject that gets a different value; it exits with status 1 if any do. Use it before switching over a flag that splits traffic, to confirm subjects keep the variant they had. Available for flags migrated from Eppo.
 
 Datadog and provider credentials are read from environment variables. See the credentials section of the [Eppo](README-Eppo.md#credentials-youll-need) or [LaunchDarkly](README-LaunchDarkly.md#credentials-youll-need) guide.
 
-Results are displayed in a table showing the provider value, Datadog value, migration status, and whether the flag is enabled. Matching values are shown in green; differences in yellow.
-
-You can optionally export the full results to an `.xlsx` file.
+Matching values are shown in green and differences in yellow. You can export the full results to an `.xlsx` file.
 
 ### Flags
 
-| Flag | Description |
-|---|---|
-| `--use-latest-migration` | Skip the migration file selector and use the most recent |
-| `--test-subject-id=<id>` | Set the subject ID non-interactively |
-| `--flag-environment=<name>` | Set the Datadog environment name non-interactively |
-| `--datadog-site=<site>` | Set the Datadog site non-interactively |
+Use these flags to skip the matching prompts, for example in scripted runs.
 
-Example for scripted use:
+| Flag | Applies to | Description |
+|---|---|---|
+| `--target=<migration\|flag>` | both | Choose what to evaluate. Inferred from the other flags when omitted |
+| `--flag-environment=<name>` | both | Datadog environment to evaluate against |
+| `--datadog-site=<site>` | both | Datadog site |
+| `--use-latest-migration` | migration | Use the most recent migration file |
+| `--test-subject-id=<id>` | migration | Subject ID to evaluate |
+| `--provider=eppo` | flag | Source provider of the flag. Only `eppo` is supported |
+| `--flag=<key>` | flag | Key of the flag to evaluate |
+| `--subjects=<n>` | flag | Number of random subjects (default: 10,000) |
+| `--export` | flag | Export every evaluation to an `.xlsx` file |
+
+Evaluate the latest migration:
 
 ```bash
 npx @datadog/dd-flag-migration evaluate \
@@ -167,9 +170,20 @@ npx @datadog/dd-flag-migration evaluate \
   --datadog-site=datadoghq.com
 ```
 
+Evaluate one flag migrated from Eppo:
+
+```bash
+npx @datadog/dd-flag-migration evaluate \
+  --target=flag \
+  --provider=eppo \
+  --flag=my-flag \
+  --flag-environment=production \
+  --datadog-site=datadoghq.com
+```
+
 Provider-specific evaluation details:
 
-- [Evaluate an Eppo migration](README-Eppo.md#evaluate-the-migration), including single-flag evaluation
+- [Evaluate an Eppo migration](README-Eppo.md#evaluate-the-migration)
 - [Evaluate a LaunchDarkly migration](README-LaunchDarkly.md#evaluate-the-migration)
 
 ### How evaluation works

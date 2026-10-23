@@ -255,7 +255,7 @@ The report compares current configuration and does not identify which platform c
 
 ## Evaluate the migration
 
-See [Step 2 — Evaluate the migration](README.md#step-2--evaluate-the-migration) for the general workflow and options. Results show the LaunchDarkly value next to the Datadog value.
+See [Step 2 — Evaluate the migration](README.md#step-2--evaluate-the-migration) for the general workflow and options. Results show the LaunchDarkly value next to the Datadog value. Single-flag evaluation (**A flag**) isn't available for LaunchDarkly yet; evaluate **A migration** instead.
 
 ### Mobile context kinds
 

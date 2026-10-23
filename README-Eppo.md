@@ -47,7 +47,7 @@ Credentials are read from environment variables. Set them in your shell (or `.en
 | Variable | Required when | Where to find it |
 |---|---|---|
 | `DD_CLIENT_TOKEN` | evaluating a migration or a client-only flag | Datadog → Organization Settings → Client Tokens |
-| `EPPO_SDK_KEY` | evaluating a migration | Eppo → SDK Keys (server SDK key, one per environment) |
+| `EPPO_SDK_KEY` | always | Eppo → SDK Keys (server SDK key, one per environment) |
 | `EPPO_API_KEY` | evaluating a single flag | Eppo → Configuration → API Keys |
 
 ### Required for `sync-tags`
@@ -172,6 +172,8 @@ See [Step 2 — Evaluate the migration](README.md#step-2--evaluate-the-migration
 ### Evaluate a single flag
 
 Choose **A flag** to evaluate one flag migrated from Eppo for many random subjects (10,000 by default; set with `--subjects=<n>`) in both platforms. The command lists mismatches, exits with status 1 if any subject differs, and can export every evaluation to `.xlsx`.
+
+It needs `EPPO_API_KEY` and `EPPO_SDK_KEY`, and compares the Eppo environment of `EPPO_SDK_KEY` with the Datadog environment you choose. Flags migrated before Eppo-compatible bucketing use Datadog bucketing, so subjects in their splits are expected to differ from Eppo.
 
 ---
 
