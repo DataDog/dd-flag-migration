@@ -6,17 +6,16 @@ A CLI tool for migrating feature flags from your current provider into [Datadog 
 
 ---
 
-## Migration guides
+## Guides
 
-This README covers installation and the primary commands — `migrate`, `migration-status`, and `evaluate` — with options that apply to every migration. Each guide covers the credentials, workflow, supported features, and implementation details for one migration path:
+This README covers installation and the primary commands — `migrate`, `migration-status`, and `evaluate` — with options that apply to every migration. Each migration guide covers the credentials, workflow, supported features, and implementation details for one migration path:
 
-| Migration | Guide |
+| Guide | Description |
 |---|---|
-| Eppo → Datadog | [README-Eppo.md](README-Eppo.md) |
-| LaunchDarkly → Datadog | [README-LaunchDarkly.md](README-LaunchDarkly.md) |
-| Datadog → Datadog | [README-Datadog.md](README-Datadog.md), including `org-diff` for comparing two orgs |
-
-See [Post-migration actions](README-Post-Migration.md) for bulk management of migrated flags.
+| [Eppo → Datadog](README-Eppo.md) | Migrate flags from Eppo |
+| [LaunchDarkly → Datadog](README-LaunchDarkly.md) | Migrate flags from LaunchDarkly |
+| [Datadog → Datadog](README-Datadog.md) | Copy flags between Datadog orgs, and compare two orgs with `org-diff` |
+| [Post-migration actions](README-Post-Migration.md) | Bulk management of migrated flags: team permissions, environment enablement, and tag sync |
 
 ---
 
@@ -70,7 +69,7 @@ Each migration guide describes the additional steps for its source:
 - [LaunchDarkly → Datadog workflow](README-LaunchDarkly.md#migrate-flags)
 - [Datadog → Datadog workflow](README-Datadog.md#migrate-flags)
 
-API keys are read from environment variables (see the credentials section of your [migration guide](#migration-guides)).
+API keys are read from environment variables (see the credentials section of your [migration guide](#guides)).
 Set `DD_SITE` to pre-fill the Datadog site prompt, or pass `--datadog-site=<site>` to provide an explicit site without a prompt. Datadog → Datadog migrations don't prompt for a site; they read `SOURCE_DD_SITE` and `TARGET_DD_SITE`. For fully scripted runs, see [Non-interactive mode](#non-interactive-mode) below.
 
 When the migration completes, a record is saved to `~/.dd-flag-migration/migration-<timestamp>.json`. In interactive mode you'll be prompted to export results to an `.xlsx` file; in non-interactive mode pass `--export=true` to generate one.
@@ -90,7 +89,7 @@ Selecting a flag that already exists in Datadog syncs it from the source instead
 **Re-syncing can overwrite changes made directly in Datadog.** To preserve those
 changes, exclude the flag from your selection. Use `--dry-run` to preview updates.
 
-What is synced, and how existing flags are matched, depends on your migration. See your [migration guide](#migration-guides).
+What is synced, and how existing flags are matched, depends on your migration. See your [migration guide](#guides).
 
 ### Non-interactive mode
 
