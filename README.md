@@ -8,8 +8,6 @@ A CLI tool for migrating feature flags from your current provider into [Datadog 
 
 ## Guides
 
-This README covers installation and the primary commands — `migrate`, `migration-status`, and `evaluate` — with options that apply to every migration. Each migration guide covers the credentials, workflow, supported features, and implementation details for one migration path:
-
 | Guide | Description |
 |---|---|
 | [Eppo → Datadog](README-Eppo.md) | Migrate flags from Eppo |
