@@ -1,0 +1,155 @@
+# Post-migration actions
+
+These commands help you manage flags after they've been migrated to Datadog. For installation and the primary commands (`migrate`, `migration-status`, and `evaluate`), see the [main README](README.md).
+
+```bash
+# manage team permissions after migration
+npx @datadog/dd-flag-migration bulk-permissions
+
+# enable migrated flags in one or more environments
+npx @datadog/dd-flag-migration bulk-enable
+
+# sync tags from your source provider onto migrated flags
+npx @datadog/dd-flag-migration sync-tags
+```
+
+Credentials are read from environment variables. If any required variable is missing, the tool prints a list of the missing names to stderr and exits with code 1. Each section below lists the variables and Datadog Application Key scopes the command needs.
+
+---
+
+## Bulk permission management
+
+After flags have been migrated, add or remove explicit Datadog team permissions with:
+
+```bash
+npx @datadog/dd-flag-migration bulk-permissions
+
+# When running from this repository:
+yarn bulk-permissions
+```
+
+This command needs `DD_API_KEY` and `DD_APP_KEY`. The application key needs the `feature_flag_config_read`, `teams_read`, `restriction_policies_read`, and `restriction_policies_write` scopes. The restriction-policy scopes are only used by this command.
+
+The interactive flow lets you:
+
+1. Choose **Add teams to flags** or **Remove teams from flags**.
+2. Select migrated flags. Type to filter by flag key or tag (for example, `project:health-100`). Separate several terms with spaces to show flags whose key or tags match any of them.
+3. Select one or more Datadog teams.
+4. For additions, optionally choose an `editor` or `contributor` permission policy for each selected team. The default is `editor`.
+5. Choose whether to sync matching `team:<handle>` tags.
+
+- **Additions** grant each selected team its chosen relation, `editor` or `contributor`. Teams can't be granted `viewer`, which stays organization-wide.
+- **Removals** remove the selected teams from every explicit relation, and keep every other principal and binding.
+- **Team tags**, when syncing is enabled, are added with additions and removed with removals; other tags are kept. Team tags only make ownership visible. Access is controlled by the explicit Datadog permissions.
+- **Repeats** change nothing when the requested state already exists.
+
+Every confirmed update writes a `bulk-permissions-export-<timestamp>.xlsx` report in the current directory. The report distinguishes changed permissions, idempotent no-ops, and failures for each selected flag/team pair. When team-tag syncing is enabled, a separate **Tag Sync** sheet records its per-flag results and errors without changing the permission outcomes.
+
+---
+
+## Bulk environment enablement
+
+Enable migrated flags across one or more Datadog environments with:
+
+```bash
+npx @datadog/dd-flag-migration bulk-enable
+
+# When running from this repository:
+yarn bulk-enable
+```
+
+This command needs `DD_API_KEY` and `DD_APP_KEY`. The application key needs the `feature_flag_config_read`, `feature_flag_config_write`, and `feature_flag_environment_config_read` scopes. The optional `feature_flag_approvals_override` scope bypasses Feature Flag approval requirements; without it, approval-protected changes are submitted as approval requests and reported as such.
+
+First select one or more Datadog environments, then select the migrated flags to enable. The flag picker supports filtering by flag key or tag; press **Tab** for advanced filters scoped to the selected environments. Select **needs-enabling** to hide flags that are already enabled in every selected environment. Flags whose status cannot be confirmed remain visible under **needs-enabling** so they are not silently omitted. Production environments are clearly marked and require an explicit confirmation.
+
+A failure for one flag/environment pair does not stop the remaining updates. Every confirmed update writes a `bulk-enable-export-<timestamp>.xlsx` report in the current directory. The report distinguishes newly enabled pairs, already-enabled pairs, approval requests, failures, and successful writes whose prior status could not be read.
+
+---
+
+## Tag sync
+
+After flags have been migrated, sync tags from your source provider (Eppo or LaunchDarkly) onto the corresponding Datadog flags with:
+
+```bash
+npx @datadog/dd-flag-migration sync-tags
+
+# When running from this repository:
+yarn sync-tags
+```
+
+This command needs `DD_API_KEY`, `DD_APP_KEY`, and the source provider's API key: `EPPO_API_KEY` or `LAUNCHDARKLY_API_KEY`. The application key needs the `feature_flag_config_read`, `feature_flag_config_write`, `feature_flag_environment_config_read`, and `teams_read` scopes.
+
+The interactive flow mirrors the `migrate` command's provider and flag selection:
+
+1. **Select a provider** — Eppo or LaunchDarkly.
+2. For LaunchDarkly, **select a project** using the same project picker as `migrate`.
+3. **Select flags** — the same searchable, filterable flag list used by `migrate`. Only flags that already exist in Datadog can have their tags synced; flags with no Datadog match are skipped.
+4. **Choose a sync strategy** — *Additive Merge* or *Full Replace*.
+
+### Sync strategies
+
+- **Additive Merge** (default) — adds the source tags to each Datadog flag while preserving any tags that already exist in Datadog. Source tags are unioned with the existing Datadog tags; nothing is removed. This is the safe default and never deletes tags.
+- **Full Replace** — replaces the Datadog flag's tags with exactly the source tags. Tags that exist only in Datadog are removed, so removals in the source platform propagate to Datadog. Use this when the source platform is the source of truth for tags.
+
+### Which tags get synced
+
+- **Eppo** — the flag's `tag_names` as-is.
+- **LaunchDarkly** — the flag's own LD tags plus the `project:<key>` migration-link tag (so the Datadog→LaunchDarkly link is preserved on Full Replace). Team tags derived from the LaunchDarkly RBAC editor-team walk are not re-synced here — they belong to the restriction-policy flow.
+
+Datadog → Datadog migrations don't use `sync-tags`; `migrate` syncs tags on every run.
+
+### Report
+
+Every completed tag-sync run writes a `sync-tags-export-<timestamp>.xlsx` report in the current directory, including dry runs. The **Tag Sync** sheet records the source, existing, target, added, and removed tags for every Datadog operation; when source flags are skipped because no safe Datadog match exists, a **Skipped Flags** sheet records the reason.
+
+### Non-interactive mode
+
+Pass `--interactive=false` to run the tag sync entirely from CLI arguments. Non-interactive runs write a JSON result document to stdout, including the report's `exportPath`; status messages and spreadsheet confirmation go to stderr.
+
+**Required flags**
+
+| Flag | Description |
+|---|---|
+| `--provider <Eppo\|LaunchDarkly>` | Source provider (case-insensitive) |
+| `--datadog-site <site>` | Datadog site (e.g. `datadoghq.com`) |
+| `--feature-flag <key>` | Flag key to sync tags for. Repeat for each flag |
+| `--project <key>` | LaunchDarkly project key *(LaunchDarkly only)* |
+
+**Optional flags**
+
+| Flag | Description |
+|---|---|
+| `--dry-run` | Preview tag changes without writing to Datadog |
+| `--tag-mode <additive\|replace>` | Tag sync strategy (default: `additive`). Also accepts `merge` and `full` as aliases |
+
+**Examples**
+
+Preview an additive tag sync for an Eppo flag:
+
+```bash
+npx @datadog/dd-flag-migration sync-tags --interactive=false \
+  --provider Eppo \
+  --datadog-site datadoghq.com \
+  --dry-run \
+  --feature-flag my-flag
+```
+
+Sync tags for two LaunchDarkly flags using Full Replace:
+
+```bash
+npx @datadog/dd-flag-migration sync-tags --interactive=false \
+  --provider LaunchDarkly \
+  --project my-ld-project \
+  --datadog-site datadoghq.com \
+  --tag-mode replace \
+  --feature-flag flag-one \
+  --feature-flag flag-two
+```
+
+### Dry run
+
+To preview tag changes without writing to Datadog:
+
+```bash
+npx @datadog/dd-flag-migration sync-tags --dry-run
+```

@@ -215,6 +215,10 @@ This checks that every npm package in `yarn.lock` has a corresponding entry in t
 No external tools or tokens are needed — it runs in CI the same way. If it fails, run
 `yarn licenses:generate` and commit the result.
 
+## Helper scripts
+
+`scripts/get-datadog-flag.sh` fetches a single feature flag from the Datadog API by key or ID. It requires `DD_SITE`, `DD_API_KEY`, and `DD_APP_KEY`, and does not accept a site argument.
+
 ## Code Style
 
 - Use TypeScript for all new code
@@ -225,17 +229,20 @@ No external tools or tokens are needed — it runs in CI the same way. If it fai
 
 ## Commit Messages
 
-Follow conventional commit format with gitmoji:
+Use [Conventional Commits](https://www.conventionalcommits.org/) for every commit message and PR title. Prefix the summary with a type followed by a colon and a space:
 
-- `✨ feat:` for new features
-- `🐛 fix:` for bug fixes
-- `📝 docs:` for documentation changes
-- `🎨 style:` for formatting changes
-- `♻️ refactor:` for code refactoring
-- `✅ test:` for test changes
-- `👷 chore:` for maintenance tasks
+- `feat:` for new features
+- `fix:` for bug fixes
+- `docs:` for documentation changes
+- `style:` for formatting changes
+- `refactor:` for code refactoring
+- `perf:` for performance improvements
+- `test:` for test changes
+- `build:` for build system or dependency changes
+- `ci:` for CI configuration changes
+- `chore:` for maintenance tasks
 
-Example: `✨ feat: add Eppo flag migration support`
+Example: `feat: add Eppo flag migration support`
 
 ## Getting Help
 
