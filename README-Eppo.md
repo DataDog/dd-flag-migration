@@ -49,7 +49,7 @@ Enable these scopes on the key in `DD_APP_KEY`:
 | `feature_flag_config_read` | View Feature Flag Configurations |
 | `feature_flag_config_write` | Edit Feature Flag Configurations |
 | `feature_flag_environment_config_read` | View Feature Flag Environment settings |
-| `teams_read` | View Teams for team-based access controls |
+| `teams_read` | View Teams to add `team:<handle>` tags for the Eppo teams that own each flag |
 
 To set these permissions, go to **Organization Settings → Application Keys**, select your key, and enable the scopes. The feature flag scopes are under **Feature Flags** and `teams_read` is under **Teams**.
 
@@ -60,6 +60,12 @@ export EPPO_API_KEY=...
 
 npx @datadog/dd-flag-migration migrate
 ```
+
+### Team tags
+
+Each migrated flag gets a `team:<handle>` tag for every Eppo team that owns it, as long as the Eppo team matches a Datadog team. A team matches when its Eppo name equals a Datadog team handle, the name's slug equals a handle (`Team A` matches `team-a`), or the name equals a Datadog team name, ignoring case. Interactive migrations offer to map unmatched teams by hand; non-interactive migrations skip them. Archived Eppo teams are ignored.
+
+Team tags follow the selected tag mode. They don't change who can edit the flag in Datadog: Eppo exposes no permissions to migrate. If Eppo or Datadog teams can't be fetched, flags are migrated without team tags.
 
 ### Advanced filtering
 

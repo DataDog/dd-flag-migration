@@ -1,5 +1,10 @@
 import axios, { type AxiosInstance } from 'axios';
-import type { EppoAudience, EppoFlag, EppoFlagEnvironment } from './types.js';
+import type {
+	EppoAudience,
+	EppoFlag,
+	EppoFlagEnvironment,
+	EppoTeam,
+} from './types.js';
 
 const EPPO_BASE_URL = 'https://eppo.cloud';
 const EPPO_PAGE_SIZE = 100;
@@ -238,4 +243,21 @@ export async function fetchEppoAudiences(
 		offset += EPPO_PAGE_SIZE;
 	}
 	return all;
+}
+
+// ─── Teams ───────────────────────────────────────────────────────────────────
+
+/** Fetch active Eppo teams with the IDs of the feature flags they own. */
+export async function fetchEppoTeams(apiKey: string): Promise<EppoTeam[]> {
+	const response = await eppoClient.get<EppoTeam[]>(
+		`${EPPO_BASE_URL}/api/v1/teams`,
+		{
+			headers: {
+				'x-eppo-token': apiKey,
+				'Content-Type': 'application/json',
+			},
+			params: { with_relations: true },
+		},
+	);
+	return Array.isArray(response.data) ? response.data : [];
 }

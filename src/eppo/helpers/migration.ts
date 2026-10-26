@@ -7,6 +7,7 @@ import {
 	type DatadogExposureScheduleRequest,
 	type DatadogFlagEntry,
 	type DatadogTargetingRule,
+	type DatadogTeam,
 	type DatadogVariantWeightRequest,
 	type EnvironmentMappingInput,
 	mappedDatadogEnvironments,
@@ -15,6 +16,7 @@ import {
 import type {
 	EppoAllocation,
 	EppoFlag,
+	EppoTeam,
 	EppoVariationWeight,
 } from '../types.js';
 
@@ -645,6 +647,56 @@ export function findEppoMigrationBlockers(
 		);
 	}
 	return blockers;
+}
+
+// ─── Team Tags ───────────────────────────────────────────────────────────────
+
+/** Index the names of active Eppo teams by the IDs of the flags they own. */
+export function indexEppoTeamsByFlagId(
+	teams: EppoTeam[],
+): Map<string, string[]> {
+	const byFlagId = new Map<string, string[]>();
+	for (const team of teams) {
+		if (team.archived_at || !team.name) continue;
+		for (const flagId of team.feature_flags ?? []) {
+			const names = byFlagId.get(String(flagId)) ?? [];
+			if (!names.includes(team.name)) names.push(team.name);
+			byFlagId.set(String(flagId), names);
+		}
+	}
+	return byFlagId;
+}
+
+/**
+ * Find the Datadog team handle for an Eppo team. Eppo teams only have a
+ * display name, so it is matched against Datadog handles (as-is, then
+ * slugified) and then against Datadog team names, ignoring case.
+ */
+export function matchDatadogTeamHandle(
+	eppoTeamName: string,
+	ddTeams: DatadogTeam[],
+): string | undefined {
+	const lowerName = eppoTeamName.toLowerCase();
+	// slugify falls back to "default" for names with no ASCII letters or digits.
+	const slug = /[a-z0-9]/i.test(eppoTeamName) ? slugify(eppoTeamName) : '';
+	return (
+		ddTeams.find((t) => t.handle === eppoTeamName) ??
+		ddTeams.find((t) => slug !== '' && t.handle === slug) ??
+		ddTeams.find((t) => t.name.toLowerCase() === lowerName)
+	)?.handle;
+}
+
+/**
+ * Build the source-derived tags for an Eppo flag: its Eppo tags plus a
+ * `team:<handle>` tag for each Datadog team matched to an owning Eppo team.
+ */
+export function buildEppoFlagTags(
+	flagTags: string[],
+	teamHandles: string[] = [],
+): string[] {
+	return [
+		...new Set([...flagTags, ...teamHandles.map((handle) => `team:${handle}`)]),
+	];
 }
 
 // ─── Existing Datadog Flags ──────────────────────────────────────────────────

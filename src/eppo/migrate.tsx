@@ -2,7 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import axios from 'axios';
 import chalk from 'chalk';
+import { confirm } from '../components/Confirm.js';
 import { filterableCheckbox } from '../components/FilterableCheckbox.js';
+import { filterableSelect } from '../components/FilterableSelect.js';
 import {
 	type FilterCategory,
 	MIGRATED_FILTER_ID,
@@ -24,6 +26,7 @@ import {
 	enableFeatureFlagEnvironmentWithOutcome,
 	fetchDatadogEnvironments,
 	fetchDatadogFlags,
+	fetchDatadogTeams,
 	fetchFlagDetail,
 	indexDatadogFlagKeys,
 	syncAllocationsForEnvironment,
@@ -43,6 +46,7 @@ import type {
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,
 	DatadogFlagEntry,
+	DatadogTeam,
 	EnvironmentMapping,
 	MigrationEnvironmentMapping,
 } from '../datadog/types.js';
@@ -55,19 +59,22 @@ import {
 	selectMigrationTagMode,
 	type TagSyncMode,
 } from '../helpers/sync-tags.js';
-import { extractEnvironments, fetchEppoFlags } from './api.js';
+import { extractEnvironments, fetchEppoFlags, fetchEppoTeams } from './api.js';
 import { migrateAudiences } from './audiences.js';
 import { EppoMigrationSummary } from './components/EppoMigrationSummary.js';
 import {
 	buildAllocations,
 	buildDefaultVariantKeyPerEnv,
+	buildEppoFlagTags,
 	buildVariants,
 	classifyExistingFlag,
 	findEppoMigrationBlockers,
 	getEnvsToDisable,
 	getEnvsToEnable,
 	hasJsonArrayVariants,
+	indexEppoTeamsByFlagId,
 	mapVariationType,
+	matchDatadogTeamHandle,
 	toCreateFlagVariants,
 } from './helpers/migration.js';
 import type {
@@ -356,6 +363,145 @@ const EPPO_FILTER_CATEGORIES: FilterCategory[] = [
 
 type ConfirmAction = 'migrate' | 'select-more' | 'cancel';
 
+/** Prompt the user to select a Datadog team handle for an unmatched Eppo team. */
+async function promptForTeamMapping(
+	eppoTeamName: string,
+	ddTeams: DatadogTeam[],
+): Promise<string | null> {
+	const pageSize = Math.max(
+		5,
+		Math.min(ddTeams.length + 1, (process.stdout.rows ?? 24) - 9),
+	);
+
+	return filterableSelect<string | null>({
+		message: `Map Eppo team "${eppoTeamName}" → Datadog team:`,
+		choices: [
+			{
+				name: chalk.dim('Skip — do not tag flags with this team'),
+				value: null,
+			},
+			...ddTeams.map((t) => ({
+				name: `${t.name}  ${chalk.gray(`(${t.handle})`)}`,
+				value: t.handle,
+			})),
+		],
+		pageSize,
+	});
+}
+
+/**
+ * Resolve the Datadog team handles for each selected flag's owning Eppo teams,
+ * keyed by Eppo flag ID. Only Eppo teams matched to a Datadog team produce
+ * `team:*` tags, so no tag points to a nonexistent Datadog team. Permissions
+ * are not derived from Eppo teams. A failed lookup skips team tags.
+ */
+async function resolveEppoTeamHandles(
+	flags: EppoFlag[],
+	eppoApiKey: string,
+	ddApiKey: string,
+	ddAppKey: string,
+	site: string,
+	nonInteractive: boolean,
+): Promise<Map<number, string[]>> {
+	const handlesByFlagId = new Map<number, string[]>();
+
+	const eppoSpinner = createSpinner('Fetching Eppo teams…').start();
+	let teamNamesByFlagId: Map<string, string[]>;
+	try {
+		teamNamesByFlagId = indexEppoTeamsByFlagId(
+			await fetchEppoTeams(eppoApiKey),
+		);
+	} catch (err) {
+		eppoSpinner.warn(
+			`Could not fetch Eppo teams: ${formatAxiosError(err)} — team tags will be skipped`,
+		);
+		return handlesByFlagId;
+	}
+	const teamNames = [
+		...new Set(flags.flatMap((f) => teamNamesByFlagId.get(String(f.id)) ?? [])),
+	].sort();
+	if (teamNames.length === 0) {
+		eppoSpinner.succeed('No Eppo teams own the selected flag(s)');
+		return handlesByFlagId;
+	}
+	eppoSpinner.succeed(
+		`Found ${teamNames.length} Eppo team(s) owning the selected flag(s)`,
+	);
+
+	const ddSpinner = createSpinner('Fetching Datadog teams…').start();
+	let ddTeams: DatadogTeam[];
+	try {
+		ddTeams = await fetchDatadogTeams(ddApiKey, ddAppKey, site);
+		ddSpinner.succeed(`Found ${ddTeams.length} Datadog team(s)`);
+	} catch (err) {
+		ddSpinner.warn(
+			`Could not fetch Datadog teams: ${formatAxiosError(err)} — team tags will be skipped`,
+		);
+		console.log(
+			chalk.dim(
+				'    Verify the Datadog application key has the teams_read scope and rerun.',
+			),
+		);
+		return handlesByFlagId;
+	}
+
+	const handleByTeamName = new Map<string, string>();
+	const unmatched: string[] = [];
+	for (const name of teamNames) {
+		const handle = matchDatadogTeamHandle(name, ddTeams);
+		if (handle) handleByTeamName.set(name, handle);
+		else unmatched.push(name);
+	}
+
+	if (unmatched.length > 0) {
+		console.log();
+		console.log(
+			chalk.yellow(
+				`  ${unmatched.length} Eppo team(s) do not match any Datadog team:`,
+			),
+		);
+		for (const name of unmatched) {
+			console.log(chalk.yellow(`    • ${name}`));
+		}
+		console.log();
+
+		const shouldMap = nonInteractive
+			? false
+			: await confirm({
+					message: 'Would you like to map these to Datadog teams now?',
+					default: true,
+				});
+		if (shouldMap) {
+			for (const name of unmatched) {
+				const handle = await promptForTeamMapping(name, ddTeams);
+				if (handle) handleByTeamName.set(name, handle);
+			}
+		}
+
+		const skippedTeams = unmatched.filter((n) => !handleByTeamName.has(n));
+		if (skippedTeams.length > 0) {
+			console.log(
+				chalk.yellow(
+					`  ⚠ Skipping team tags for ${skippedTeams.length} Eppo team(s) without a matching Datadog team: ${skippedTeams.join(', ')}`,
+				),
+			);
+		}
+	}
+
+	for (const flag of flags) {
+		const handles = [
+			...new Set(
+				(teamNamesByFlagId.get(String(flag.id)) ?? []).flatMap((name) => {
+					const handle = handleByTeamName.get(name);
+					return handle ? [handle] : [];
+				}),
+			),
+		];
+		if (handles.length > 0) handlesByFlagId.set(flag.id, handles);
+	}
+	return handlesByFlagId;
+}
+
 async function confirmMigration(
 	flags: EppoFlag[],
 	eppoApiKey: string,
@@ -429,6 +575,15 @@ async function confirmMigration(
 	) {
 		tagSyncMode = await selectMigrationTagMode();
 	}
+
+	const teamHandlesByFlagId = await resolveEppoTeamHandles(
+		flags,
+		eppoApiKey,
+		ddApiKey,
+		ddAppKey,
+		site,
+		nonInteractive,
+	);
 
 	if (dryRun) {
 		console.log(chalk.bold.yellow('  Dry run — no flags will be created\n'));
@@ -772,7 +927,10 @@ async function confirmMigration(
 					: '';
 				if (existingFlagId) {
 					// Flag already exists in Datadog — sync targeting and enable in new environments
-					const sourceTags = flag.tag_names ?? [];
+					const sourceTags = buildEppoFlagTags(
+						flag.tag_names ?? [],
+						teamHandlesByFlagId.get(flag.id),
+					);
 					const syncTags = await resolveMigrationTargetTags(
 						tagSyncMode,
 						sourceTags,
@@ -1257,7 +1415,10 @@ async function confirmMigration(
 					// Flag does not exist — create it with targeting rules and Eppo
 					// bucketing, without a flag-level default: environments without an
 					// Eppo default keep none, so unmatched subjects get the SDK fallback.
-					const tags = flag.tag_names ?? [];
+					const tags = buildEppoFlagTags(
+						flag.tag_names ?? [],
+						teamHandlesByFlagId.get(flag.id),
+					);
 					const request: DatadogCreateFlagRequest = {
 						key: flag.key,
 						name: flag.name,
