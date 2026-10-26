@@ -76,6 +76,10 @@ Eppo does not expose flag usage-recency data, so lifecycle categories such as La
 
 Selecting an Eppo flag that already exists in Datadog syncs it from Eppo. See [Re-syncing existing flags](README.md#re-syncing-existing-flags) for general behavior.
 
+If the matching Datadog flag is archived, the tool automatically restores it before syncing, without an additional prompt or option. This applies only to Eppo migrations and requires the archived flag's migration metadata to identify the same Eppo source flag ID. An active match takes precedence. Restoration preserves the existing flag and variant IDs and reuses its targeting-filter keys instead of creating a replacement.
+
+If multiple archived flags match the same Eppo source ID, the tool fails that flag rather than choosing one. Restore the intended flag in Datadog and re-run the migration. A failed or approval-required restoration also stops that flag's sync; no replacement is created. If restoration succeeds but a later sync fails, the flag remains restored. Migration reports list successful restorations in `restoredKeys`, including when a later step fails. Dry runs list planned restorations there and record the unarchive request without changing Datadog.
+
 The tool preserves numbered suffixes added to resolve duplicate display names, such as `Flag (1)`, while applying source name changes. If an updated name is already taken, the tool tries another numbered suffix without changing the flag's key or ID. Dry runs cannot check whether a new name is already taken.
 
 ---

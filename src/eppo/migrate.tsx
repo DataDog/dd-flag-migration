@@ -28,6 +28,7 @@ import {
 	indexDatadogFlagKeys,
 	syncAllocationsForEnvironment,
 	syncVariantsCreatesAndUpdates,
+	unarchiveFeatureFlag,
 	updateFlagDistributionChannel,
 	updateFlagJsonSchema,
 	updateFlagName,
@@ -113,11 +114,49 @@ export function datadogIdForEppoFlag(
 	);
 }
 
-function flagLabel(flag: EppoFlag, inDatadog: boolean): string {
+function archivedEppoMatches(
+	flag: EppoFlag,
+	datadogFlags: DatadogFlagEntry[],
+): DatadogFlagEntry[] {
+	return datadogFlags.filter(
+		(existing) =>
+			!!existing.archived_at &&
+			existing.migration_metadata?.provider === 'eppo' &&
+			existing.migration_metadata.source_id === String(flag.id),
+	);
+}
+
+/** Active matches take precedence; archived flags require a unique source ID match. */
+function indexEppoMigrationFlagKeys(
+	flags: EppoFlag[],
+	datadogFlags: DatadogFlagEntry[],
+): Map<string, string> {
+	const keys = indexDatadogFlagKeys(
+		datadogFlags.filter((flag) => !flag.archived_at),
+	);
+	for (const flag of flags) {
+		if (datadogIdForEppoFlag(flag, keys) !== undefined) continue;
+		const matches = archivedEppoMatches(flag, datadogFlags);
+		if (matches.length === 1) {
+			keys.set(eppoSourceIdLookupKey(String(flag.id)), matches[0].id);
+		}
+	}
+	return keys;
+}
+
+function flagLabel(
+	flag: EppoFlag,
+	inDatadog: boolean,
+	archived: boolean,
+): string {
 	const indicator = inDatadog ? chalk.green('✓') : ' ';
 	const name = flag.name;
 	const key = chalk.gray(`(${flag.key})`);
-	const badge = inDatadog ? `  ${chalk.bgGreen.black(' In Datadog ')}` : '';
+	const badge = archived
+		? `  ${chalk.bgYellow.black(' Archived — will restore ')}`
+		: inDatadog
+			? `  ${chalk.bgGreen.black(' In Datadog ')}`
+			: '';
 	return `${indicator}  ${name}  ${key}${badge}`;
 }
 
@@ -237,6 +276,7 @@ export async function selectFlags(
 	datadogKeys: Map<string, string>,
 	selectedEnvs: EppoFlagEnvironment[],
 	previouslySelected: EppoFlag[] = [],
+	datadogFlags: DatadogFlagEntry[] = [],
 ): Promise<EppoFlag[] | null> {
 	const selectedEnvIds = new Set(selectedEnvs.map((e) => e.id));
 	const visibleFlags =
@@ -282,6 +322,11 @@ export async function selectFlags(
 			name: flagLabel(
 				flag,
 				datadogIdForEppoFlag(flag, datadogKeys) !== undefined,
+				datadogFlags.some(
+					(existing) =>
+						existing.id === datadogIdForEppoFlag(flag, datadogKeys) &&
+						!!existing.archived_at,
+				),
 			),
 			value: flag,
 			checked: previousKeys.has(flag.key),
@@ -553,6 +598,7 @@ async function confirmMigration(
 	const semverForcedClientKeys: string[] = [];
 	const jsonArrayWrappedKeys: string[] = [];
 	const legacyBucketingKeys: string[] = [];
+	const restoredKeys: string[] = [];
 	let runner: MigrationRunnerHandle | undefined;
 
 	const environmentMapping: MigrationEnvironmentMapping[] = [];
@@ -574,7 +620,10 @@ async function confirmMigration(
 	const sigintHandler = () => {
 		if (runner) runner.finalize();
 		else process.stderr.write('\n');
-		if (!dryRun && (created > 0 || synced > 0 || errored > 0)) {
+		if (
+			!dryRun &&
+			(created > 0 || synced > 0 || errored > 0 || restoredKeys.length > 0)
+		) {
 			console.log(
 				chalk.yellow('\n  Migration interrupted — saving partial results…'),
 			);
@@ -597,6 +646,7 @@ async function confirmMigration(
 				disableFailures,
 				disableApprovalRequests,
 				skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
+				restoredKeys: restoredKeys.length > 0 ? restoredKeys : undefined,
 				flags,
 				environmentMapping,
 			};
@@ -700,6 +750,16 @@ async function confirmMigration(
 				}
 
 				const existingFlagId = datadogIdForEppoFlag(flag, datadogKeys);
+				if (existingFlagId === undefined) {
+					const archivedMatches = archivedEppoMatches(flag, datadogFlags);
+					if (archivedMatches.length > 1) {
+						doFail(
+							flag.key,
+							`Flag "${flag.key}": multiple archived Datadog flags match Eppo source ID "${flag.id}" (${archivedMatches.map((match) => match.id).join(', ')}). Restore the intended flag in Datadog and re-run the migration; no replacement was created.`,
+						);
+						continue;
+					}
+				}
 				const existingFlag = datadogFlags.find(
 					(existing) => existing.id === existingFlagId,
 				);
@@ -810,6 +870,9 @@ async function confirmMigration(
 				const rolloutLabel =
 					rolloutCount > 0 ? `, ${rolloutCount} partial rollout(s)` : '';
 
+				const restorationLabel = existingFlag?.archived_at
+					? ', 1 flag restoration'
+					: '';
 				if (existingFlagId) {
 					// Flag already exists in Datadog — sync targeting and enable in new environments
 					const sourceTags = flag.tag_names ?? [];
@@ -821,6 +884,35 @@ async function confirmMigration(
 						ddAppKey,
 						site,
 					);
+
+					if (existingFlag?.archived_at) {
+						if (dryRun) {
+							dryRunRequests.push({
+								method: 'POST',
+								path: `/api/v2/feature-flags/${existingFlagId}/unarchive`,
+								body: {},
+							});
+						} else {
+							try {
+								await unarchiveFeatureFlag(
+									ddApiKey,
+									ddAppKey,
+									existingFlagId,
+									site,
+								);
+							} catch (err) {
+								throw new Error(
+									`Failed to restore archived flag "${flag.key}" (${existingFlagId}): ${formatAxiosError(err)}`,
+								);
+							}
+							existingFlag.archived_at = null;
+						}
+						restoredKeys.push(flag.key);
+						activeRunner.printMessage(
+							`${dryRun ? '[dry run] Would restore' : 'Restored'} ${chalk.cyan(flag.key)} (${existingFlagId}) — reusing the existing flag for sync`,
+						);
+						activeRunner.beginFlag(flag.key);
+					}
 
 					if (dryRun) {
 						dryRunRequests.push({
@@ -1032,8 +1124,8 @@ async function confirmMigration(
 						const filterLabel = `, ${syncFilterCount} targeting filter(s)`;
 						doSync(
 							dryRun
-								? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (1 name, ${syncTags.length} tag(s)${filterLabel}${rolloutLabel}${variantLabel}${schemaLabel}${disableLabel})`
-								: `${chalk.green('✓')} Synced ${chalk.cyan(flag.key)} (1 name, ${syncTags.length} tag(s)${filterLabel}${rolloutLabel}${variantLabel}${schemaLabel}${disableLabel})`,
+								? `${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} (1 name, ${syncTags.length} tag(s)${filterLabel}${rolloutLabel}${variantLabel}${schemaLabel}${restorationLabel}${disableLabel})`
+								: `${chalk.green('✓')} Synced ${chalk.cyan(flag.key)} (1 name, ${syncTags.length} tag(s)${filterLabel}${rolloutLabel}${variantLabel}${schemaLabel}${restorationLabel}${disableLabel})`,
 						);
 						continue;
 					}
@@ -1148,7 +1240,7 @@ async function confirmMigration(
 								: '';
 						doSync(
 							`${chalk.dim('[dry run]')} Would sync ${chalk.cyan(flag.key)} ` +
-								`(${syncFilterLabel}${syncRuleLabel}${rolloutLabel}${variantLabel}${tagLabel}, 1 name${schemaLabel}${enableLabel}${disableLabel})`,
+								`(${syncFilterLabel}${syncRuleLabel}${rolloutLabel}${variantLabel}${tagLabel}, 1 name${schemaLabel}${restorationLabel}${enableLabel}${disableLabel})`,
 						);
 					} else {
 						try {
@@ -1297,7 +1389,7 @@ async function confirmMigration(
 									? `, disabled in ${disabledCount} env(s)`
 									: '';
 							doSync(
-								`${chalk.green('✓')} Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${rolloutLabel}${variantLabel}${tagLabel}, 1 name${schemaLabel}${enableLabel}${disableLabel})`,
+								`${chalk.green('✓')} Synced ${chalk.cyan(flag.key)} (${syncedAllocCount} targeting filter(s)${syncedRuleLabel}${rolloutLabel}${variantLabel}${tagLabel}, 1 name${schemaLabel}${restorationLabel}${enableLabel}${disableLabel})`,
 							);
 						} catch (err) {
 							const error = formatAxiosError(err);
@@ -1487,6 +1579,7 @@ async function confirmMigration(
 			skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
 			legacyBucketingKeys:
 				legacyBucketingKeys.length > 0 ? legacyBucketingKeys : undefined,
+			restoredKeys: restoredKeys.length > 0 ? restoredKeys : undefined,
 			flags,
 			environmentMapping,
 			requests: dryRunRequests,
@@ -1525,6 +1618,7 @@ async function confirmMigration(
 				jsonArrayWrappedKeys.length > 0 ? jsonArrayWrappedKeys : undefined,
 			legacyBucketingKeys:
 				legacyBucketingKeys.length > 0 ? legacyBucketingKeys : undefined,
+			restoredKeys: restoredKeys.length > 0 ? restoredKeys : undefined,
 			flags,
 			environmentMapping,
 		};
@@ -1617,10 +1711,10 @@ export async function runEppoMigration(
 					spinner.text = `Loading data… (${fetched} Eppo flag${fetched === 1 ? '' : 's'} fetched)`;
 				},
 			}),
-			fetchDatadogFlags(ddApiKey, ddAppKey, ddSite),
+			fetchDatadogFlags(ddApiKey, ddAppKey, ddSite, { includeArchived: true }),
 			fetchDatadogEnvironments(ddApiKey, ddAppKey, ddSite),
 		]);
-		datadogKeys = indexDatadogFlagKeys(datadogFlags);
+		datadogKeys = indexEppoMigrationFlagKeys(flags, datadogFlags);
 		spinner.succeed(
 			`Loaded ${flags.length} Eppo flag(s) · ${datadogEnvs.length} Datadog environment(s)`,
 		);
@@ -1695,6 +1789,7 @@ export async function runEppoMigration(
 					datadogKeys,
 					selectedEnvs,
 					prevSelectedFlags,
+					datadogFlags,
 				);
 				if (flagResult === null) break; // escaped → back to linking
 
@@ -1836,10 +1931,10 @@ async function runEppoMigrationNonInteractive(
 					spinner.text = `Loading data… (${fetched} Eppo flag${fetched === 1 ? '' : 's'} fetched)`;
 				},
 			}),
-			fetchDatadogFlags(ddApiKey, ddAppKey, ddSite),
+			fetchDatadogFlags(ddApiKey, ddAppKey, ddSite, { includeArchived: true }),
 			fetchDatadogEnvironments(ddApiKey, ddAppKey, ddSite),
 		]);
-		datadogKeys = indexDatadogFlagKeys(datadogFlags);
+		datadogKeys = indexEppoMigrationFlagKeys(flags, datadogFlags);
 		spinner.succeed(
 			`Loaded ${flags.length} Eppo flag(s) · ${datadogEnvs.length} Datadog environment(s)`,
 		);

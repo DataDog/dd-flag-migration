@@ -26,6 +26,7 @@ interface Report {
 	summary: { created: number; synced: number; errored: number };
 	failures: Array<{ key: string; error: string }>;
 	legacyBucketingKeys?: string[];
+	restoredKeys?: string[];
 	requests?: Array<{
 		method: string;
 		path: string;
@@ -169,15 +170,23 @@ describe('Eppo migration with Eppo-compatible bucketing', () => {
 
 	function mockSources(
 		flag: EppoFlag,
-		existing?: Record<string, unknown>,
+		existing?:
+			| Record<string, unknown>
+			| Array<{
+					id: string;
+					attributes: Record<string, unknown>;
+			  }>,
 	): void {
+		const existingFlags = Array.isArray(existing)
+			? existing
+			: existing
+				? [{ id: FLAG_ID, attributes: existing }]
+				: [];
 		eppoMock.onGet(`${EPPO_BASE}/api/v1/feature-flags`).reply(200, [flag]);
 		eppoMock.onGet(`${EPPO_BASE}/api/v1/audiences`).reply(200, []);
 		ddMock.onGet(`${DD_BASE}/api/v2/feature-flags`).reply(200, {
-			data: existing
-				? [{ id: FLAG_ID, type: 'feature-flags', attributes: existing }]
-				: [],
-			meta: { page: { total: existing ? 1 : 0 } },
+			data: existingFlags.map((entry) => ({ ...entry, type: 'feature-flags' })),
+			meta: { page: { total: existingFlags.length } },
 		});
 		ddMock.onGet(`${DD_BASE}/api/v2/feature-flags/environments`).reply(200, {
 			data: [
@@ -353,6 +362,257 @@ describe('Eppo migration with Eppo-compatible bucketing', () => {
 			]);
 			expect(writes).toEqual([]);
 			expect(process.exitCode).toBe(1);
+		});
+	});
+
+	describe('an archived Datadog flag migrated from Eppo', () => {
+		function archivedAttributes(): Record<string, unknown> {
+			return {
+				key: 'checkout-redesign',
+				name: 'Checkout Redesign',
+				archived_at: '2026-10-22T00:00:00Z',
+				bucketing_mode: 'EPPO',
+				migration_metadata: { provider: 'eppo', source_id: '1' },
+			};
+		}
+
+		it.each([
+			{ dryRun: false, active: true },
+			{ dryRun: true, active: true },
+			{ dryRun: false, active: false },
+			{ dryRun: true, active: false },
+		])('automatically restores before syncing (dryRun=$dryRun, active=$active)', async ({
+			dryRun,
+			active,
+		}) => {
+			const flag = eppoFlag();
+			if (flag.environments?.[0]) flag.environments[0].active = active;
+			mockSources(flag, archivedAttributes());
+
+			const report = await run(dryRun, flag);
+
+			expect(report.failures).toEqual([]);
+			expect(report.summary).toMatchObject({
+				created: 0,
+				synced: 1,
+				errored: 0,
+			});
+			expect(report.restoredKeys).toEqual([flag.key]);
+			expect(ddMock.history.get[0].params).toEqual({ limit: 50, offset: 0 });
+			const requests = dryRun
+				? (report.requests ?? [])
+				: writes.map((write) => ({ ...write, path: write.url }));
+			expect(requests[0]).toMatchObject({
+				method: 'POST',
+				path: `/api/v2/feature-flags/${FLAG_ID}/unarchive`,
+				body: {},
+			});
+			expect(
+				requests.filter((request) => request.path.endsWith('/unarchive')),
+			).toHaveLength(1);
+			expect(
+				requests.some((request) => request.path === '/api/v2/feature-flags'),
+			).toBe(false);
+			const allocationRequests = requests.filter((request) =>
+				request.path.includes('/allocations'),
+			);
+			expect(allocationRequests).toHaveLength(2);
+			for (const request of allocationRequests) {
+				expect(request.path).toContain(
+					`/feature-flags/${FLAG_ID}/environments/`,
+				);
+			}
+			const paths = requests.map((request) => request.path);
+			const enableIndex = paths.findIndex((requestPath) =>
+				requestPath.endsWith('/enable'),
+			);
+			if (active) {
+				expect(enableIndex).toBeGreaterThan(
+					paths.lastIndexOf(allocationRequests[1].path),
+				);
+			} else {
+				expect(enableIndex).toBe(-1);
+				expect(
+					paths.filter((requestPath) => requestPath.endsWith('/disable')),
+				).toHaveLength(2);
+			}
+			if (dryRun) {
+				expect(writes).toEqual([]);
+				expect(allocationRequests[0].body).toEqual(expectedProdAllocations);
+			} else {
+				expect(allocationRequests[0].body).toMatchObject({
+					data: [
+						{
+							attributes: {
+								key: 'experiment-alloc',
+								eppo_allocation_id: 7001,
+								variant_weights: [
+									{ variant_id: 'treatment-id', eppo_variant_weight_id: 901 },
+									{ variant_id: 'control-id', eppo_variant_weight_id: 902 },
+								],
+							},
+						},
+					],
+				});
+			}
+		});
+
+		it.each([
+			false,
+			true,
+		])('prefers an active match regardless of list order (archivedFirst=%s)', async (archivedFirst) => {
+			const active = {
+				id: FLAG_ID,
+				attributes: { ...archivedAttributes(), archived_at: null },
+			};
+			const archived = {
+				id: 'archived-flag',
+				attributes: archivedAttributes(),
+			};
+			mockSources(
+				eppoFlag(),
+				archivedFirst ? [archived, active] : [active, archived],
+			);
+
+			const report = await run(false);
+
+			expect(report.failures).toEqual([]);
+			expect(report.summary.synced).toBe(1);
+			expect(report.restoredKeys).toBeUndefined();
+			expect(writes.some((write) => write.url.endsWith('/unarchive'))).toBe(
+				false,
+			);
+			expect(writes.every((write) => write.url.includes(FLAG_ID))).toBe(true);
+		});
+
+		it('does not restore an archived flag over a native active flag', async () => {
+			mockSources(eppoFlag(), [
+				{ id: 'archived-flag', attributes: archivedAttributes() },
+				{
+					id: FLAG_ID,
+					attributes: { key: 'checkout-redesign', bucketing_mode: 'DATADOG' },
+				},
+			]);
+
+			const report = await run(false);
+
+			expect(report.failures[0].error).toContain('was not migrated from Eppo');
+			expect(writes).toEqual([]);
+		});
+
+		it.each([
+			{ provider: 'launchdarkly', source_id: '1' },
+			{ provider: 'datadog', source_id: '1' },
+			{ provider: 'eppo', source_id: 'different-flag' },
+			{ provider: 'eppo', source_key: 'checkout-redesign' },
+			{},
+		])('never restores a key-only match with metadata %j', async (metadata) => {
+			mockSources(eppoFlag(), {
+				...archivedAttributes(),
+				migration_metadata: metadata,
+			});
+
+			const report = await run(false);
+
+			expect(report.failures).toEqual([]);
+			expect(report.summary.created).toBe(1);
+			expect(report.restoredKeys).toBeUndefined();
+			expect(writes.some((write) => write.url.endsWith('/unarchive'))).toBe(
+				false,
+			);
+		});
+
+		it.each([
+			false,
+			true,
+		])('fails ambiguous archived matches without writing (dryRun=%s)', async (dryRun) => {
+			mockSources(eppoFlag(), [
+				{ id: FLAG_ID, attributes: archivedAttributes() },
+				{ id: 'second-archived-flag', attributes: archivedAttributes() },
+			]);
+
+			const report = await run(dryRun);
+
+			expect(report.summary).toMatchObject({
+				created: 0,
+				synced: 0,
+				errored: 1,
+			});
+			expect(report.failures[0].error).toContain(
+				'multiple archived Datadog flags',
+			);
+			expect(report.failures[0].error).toContain('second-archived-flag');
+			expect(report.requests ?? []).toEqual([]);
+			expect(writes).toEqual([]);
+		});
+
+		it('refuses to restore a linked flag whose immutable key differs', async () => {
+			mockSources(eppoFlag(), { ...archivedAttributes(), key: 'original-key' });
+
+			const report = await run(false);
+
+			expect(report.failures[0].error).toContain('whose key differs');
+			expect(writes).toEqual([]);
+		});
+
+		it.each([
+			201, 202, 403, 409, 500,
+		])('does not sync or create a replacement if restoration returns %s', async (status) => {
+			mockSources(eppoFlag(), archivedAttributes());
+			ddMock
+				.onPost(/.*/)
+				.reply(status, { errors: [{ detail: 'Restoration blocked' }] });
+
+			const report = await run(false);
+
+			expect(report.summary).toMatchObject({
+				created: 0,
+				synced: 0,
+				errored: 1,
+			});
+			expect(report.failures[0].error).toContain(
+				'Failed to restore archived flag',
+			);
+			if (status === 201 || status === 202) {
+				expect(report.failures[0].error).toContain('requires approval');
+			}
+			expect(report.restoredKeys).toBeUndefined();
+			expect(ddMock.history.post.map((request) => request.url)).toEqual([
+				`${DD_BASE}/api/v2/feature-flags/${FLAG_ID}/unarchive`,
+			]);
+			expect(ddMock.history.put).toHaveLength(0);
+			expect(ddMock.history.delete).toHaveLength(0);
+		});
+
+		it('records a successful restoration even when the subsequent sync fails', async () => {
+			mockSources(eppoFlag(), archivedAttributes());
+			ddMock.onPut(/.*/).reply(500, { errors: [{ detail: 'Sync failed' }] });
+
+			const report = await run(false);
+
+			expect(report.summary).toMatchObject({
+				created: 0,
+				synced: 0,
+				errored: 1,
+			});
+			expect(report.restoredKeys).toEqual(['checkout-redesign']);
+			expect(report.failures[0].error).toContain('Sync failed');
+			expect(ddMock.history.post.map((request) => request.url)).toEqual([
+				`${DD_BASE}/api/v2/feature-flags/${FLAG_ID}/unarchive`,
+			]);
+		});
+
+		it('does not restore a flag that fails source validation', async () => {
+			const flag = eppoFlag();
+			for (const weight of flag.allocations?.[0].variation_weight ?? [])
+				weight.weight = 0;
+			mockSources(flag, archivedAttributes());
+
+			const report = await run(false, flag);
+
+			expect(report.summary.errored).toBe(1);
+			expect(report.restoredKeys).toBeUndefined();
+			expect(writes).toEqual([]);
 		});
 	});
 

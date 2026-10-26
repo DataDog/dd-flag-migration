@@ -263,6 +263,31 @@ describe('interactive Eppo migration without a production default', () => {
 		]);
 	});
 
+	it('automatically restores an archived Eppo flag without an additional prompt', async () => {
+		mockSources({
+			key: 'checkout-redesign',
+			name: 'Checkout Redesign',
+			archived_at: '2026-10-22T00:00:00Z',
+			bucketing_mode: 'EPPO',
+			migration_metadata: { provider: 'eppo', source_id: '1' },
+		});
+
+		await run();
+
+		expect(prompts.map((prompt) => prompt.message)).toEqual([
+			'Migrate 1 flag(s) to Datadog?',
+		]);
+		expect(ddMock.history.post[0].url).toBe(
+			`${DD_BASE}/api/v2/feature-flags/${FLAG_ID}/unarchive`,
+		);
+		expect(createRequest()).toBeUndefined();
+		expect(
+			ddMock.history.put.filter((request) =>
+				request.url?.endsWith('/allocations'),
+			),
+		).toHaveLength(2);
+	});
+
 	it('does not ask about an EPPO flag, which keeps its Datadog defaults', async () => {
 		mockSources({
 			key: 'checkout-redesign',
