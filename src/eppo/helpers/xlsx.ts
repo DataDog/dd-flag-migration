@@ -23,8 +23,6 @@ interface MigrationSheetRow {
 	errorOrWarn: string;
 }
 
-const SEMVER_WARN =
-	'Warning: Distribution channel set to CLIENT (flag uses SEMVER targeting)';
 const JSON_ARRAY_WARN =
 	'Warning: One or more JSON variants had a top-level array and were wrapped as { "value": [...] }';
 const LEGACY_BUCKETING_WARN =
@@ -32,12 +30,10 @@ const LEGACY_BUCKETING_WARN =
 
 function buildWarnings(
 	key: string,
-	semverKeys: Set<string>,
 	jsonArrayKeys: Set<string>,
 	legacyBucketingKeys: Set<string>,
 ): string {
 	const warns: string[] = [];
-	if (semverKeys.has(key)) warns.push(SEMVER_WARN);
 	if (jsonArrayKeys.has(key)) warns.push(JSON_ARRAY_WARN);
 	if (legacyBucketingKeys.has(key)) warns.push(LEGACY_BUCKETING_WARN);
 	return warns.join('\n');
@@ -46,7 +42,6 @@ function buildWarnings(
 function buildMigrationRows(migration: MigrationFile): MigrationSheetRow[] {
 	const failedKeys = new Set(migration.failures.map((f) => f.key));
 	const skippedKeys = new Set((migration.skippedFlags ?? []).map((f) => f.key));
-	const semverKeys = new Set(migration.semverForcedClientKeys ?? []);
 	const jsonArrayKeys = new Set(migration.jsonArrayWrappedKeys ?? []);
 	const legacyBucketingKeys = new Set(migration.legacyBucketingKeys ?? []);
 	const errorByKey = new Map(migration.failures.map((f) => [f.key, f.error]));
@@ -74,12 +69,7 @@ function buildMigrationRows(migration: MigrationFile): MigrationSheetRow[] {
 				flag,
 				status: 'Created',
 				errorOrWarn: [
-					buildWarnings(
-						flag.key,
-						semverKeys,
-						jsonArrayKeys,
-						legacyBucketingKeys,
-					),
+					buildWarnings(flag.key, jsonArrayKeys, legacyBucketingKeys),
 					...(migration.enableApprovalRequests ?? [])
 						.filter((request) => request.key === flag.key)
 						.map(

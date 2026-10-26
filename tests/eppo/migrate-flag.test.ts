@@ -13,7 +13,6 @@ import {
 	buildAllocations,
 	buildVariants,
 	getEnvsToEnable,
-	hasSemverConditions,
 	mapVariationType,
 } from '../../src/eppo/helpers/migration.js';
 import type { EppoFlag } from '../../src/eppo/types.js';
@@ -43,9 +42,6 @@ function migrateFlag(
 		value_type: mapVariationType(flag.variation_type),
 		variants,
 		allocations: allocations.length > 0 ? allocations : undefined,
-		...(hasSemverConditions(allocations)
-			? { distribution_channel: 'CLIENT' as const }
-			: {}),
 		...(tags.length > 0 ? { tags } : {}),
 	};
 
@@ -983,8 +979,8 @@ describe('migrate a flag with semver targeting rules', () => {
 		expect(cond?.value).toEqual(['2.3.0']);
 	});
 
-	it('sets distribution_channel to CLIENT', () => {
-		expect(result.request.distribution_channel).toBe('CLIENT');
+	it('does not set distribution_channel', () => {
+		expect(result.request.distribution_channel).toBeUndefined();
 	});
 });
 

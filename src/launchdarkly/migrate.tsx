@@ -92,7 +92,6 @@ import {
 	getEnvsToDisable,
 	getEnvsToEnable,
 	hasJsonArrayVariants,
-	hasSemverConditions,
 	mapFlagType,
 	remapAllocationKeys,
 	resolveDatadogFlagName,
@@ -1166,7 +1165,6 @@ async function executeMigration(
 	// ── Phase 1: Migrate segments as saved filters ─────────────────────────────
 	let savedFilterLookup = new Map<string, string>();
 	let segmentConstantLookup = new Map<string, boolean>();
-	let semverSavedFilterIds = new Set<string>();
 	let phase1Subheader: string | undefined;
 	let segmentMigrationStats: LDMigrationFile['segmentMigration'];
 	if (dryRun) {
@@ -1179,7 +1177,6 @@ async function executeMigration(
 			});
 			savedFilterLookup = segmentResult.savedFilterLookup;
 			segmentConstantLookup = segmentResult.segmentConstantLookup;
-			semverSavedFilterIds = segmentResult.semverSavedFilterIds;
 		} catch (err) {
 			console.log(
 				chalk.yellow(
@@ -1213,7 +1210,6 @@ async function executeMigration(
 			});
 			savedFilterLookup = segmentResult.savedFilterLookup;
 			segmentConstantLookup = segmentResult.segmentConstantLookup;
-			semverSavedFilterIds = segmentResult.semverSavedFilterIds;
 			segmentMigrationStats = segmentResult.stats;
 			if (segmentResult.stats.discovered > 0) {
 				const {
@@ -1263,7 +1259,6 @@ async function executeMigration(
 	const restrictionPolicyFailures: Array<{ key: string; error: string }> = [];
 	const skippedFlags: Array<{ key: string; reason: string }> = [];
 	const syncedFlagKeys: string[] = [];
-	const semverForcedClientKeys: string[] = [];
 	const jsonArrayWrappedKeys: string[] = [];
 	const dryRunRequests: Array<{ method: string; path: string; body: unknown }> =
 		[];
@@ -1404,10 +1399,6 @@ async function executeMigration(
 				disableApprovalRequests,
 				skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
 				syncedFlagKeys: syncedFlagKeys.length > 0 ? syncedFlagKeys : undefined,
-				semverForcedClientKeys:
-					semverForcedClientKeys.length > 0
-						? semverForcedClientKeys
-						: undefined,
 				jsonArrayWrappedKeys:
 					jsonArrayWrappedKeys.length > 0 ? jsonArrayWrappedKeys : undefined,
 				flagKeyMapping: flagKeyMappingsForReport(),
@@ -1646,16 +1637,9 @@ async function executeMigration(
 					resolveDatadogFlagName(flag.name, flag.key, resolvedDdKey),
 					datadogFlags.find((existing) => existing.id === existingFlagId)?.name,
 				);
-				const hasSemverTargeting = hasSemverConditions(
-					allocations,
-					semverSavedFilterIds,
-				);
 				const distributionChannel = resolveDistributionChannel(
 					distributionChannelMode,
-					hasSemverTargeting,
 				);
-				const semverForcedToClient =
-					distributionChannelMode === 'auto' && hasSemverTargeting;
 
 				const allRuleCount = allocations.reduce(
 					(sum, a) => sum + (a.targeting_rules?.length ?? 0),
@@ -1853,9 +1837,6 @@ async function executeMigration(
 									distributionChannel,
 									ddSite,
 								);
-							}
-							if (semverForcedToClient) {
-								semverForcedClientKeys.push(flag.key);
 							}
 							for (const ddEnv of envsToDisable) {
 								try {
@@ -2084,9 +2065,6 @@ async function executeMigration(
 									ddSite,
 								);
 							}
-							if (semverForcedToClient) {
-								semverForcedClientKeys.push(flag.key);
-							}
 							let syncedAllocCount = 0;
 							let syncedRuleCount = 0;
 							for (const ddEnv of envsToEnable) {
@@ -2304,9 +2282,6 @@ async function executeMigration(
 									);
 								}
 							}
-							if (semverForcedToClient) {
-								semverForcedClientKeys.push(flag.key);
-							}
 
 							// Apply restriction policy for LD editor teams
 							if (editorTeamIds.length > 0) {
@@ -2420,8 +2395,6 @@ async function executeMigration(
 		disableApprovalRequests,
 		skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
 		syncedFlagKeys: syncedFlagKeys.length > 0 ? syncedFlagKeys : undefined,
-		semverForcedClientKeys:
-			semverForcedClientKeys.length > 0 ? semverForcedClientKeys : undefined,
 		jsonArrayWrappedKeys:
 			jsonArrayWrappedKeys.length > 0 ? jsonArrayWrappedKeys : undefined,
 		flagKeyMapping: flagKeyMappingsForReport(),

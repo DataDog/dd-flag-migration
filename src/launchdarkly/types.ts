@@ -189,7 +189,6 @@ export interface LDMigrationFile {
 	disableApprovalRequests?: Array<{ key: string; env: string }>;
 	skippedFlags?: Array<{ key: string; reason: string }>;
 	syncedFlagKeys?: string[];
-	semverForcedClientKeys?: string[];
 	jsonArrayWrappedKeys?: string[];
 	flagKeyMapping?: Array<{ sourceKey: string; datadogKey: string }>;
 	segmentMigration?: {

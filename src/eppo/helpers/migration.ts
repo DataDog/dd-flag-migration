@@ -182,19 +182,6 @@ export function hasJsonArrayVariants(flag: EppoFlag): boolean {
 	});
 }
 
-// Returns true if any allocation contains at least one SEMVER_* condition.
-// Datadog requires distribution_channel = 'CLIENT' when SEMVER operators are present.
-export function hasSemverConditions(
-	allocations: DatadogAllocationForFlagCreation[],
-): boolean {
-	return allocations.some(
-		(alloc) =>
-			alloc.targeting_rules?.some((rule) =>
-				rule.conditions.some((cond) => cond.operator?.startsWith('SEMVER_')),
-			) ?? false,
-	);
-}
-
 /**
  * Convert Eppo targeting rules → Datadog targeting rules.
  *

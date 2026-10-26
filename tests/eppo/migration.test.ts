@@ -1,14 +1,11 @@
 /**
  * Unit tests for Eppo → Datadog migration functions:
  * mapVariationType, mapOperator, buildVariants, buildTargetingRules,
- * buildAllocations, getEnvsToEnable, hasSemverConditions,
+ * buildAllocations, getEnvsToEnable,
  * buildDefaultVariantKeyPerEnv.
  */
 import { describe, expect, it } from '@jest/globals';
-import type {
-	DatadogAllocationForFlagCreation,
-	DatadogEnvironment,
-} from '../../src/datadog/types.js';
+import type { DatadogEnvironment } from '../../src/datadog/types.js';
 import {
 	buildAllocations,
 	buildDefaultVariantKeyPerEnv,
@@ -16,7 +13,6 @@ import {
 	buildVariants,
 	getEnvsToDisable,
 	getEnvsToEnable,
-	hasSemverConditions,
 	mapOperator,
 	mapVariationType,
 } from '../../src/eppo/helpers/migration.js';
@@ -1018,57 +1014,6 @@ describe('getEnvsToDisable', () => {
 		const flag = makeFlag({ id: 1, key: 'test', environments: [] });
 
 		expect(getEnvsToDisable(flag, new Map([[10, ddDev]]))).toEqual([ddDev]);
-	});
-});
-
-// ─── hasSemverConditions ──────────────────────────────────────────────────────
-
-describe('hasSemverConditions', () => {
-	const makeAlloc = (operator: string): DatadogAllocationForFlagCreation => ({
-		environment_id: 'dd-prod',
-		name: 'test',
-		key: 'test',
-		type: 'FEATURE_GATE',
-		variant_weights: [],
-		targeting_rules: [
-			{ conditions: [{ operator, attribute: 'v', value: ['1.0.0'] }] },
-		],
-	});
-
-	it('returns true when an allocation has a SEMVER_GTE condition', () => {
-		expect(hasSemverConditions([makeAlloc('SEMVER_GTE')])).toBe(true);
-	});
-
-	it('returns true for any SEMVER_* variant', () => {
-		for (const op of ['SEMVER_LT', 'SEMVER_LTE', 'SEMVER_GT', 'SEMVER_GTE']) {
-			expect(hasSemverConditions([makeAlloc(op)])).toBe(true);
-		}
-	});
-
-	it('returns false when all conditions are non-semver', () => {
-		expect(hasSemverConditions([makeAlloc('GTE')])).toBe(false);
-		expect(hasSemverConditions([makeAlloc('ONE_OF')])).toBe(false);
-	});
-
-	it('returns false for empty allocations', () => {
-		expect(hasSemverConditions([])).toBe(false);
-	});
-
-	it('returns false when allocations have no targeting rules', () => {
-		const alloc: DatadogAllocationForFlagCreation = {
-			environment_id: 'dd-prod',
-			name: 'test',
-			key: 'test',
-			type: 'FEATURE_GATE',
-			variant_weights: [],
-		};
-		expect(hasSemverConditions([alloc])).toBe(false);
-	});
-
-	it('returns true when only one of multiple allocations has a SEMVER condition', () => {
-		expect(
-			hasSemverConditions([makeAlloc('ONE_OF'), makeAlloc('SEMVER_LT')]),
-		).toBe(true);
 	});
 });
 

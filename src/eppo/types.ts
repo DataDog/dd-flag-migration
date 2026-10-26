@@ -125,7 +125,6 @@ export interface MigrationFile {
 		allocationKey: string;
 	}>;
 	skippedFlags?: Array<{ key: string; reason: string }>;
-	semverForcedClientKeys?: string[];
 	jsonArrayWrappedKeys?: string[];
 	/** Flags migrated before Eppo bucketing that keep Datadog's bucketing. */
 	legacyBucketingKeys?: string[];

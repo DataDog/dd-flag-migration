@@ -38,11 +38,11 @@ When migrating from LaunchDarkly, the [general migration workflow](README.md#ste
 2. **Select LaunchDarkly environments** — choose which environments within that project to migrate
 3. **Link environments** — map each selected LaunchDarkly environment to one or more Datadog environments
 4. **Select flags** — existing Datadog flags are marked with a checkmark. Selected flags are updated from LaunchDarkly, including their targeting in mapped environments where the source flag is enabled
-5. **Choose a distribution channel** — automatically use Client for flags with semver targeting, or explicitly use Client, Server, or All for every selected flag
+5. **Choose a distribution channel** — keep each flag's current channel automatically, or explicitly use Client, Server, or All for every selected flag
 
 The tool translates LaunchDarkly targeting rules, individual user targets, percentage rollouts, and fallthrough variations into equivalent Datadog targeting filters. Before migrating flags, the tool runs a segment migration phase that converts referenced LaunchDarkly segments into Datadog saved filters and substitutes them into targeting rules. Flags that use unsupported operators (`before`, `after`) are automatically skipped with an explanation. Flags with prerequisites are migrated with a warning, since Datadog does not enforce prerequisites.
 
-In **Auto** distribution-channel mode, flags with semantic-version targeting are set to Client. Existing non-semver flags keep their current channel, and new non-semver flags use Datadog's default. Explicit Client, Server, and All modes set the corresponding channel on every selected flag.
+In **Auto** distribution-channel mode, existing flags keep their current channel and new flags use Datadog's default. Semantic-version targeting is supported by both client and server SDKs, so it does not change the channel. Explicit Client, Server, and All modes set the corresponding channel on every selected flag.
 
 ### Migration credentials
 
@@ -252,7 +252,6 @@ Some LaunchDarkly features have no direct equivalent in Datadog. The tool handle
 | Feature | How it's handled |
 |---|---|
 | Dependent flags (prerequisites) | Datadog does not enforce flag prerequisites. Flags that depend on another flag being in a specific state are migrated with a warning, since the prerequisite relationship is not preserved. |
-| SEMVER targeting on server-side flags | SEMVER comparisons are a client-SDK feature in Datadog. In **Auto** distribution-channel mode, flags that use SEMVER targeting are migrated with the **CLIENT** channel and a warning is recorded. An explicit Client, Server, or All selection is honored instead. |
 | JSON variants that are top-level arrays | Datadog requires JSON variant values to be objects. Array-valued variants are automatically wrapped: `[...]` becomes `{ "value": [...] }`. A warning is recorded in the migration results. |
 | JSON flag schemas | LaunchDarkly exposes no flag schema, so re-migrating a JSON flag clears any schema in Datadog. |
 

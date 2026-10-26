@@ -316,8 +316,6 @@ export interface SegmentMigrationResult {
 	savedFilterLookup: Map<string, string>;
 	/** "segKey:envKey:negated" → constant segmentMatch result */
 	segmentConstantLookup: Map<string, boolean>;
-	/** saved filter IDs whose underlying segment contains SEMVER rule conditions */
-	semverSavedFilterIds: Set<string>;
 	stats: SegmentMigrationStats;
 }
 
@@ -326,20 +324,6 @@ function isMatchNoneSegment(segment: LDSegment): boolean {
 		segment.rules.length === 0 &&
 		segment.included.length === 0 &&
 		segment.includedContexts.length === 0
-	);
-}
-
-const LD_SEMVER_OPS = new Set([
-	'semVerEqual',
-	'semVerLessThan',
-	'semVerGreaterThan',
-	'semVerLessThanOrEqual',
-	'semVerGreaterThanOrEqual',
-]);
-
-function segmentHasSemverClauses(segment: LDSegment): boolean {
-	return segment.rules.some((rule) =>
-		rule.clauses.some((clause) => LD_SEMVER_OPS.has(clause.op)),
 	);
 }
 
@@ -460,7 +444,6 @@ export async function migrateSegments(params: {
 	} = params;
 	const savedFilterLookup = new Map<string, string>();
 	const segmentConstantLookup = new Map<string, boolean>();
-	const semverSavedFilterIds = new Set<string>();
 	const stats = createSegmentMigrationStats();
 
 	const envKeys = [...envMapping.keys()];
@@ -479,7 +462,6 @@ export async function migrateSegments(params: {
 		return {
 			savedFilterLookup,
 			segmentConstantLookup,
-			semverSavedFilterIds,
 			stats,
 		};
 	}
@@ -549,8 +531,6 @@ export async function migrateSegments(params: {
 			const existingId = existingByTuple.get(tupleKey) ?? '';
 			const existingSf = existingFilters.find((sf) => sf.id === existingId);
 			savedFilterLookup.set(segmentLookupKey(ref), existingId);
-			if (segmentHasSemverClauses(segment))
-				semverSavedFilterIds.add(existingId);
 			stats.reused++;
 			pendingFilters.push({
 				ref,
@@ -714,8 +694,6 @@ export async function migrateSegments(params: {
 			if (existingSf && existingByTuple.get(tupleKey) === existingSf.id) {
 				// Same tuple — idempotent reuse
 				savedFilterLookup.set(lookupKey, existingSf.id);
-				if (segmentHasSemverClauses(segment))
-					semverSavedFilterIds.add(existingSf.id);
 				stats.reused++;
 				continue;
 			}
@@ -768,7 +746,6 @@ export async function migrateSegments(params: {
 				ddSite,
 			);
 			savedFilterLookup.set(lookupKey, id);
-			if (segmentHasSemverClauses(segment)) semverSavedFilterIds.add(id);
 			createdNamesSoFar.add(name);
 			stats.created++;
 			if (ref.negated) stats.negated++;
@@ -858,7 +835,6 @@ export async function migrateSegments(params: {
 	return {
 		savedFilterLookup,
 		segmentConstantLookup,
-		semverSavedFilterIds,
 		stats,
 	};
 }
@@ -878,7 +854,6 @@ export async function planDryRunSegments(params: {
 	const { ldApiKey, projectKey, selectedFlags, envMapping } = params;
 	const savedFilterLookup = new Map<string, string>();
 	const segmentConstantLookup = new Map<string, boolean>();
-	const semverSavedFilterIds = new Set<string>();
 	const stats = createSegmentMigrationStats();
 	const envKeys = [...envMapping.keys()];
 
@@ -895,7 +870,6 @@ export async function planDryRunSegments(params: {
 		return {
 			savedFilterLookup,
 			segmentConstantLookup,
-			semverSavedFilterIds,
 			stats,
 		};
 	}
@@ -937,8 +911,6 @@ export async function planDryRunSegments(params: {
 
 		const placeholderId = `dry-run-placeholder-${placeholderIndex}`;
 		savedFilterLookup.set(lookupKey, placeholderId);
-		if (segmentHasSemverClauses(segment))
-			semverSavedFilterIds.add(placeholderId);
 		placeholderIndex++;
 		stats.created++;
 		if (ref.negated) stats.negated++;
@@ -951,7 +923,6 @@ export async function planDryRunSegments(params: {
 	return {
 		savedFilterLookup,
 		segmentConstantLookup,
-		semverSavedFilterIds,
 		stats,
 	};
 }

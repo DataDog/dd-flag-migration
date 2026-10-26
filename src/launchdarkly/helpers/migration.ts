@@ -731,43 +731,9 @@ export function remapAllocationKeys(
 	);
 }
 
-// ─── Distribution Channel Detection ─────────────────────────────────────────
-
-const SEMVER_OPS = new Set([
-	'SEMVER_EQ',
-	'SEMVER_NEQ',
-	'SEMVER_LT',
-	'SEMVER_LTE',
-	'SEMVER_GT',
-	'SEMVER_GTE',
-]);
-
 /** Returns true if any variation value is a top-level JSON array (wrapped as { value: [...] } on migration). */
 export function hasJsonArrayVariants(flag: LDFlag): boolean {
 	return flag.variations.some((v) => Array.isArray(v.value));
-}
-
-/**
- * Returns true if any allocation contains a SEMVER targeting rule condition,
- * either inline or via a saved filter that itself contains SEMVER conditions.
- */
-export function hasSemverConditions(
-	allocations: DatadogAllocationForFlagCreation[],
-	semverSavedFilterIds: Set<string> = new Set(),
-): boolean {
-	for (const alloc of allocations) {
-		for (const rule of alloc.targeting_rules ?? []) {
-			for (const cond of rule.conditions) {
-				if (cond.operator && SEMVER_OPS.has(cond.operator)) return true;
-				if (
-					cond.saved_filter_id &&
-					semverSavedFilterIds.has(cond.saved_filter_id)
-				)
-					return true;
-			}
-		}
-	}
-	return false;
 }
 
 // ─── Environment Enablement ──────────────────────────────────────────────────

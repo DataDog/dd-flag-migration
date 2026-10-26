@@ -21,18 +21,11 @@ interface LDMigrationSheetRow {
 	datadogKey: string;
 }
 
-const SEMVER_WARN =
-	'Warning: Distribution channel set to CLIENT (flag uses SEMVER targeting)';
 const JSON_ARRAY_WARN =
 	'Warning: One or more JSON variants had a top-level array and were wrapped as { "value": [...] }';
 
-function buildWarnings(
-	key: string,
-	semverKeys: Set<string>,
-	jsonArrayKeys: Set<string>,
-): string {
+function buildWarnings(key: string, jsonArrayKeys: Set<string>): string {
 	const warns: string[] = [];
-	if (semverKeys.has(key)) warns.push(SEMVER_WARN);
 	if (jsonArrayKeys.has(key)) warns.push(JSON_ARRAY_WARN);
 	return warns.join('\n');
 }
@@ -43,7 +36,6 @@ function buildLDMigrationRows(
 	const failedKeys = new Set(migration.failures.map((f) => f.key));
 	const skippedKeys = new Set((migration.skippedFlags ?? []).map((f) => f.key));
 	const syncedKeys = new Set(migration.syncedFlagKeys ?? []);
-	const semverKeys = new Set(migration.semverForcedClientKeys ?? []);
 	const jsonArrayKeys = new Set(migration.jsonArrayWrappedKeys ?? []);
 	const errorByKey = new Map(migration.failures.map((f) => [f.key, f.error]));
 	const skipReasonByKey = new Map(
@@ -76,7 +68,7 @@ function buildLDMigrationRows(
 				flag,
 				status: 'Synced',
 				errorOrWarn: [
-					buildWarnings(flag.key, semverKeys, jsonArrayKeys),
+					buildWarnings(flag.key, jsonArrayKeys),
 					...(migration.enableApprovalRequests ?? [])
 						.filter((request) => request.key === flag.key)
 						.map(
@@ -93,7 +85,7 @@ function buildLDMigrationRows(
 				flag,
 				status: 'Created',
 				errorOrWarn: [
-					buildWarnings(flag.key, semverKeys, jsonArrayKeys),
+					buildWarnings(flag.key, jsonArrayKeys),
 					...(migration.enableApprovalRequests ?? [])
 						.filter((request) => request.key === flag.key)
 						.map(
