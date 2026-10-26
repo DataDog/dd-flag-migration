@@ -25,6 +25,7 @@ export interface DatadogFlagEntry {
 	key: string;
 	name?: string;
 	tags?: string[];
+	archived_at?: string | null;
 	migration_metadata?: MigrationMetadata;
 	/** Absent when the Datadog API predates bucketing modes (treat as `DATADOG`). */
 	bucketing_mode?: BucketingMode;

@@ -31,6 +31,7 @@ import {
 	syncAllocationsForEnvironment,
 	syncVariants,
 	syncVariantsCreatesAndUpdates,
+	unarchiveFeatureFlag,
 	updateFlagName,
 	updateFlagTags,
 	updateVariant,
@@ -360,6 +361,50 @@ describe('fetchDatadogFlags', () => {
 		]);
 	});
 
+	it('includes archived flags across pages only when requested', async () => {
+		mock
+			.onGet(`${BASE}/api/v2/feature-flags`, {
+				params: { limit: 50, offset: 0 },
+			})
+			.reply(200, {
+				data: [
+					{
+						id: 'active',
+						type: 'feature-flags',
+						attributes: { key: 'flag-a', archived_at: null },
+					},
+				],
+				meta: { page: { next_offset: 1 } },
+			});
+		mock
+			.onGet(`${BASE}/api/v2/feature-flags`, {
+				params: { limit: 50, offset: 1 },
+			})
+			.reply(200, {
+				data: [
+					{
+						id: 'archived',
+						type: 'feature-flags',
+						attributes: { key: 'flag-a', archived_at: '2026-10-22T00:00:00Z' },
+					},
+				],
+				meta: { page: { next_offset: null } },
+			});
+
+		const result = await fetchDatadogFlags(API_KEY, APP_KEY, SITE, {
+			includeArchived: true,
+		});
+
+		expect(result.map(({ id, archived_at }) => ({ id, archived_at }))).toEqual([
+			{ id: 'active', archived_at: null },
+			{ id: 'archived', archived_at: '2026-10-22T00:00:00Z' },
+		]);
+		expect(mock.history.get.map((request) => request.params)).toEqual([
+			{ limit: 50, offset: 0 },
+			{ limit: 50, offset: 1 },
+		]);
+	});
+
 	it('parses bucketing_mode when the API returns it', async () => {
 		mock.onGet(`${BASE}/api/v2/feature-flags`).reply(200, {
 			data: [
@@ -525,6 +570,60 @@ describe('fetchDatadogFlags', () => {
 
 		const result = await fetchDatadogFlags(API_KEY, APP_KEY, SITE);
 		expect(result).toHaveLength(limit - 1);
+	});
+});
+
+describe('unarchiveFeatureFlag', () => {
+	let mock: AxiosMockAdapter;
+
+	beforeEach(() => {
+		mock = new AxiosMockAdapter(ddClient as never);
+	});
+
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('restores the original flag using the authenticated public endpoint', async () => {
+		mock
+			.onPost(`${BASE}/api/v2/feature-flags/flag-id/unarchive`)
+			.reply(200, {});
+
+		await unarchiveFeatureFlag(API_KEY, APP_KEY, 'flag-id', SITE);
+
+		expect(mock.history.post).toHaveLength(1);
+		expect(JSON.parse(mock.history.post[0].data as string)).toEqual({});
+		expect(mock.history.post[0].headers).toMatchObject({
+			'dd-api-key': API_KEY,
+			'dd-application-key': APP_KEY,
+		});
+	});
+
+	it.each([
+		201, 202,
+	])('does not treat approval status %s as a restoration', async (status) => {
+		mock.onPost(/\/unarchive$/).reply(status, {});
+
+		await expect(
+			unarchiveFeatureFlag(API_KEY, APP_KEY, 'flag-id', SITE),
+		).rejects.toThrow('requires approval');
+	});
+
+	it('rejects an unexpected success status rather than continuing sync', async () => {
+		mock.onPost(/\/unarchive$/).reply(204);
+
+		await expect(
+			unarchiveFeatureFlag(API_KEY, APP_KEY, 'flag-id', SITE),
+		).rejects.toThrow('Unexpected status 204');
+	});
+
+	it('propagates conflicts without retrying or creating a replacement', async () => {
+		mock.onPost(/\/unarchive$/).reply(409, { errors: ['Conflict'] });
+
+		await expect(
+			unarchiveFeatureFlag(API_KEY, APP_KEY, 'flag-id', SITE),
+		).rejects.toMatchObject({ response: { status: 409 } });
+		expect(mock.history.post).toHaveLength(1);
 	});
 });
 

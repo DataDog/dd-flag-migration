@@ -235,6 +235,7 @@ type JsonApiFlag = {
 		key: string;
 		name: string;
 		tags?: string[];
+		archived_at?: string | null;
 		migration_metadata?: MigrationMetadata;
 		bucketing_mode?: BucketingMode;
 		feature_flag_environments?: Array<{
@@ -284,6 +285,7 @@ export async function fetchDatadogFlags(
 	apiKey: string,
 	appKey: string,
 	site = 'datadoghq.com',
+	options: { includeArchived?: boolean } = {},
 ): Promise<DatadogFlagEntry[]> {
 	const baseUrl = datadogBaseUrl(site);
 	const allFlags: DatadogFlagEntry[] = [];
@@ -296,7 +298,7 @@ export async function fetchDatadogFlags(
 				params: {
 					limit: FEATURE_FLAG_PAGE_LIMIT,
 					offset,
-					is_archived: false,
+					...(options.includeArchived ? {} : { is_archived: false }),
 				},
 			},
 		);
@@ -308,6 +310,9 @@ export async function fetchDatadogFlags(
 				key: f.attributes.key,
 				...(f.attributes.name !== undefined ? { name: f.attributes.name } : {}),
 				...(f.attributes.tags !== undefined ? { tags: f.attributes.tags } : {}),
+				...(f.attributes.archived_at !== undefined
+					? { archived_at: f.attributes.archived_at }
+					: {}),
 				migration_metadata: f.attributes.migration_metadata,
 				...(f.attributes.bucketing_mode !== undefined
 					? { bucketing_mode: f.attributes.bucketing_mode }
@@ -378,6 +383,34 @@ export async function createFeatureFlag(
 			}
 			throw err;
 		}
+	}
+}
+
+export async function unarchiveFeatureFlag(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	site = 'datadoghq.com',
+): Promise<void> {
+	const response = await ddClient.post(
+		`${datadogBaseUrl(site)}/api/v2/feature-flags/${flagId}/unarchive`,
+		{},
+		{
+			headers: {
+				...ddHeaders(apiKey, appKey),
+				'Content-Type': 'application/json',
+			},
+		},
+	);
+	if (response.status === 201 || response.status === 202) {
+		throw new Error(
+			`Restoring Datadog flag "${flagId}" requires approval. Approve the restoration in Datadog and re-run the migration; the flag was not synced.`,
+		);
+	}
+	if (response.status !== 200) {
+		throw new Error(
+			`Unexpected status ${response.status} when restoring Datadog flag "${flagId}"; the flag was not synced.`,
+		);
 	}
 }
 

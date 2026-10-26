@@ -129,6 +129,8 @@ export interface MigrationFile {
 	jsonArrayWrappedKeys?: string[];
 	/** Flags migrated before Eppo bucketing that keep Datadog's bucketing. */
 	legacyBucketingKeys?: string[];
+	/** Archived Datadog flags restored by this run (planned in dry runs). */
+	restoredKeys?: string[];
 	flags: EppoFlag[];
 	environmentMapping: import('../datadog/types.js').MigrationEnvironmentMapping[];
 }
