@@ -316,7 +316,7 @@ export function buildExposureSchedule(
 // ─── Default Variants ────────────────────────────────────────────────────────
 
 const NO_DEFAULT_REASON =
-	'Eppo serves no default; unmatched subjects receive the SDK fallback value, which Datadog cannot represent.';
+	'Eppo serves no default; unmatched subjects receive the SDK fallback value.';
 
 type EnvironmentDefault =
 	/** A pure default serving one variation: it becomes default_variant_key. */
@@ -344,7 +344,7 @@ function resolveEnvironmentDefault(
 		const percent = Math.round(defaultAlloc.percent_exposure * 10000) / 100;
 		return {
 			kind: 'missing',
-			reason: `Eppo's default serves only ${percent}% of subjects; the rest receive the SDK fallback value, which Datadog cannot represent.`,
+			reason: `Eppo's default serves only ${percent}% of subjects; the rest receive the SDK fallback value.`,
 		};
 	}
 	const weights = activeWeights(defaultAlloc, activeIds);
@@ -367,13 +367,13 @@ function resolveEnvironmentDefault(
  * buildAllocations. A split default maps to its first variation in split
  * order: the split itself stays as a catch-all targeting filter, so this
  * default is never reached and only gives the environment an explicit one.
- * Environments without a usable default get `chosenDefaultVariantKey` (the
- * variant the user chose when production has none), or are omitted.
+ * Environments without a usable default are omitted: with `EPPO` bucketing
+ * they keep no default, so unmatched subjects receive the SDK fallback value
+ * as in Eppo.
  */
 export function buildDefaultVariantKeyPerEnv(
 	flag: EppoFlag,
 	mapping: EnvironmentMappingInput<number>,
-	chosenDefaultVariantKey?: string,
 ): Map<string, string> {
 	const variationIdToKey = buildVariationIdToKey(flag);
 	const activeIds = activeVariationIds(flag);
@@ -386,13 +386,9 @@ export function buildDefaultVariantKeyPerEnv(
 			variationIdToKey,
 			activeIds,
 		);
-		const variantKey =
-			resolved.kind === 'missing'
-				? chosenDefaultVariantKey
-				: resolved.variantKey;
-		if (variantKey === undefined) continue;
+		if (resolved.kind === 'missing') continue;
 		for (const ddEnv of mappedDatadogEnvironments(mappedEnvironments)) {
-			result.set(ddEnv.id, variantKey);
+			result.set(ddEnv.id, resolved.variantKey);
 		}
 	}
 	return result;
@@ -414,81 +410,6 @@ function productionDefaults(
 				activeIds,
 			),
 		}));
-}
-
-/**
- * Names of the Eppo production environments with no usable default, whether
- * or not they are mapped: production's default becomes the flag's default, so
- * a migration must not invent one. Empty when every production environment
- * has a default, or when the flag has no production environment.
- */
-export function productionEnvironmentsWithoutDefault(flag: EppoFlag): string[] {
-	return productionDefaults(flag)
-		.filter(({ resolved }) => resolved.kind === 'missing')
-		.map(({ envName }) => envName);
-}
-
-/**
- * Names of the mapped, active Eppo environments with no usable default — the
- * environments a variant chosen for a missing production default also covers.
- */
-export function activeEnvironmentsWithoutDefault(
-	flag: EppoFlag,
-	mapping: EnvironmentMappingInput<number>,
-): string[] {
-	const variationIdToKey = buildVariationIdToKey(flag);
-	const activeIds = activeVariationIds(flag);
-	return (flag.environments ?? [])
-		.filter(
-			(env) =>
-				env.active &&
-				mapping.has(env.id) &&
-				resolveEnvironmentDefault(flag, env.id, variationIdToKey, activeIds)
-					.kind === 'missing',
-		)
-		.map((env) => env.name);
-}
-
-/**
- * The flag-level default_variant_key sent when creating an `EPPO` flag, which
- * Datadog applies to every environment. Environments whose Eppo default
- * differs are corrected afterwards by the allocation sync.
- *
- * Uses the Eppo production environment's default, mapped or not, then the
- * variant chosen because production has none. Flags without a production
- * environment fall back to a production Datadog environment's default, then
- * an active environment's, then any mapped environment's, then the first
- * variant (findEppoMigrationBlockers only lets that happen when every mapped
- * environment is inactive, so nothing is served).
- */
-export function resolveFlagDefaultVariantKey(
-	flag: EppoFlag,
-	mapping: EnvironmentMappingInput<number>,
-	defaultVariantKeyPerEnv: ReadonlyMap<string, string>,
-	variants: SourceVariant[],
-	chosenDefaultVariantKey?: string,
-): string | undefined {
-	for (const { resolved } of productionDefaults(flag)) {
-		if (resolved.kind !== 'missing') return resolved.variantKey;
-	}
-	if (chosenDefaultVariantKey !== undefined) return chosenDefaultVariantKey;
-
-	const activeEnvIds = new Set(
-		(flag.environments ?? []).filter((e) => e.active).map((e) => e.id),
-	);
-	const candidates = [...mapping].flatMap(([eppoEnvId, mappedEnvironments]) =>
-		mappedDatadogEnvironments(mappedEnvironments).map((ddEnv) => ({
-			ddEnv,
-			active: activeEnvIds.has(eppoEnvId),
-		})),
-	);
-	const rank = (c: { ddEnv: DatadogEnvironment; active: boolean }) =>
-		c.ddEnv.is_production ? 0 : c.active ? 1 : 2;
-	for (const { ddEnv } of [...candidates].sort((a, b) => rank(a) - rank(b))) {
-		const key = defaultVariantKeyPerEnv.get(ddEnv.id);
-		if (key !== undefined) return key;
-	}
-	return variants[0]?.key;
 }
 
 // ─── Allocations ─────────────────────────────────────────────────────────────
@@ -612,6 +533,9 @@ export function buildAllocations(
 const MISSING_WEIGHT_IDS_REASON =
 	'Eppo did not return variation weight IDs, which set the split order. Update to an Eppo API version that returns them and re-run the migration.';
 
+const LEGACY_DEFAULT_REASON =
+	'This flag was migrated before Eppo-compatible bucketing, so Datadog requires a default variant. Set a default variation in Eppo and re-run the migration.';
+
 function hasMissingWeightIds(weights: EppoVariationWeight[]): boolean {
 	return (
 		weights.filter((w) => w.weight > 0).length > 1 &&
@@ -625,16 +549,13 @@ function hasMissingWeightIds(weights: EppoVariationWeight[]): boolean {
  * same rules apply to new flags and to re-migrations, including flags migrated
  * before Eppo bucketing:
  *
- * - a production environment, mapped or not, whose Eppo default does not serve
- *   every unmatched subject (no default, a targeted default, or one below 100%
- *   exposure): production's default becomes the flag's default;
- * - an active environment in the same state. Disabled environments serve
- *   nothing in either system, so they only need some default, which the
- *   flag-level default provides.
- *
- *   Neither applies when `coveredDefaults` is set: the user chose a variant
- *   for every environment without a default, or an existing `EPPO` flag keeps
- *   the defaults chosen when it was created;
+ * - with `DATADOG` bucketing (flags migrated before Eppo bucketing), which
+ *   requires a default in every environment, a production environment, mapped
+ *   or not, whose Eppo default does not serve every unmatched subject (no
+ *   default, a targeted default, or one below 100% exposure), or an active
+ *   environment in the same state. Disabled environments serve nothing in
+ *   either system, so the default Datadog already has is enough. `EPPO` flags
+ *   may have no default, so unmatched subjects get the SDK fallback as in Eppo;
  * - a split whose active weights are all zero (Eppo's range math is undefined);
  * - with `EPPO` bucketing, a split without variation weight IDs (the split
  *   order is unknown);
@@ -645,7 +566,6 @@ export function findEppoMigrationBlockers(
 	mapping: EnvironmentMappingInput<number>,
 	allocations: DatadogAllocationForFlagCreation[],
 	bucketingMode: BucketingMode,
-	{ coveredDefaults = false }: { coveredDefaults?: boolean } = {},
 ): string[] {
 	const eppoBucketing = bucketingMode === 'EPPO';
 	const variationIdToKey = buildVariationIdToKey(flag);
@@ -659,13 +579,10 @@ export function findEppoMigrationBlockers(
 		blockers.push(`Flag "${flag.key}"${scope}: ${reason}`);
 	};
 
-	if (!coveredDefaults) {
+	if (!eppoBucketing) {
 		for (const { envName, resolved } of productionDefaults(flag)) {
 			if (resolved.kind !== 'missing') continue;
-			report(
-				envName,
-				`${resolved.reason} Set a default variation in Eppo, or run the migration interactively to choose one, and re-run the migration.`,
-			);
+			report(envName, `${resolved.reason} ${LEGACY_DEFAULT_REASON}`);
 		}
 	}
 
@@ -697,14 +614,12 @@ export function findEppoMigrationBlockers(
 		);
 		// Production environments were checked above, mapped or not.
 		if (
-			!coveredDefaults &&
+			!eppoBucketing &&
 			resolved.kind === 'missing' &&
 			environment?.active &&
 			!environment.is_production
 		) {
-			reasons.add(
-				`${resolved.reason} Set a default variation in Eppo and re-run the migration.`,
-			);
+			reasons.add(`${resolved.reason} ${LEGACY_DEFAULT_REASON}`);
 		}
 		if (
 			eppoBucketing &&

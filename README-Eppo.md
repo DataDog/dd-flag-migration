@@ -171,8 +171,7 @@ Eppo flags are migrated with Eppo-compatible bucketing, so every subject keeps t
 
 | Case | How to fix it |
 |---|---|
-| Eppo's production environment has no default, a targeted default, or a default below 100% exposure, whether or not it's mapped or active | Set a default variation in Eppo. In interactive mode, the tool instead asks you to choose the variant that matches the fallback value in your code (or skip the flag); that variant also becomes the default of every other environment without one. Existing flags migrated with Eppo-compatible bucketing keep the defaults chosen when they were created and aren't asked again. |
-| Another active environment has no default, a targeted default, or a default below 100% exposure | Set a default variation in Eppo. Unmatched subjects would otherwise receive the SDK fallback value, which Datadog can't represent. Disabled environments don't need a default; they get the production default. |
+| A flag migrated before Eppo-compatible bucketing has no default, a targeted default, or a default below 100% exposure in Eppo's production environment (mapped or not, active or not) or in another active environment | Set a default variation in Eppo. These flags keep Datadog bucketing, which requires a default variant. |
 | A split's active variations all have zero weight | Give one variation a weight in Eppo. |
 | Eppo returns no variation weight IDs for a split | Use an Eppo API version that returns them; they set the split order. |
 | Two targeting filters would get the same key | Rename one of the Eppo allocations. Datadog requires targeting filter keys to be unique per org. |
@@ -185,6 +184,7 @@ Eppo flags are migrated with Eppo-compatible bucketing, so every subject keeps t
 |---|---|
 | JSON variants that are top-level arrays | Datadog requires JSON variant values to be objects. Array-valued variants are automatically wrapped: `[...]` becomes `{ "value": [...] }`. A warning is recorded in the migration results. |
 | JSON flag schemas | Eppo exposes no flag schema, so re-migrating a JSON flag clears any schema in Datadog. |
+| Environments without a default | When an Eppo environment has no default, a targeted default, or a default below 100% exposure, the Datadog environment has no default either, so unmatched subjects receive the fallback value from your code, as in Eppo. Datadog can't clear a default once it's set, so if you remove an Eppo default after migrating, re-migrating keeps the Datadog default. |
 
 ---
 

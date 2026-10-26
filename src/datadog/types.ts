@@ -181,7 +181,7 @@ export interface DatadogCreateFlagRequest {
 	migration_metadata?: MigrationMetadata;
 	tags?: string[];
 	distribution_channel?: 'CLIENT' | 'SERVER' | 'BOTH' | 'ALL';
-	/** Defaults to `DATADOG`. `EPPO` requires `default_variant_key`. */
+	/** Defaults to `DATADOG`. `EPPO` flags may be created without `default_variant_key`. */
 	bucketing_mode?: BucketingMode;
 	/** Default variant applied to every environment when the flag is created. */
 	default_variant_key?: string;

@@ -8,25 +8,16 @@ import type {
 	DatadogFlagEntry,
 } from '../../src/datadog/types.js';
 import {
-	activeEnvironmentsWithoutDefault,
 	buildAllocations,
 	buildDefaultVariantKeyPerEnv,
 	buildExposureSchedule,
 	buildVariants,
 	classifyExistingFlag,
 	findEppoMigrationBlockers,
-	productionEnvironmentsWithoutDefault,
-	resolveFlagDefaultVariantKey,
 	toCreateFlagVariants,
 } from '../../src/eppo/helpers/migration.js';
 import type { EppoAllocation, EppoFlag } from '../../src/eppo/types.js';
-import {
-	ddDev,
-	ddProd,
-	ddStaging,
-	makeAllocation,
-	makeFlag,
-} from './helpers.js';
+import { ddProd, ddStaging, makeAllocation, makeFlag } from './helpers.js';
 
 const PROD_ENV_ID = 10;
 const STAGING_ENV_ID = 20;
@@ -383,7 +374,7 @@ describe('buildDefaultVariantKeyPerEnv', () => {
 		).toBe(0.5);
 	});
 
-	it('gives environments without a default the chosen variant', () => {
+	it('leaves out environments without a default', () => {
 		const flag = splitFlag({
 			allocations: [
 				experiment(),
@@ -398,70 +389,7 @@ describe('buildDefaultVariantKeyPerEnv', () => {
 			[PROD_ENV_ID, ddProd],
 			[STAGING_ENV_ID, ddStaging],
 		]);
-		expect(buildDefaultVariantKeyPerEnv(flag, mapping, 'treatment')).toEqual(
-			new Map([
-				['dd-prod', 'treatment'],
-				['dd-staging', 'treatment'],
-			]),
-		);
-	});
-
-	it('keeps a partially exposed default as a targeting filter when the environment gets a chosen default', () => {
-		const flag = splitFlag({
-			allocations: [pureDefault({ percent_exposure: 0.5 })],
-		});
-		const dvk = buildDefaultVariantKeyPerEnv(flag, prodOnly, 'treatment');
-		const allocations = buildAllocations(
-			flag,
-			prodOnly,
-			undefined,
-			undefined,
-			dvk,
-			'EPPO',
-		);
-		expect(dvk.get('dd-prod')).toBe('treatment');
-		expect(allocations.map((a) => a.key)).toEqual(['default-alloc']);
-	});
-});
-
-describe('environments without a default', () => {
-	const mapping = new Map<number, DatadogEnvironment>([
-		[PROD_ENV_ID, ddProd],
-		[STAGING_ENV_ID, ddStaging],
-	]);
-
-	it('lists production environments without a default, mapped or not', () => {
-		const flag = splitFlag({ allocations: [experiment()] });
-		expect(productionEnvironmentsWithoutDefault(flag)).toEqual(['production']);
-		expect(
-			productionEnvironmentsWithoutDefault(
-				splitFlag({ allocations: [pureDefault()] }),
-			),
-		).toEqual([]);
-	});
-
-	it('lists mapped active environments without a default', () => {
-		const flag = splitFlag({
-			environments: [
-				{
-					id: PROD_ENV_ID,
-					name: 'production',
-					active: true,
-					is_production: true,
-				},
-				{
-					id: STAGING_ENV_ID,
-					name: 'staging',
-					active: true,
-					is_production: false,
-				},
-				{ id: 30, name: 'qa', active: true, is_production: false },
-			],
-			allocations: [pureDefault()],
-		});
-		expect(activeEnvironmentsWithoutDefault(flag, mapping)).toEqual([
-			'staging',
-		]);
+		expect(buildDefaultVariantKeyPerEnv(flag, mapping).size).toBe(0);
 	});
 });
 
@@ -543,13 +471,39 @@ describe('findEppoMigrationBlockers', () => {
 		).toEqual([]);
 	});
 
-	it('fails a production environment with no default', () => {
-		expect(blockers(splitFlag({ allocations: [experiment()] }))).toEqual([
-			'Flag "checkout-redesign" (production): Eppo serves no default; unmatched subjects receive the SDK fallback value, which Datadog cannot represent. Set a default variation in Eppo, or run the migration interactively to choose one, and re-run the migration.',
+	it('allows an EPPO flag with no default in any environment', () => {
+		const flag = splitFlag({
+			environments: [
+				{
+					id: PROD_ENV_ID,
+					name: 'production',
+					active: true,
+					is_production: true,
+				},
+				{
+					id: STAGING_ENV_ID,
+					name: 'staging',
+					active: true,
+					is_production: false,
+				},
+			],
+			allocations: [
+				experiment(),
+				pureDefault({ environment_id: STAGING_ENV_ID, percent_exposure: 0.25 }),
+			],
+		});
+		expect(blockers(flag)).toEqual([]);
+	});
+
+	it('fails a legacy flag whose production environment has no default', () => {
+		expect(
+			blockers(splitFlag({ allocations: [experiment()] }), mapping, 'DATADOG'),
+		).toEqual([
+			'Flag "checkout-redesign" (production): Eppo serves no default; unmatched subjects receive the SDK fallback value. This flag was migrated before Eppo-compatible bucketing, so Datadog requires a default variant. Set a default variation in Eppo and re-run the migration.',
 		]);
 	});
 
-	it('fails a disabled or unmapped production environment with no default', () => {
+	it('fails a legacy flag whose disabled or unmapped production environment has no default', () => {
 		const disabledProduction = splitFlag({
 			environments: [
 				{
@@ -566,7 +520,7 @@ describe('findEppoMigrationBlockers', () => {
 				},
 			],
 		});
-		expect(blockers(disabledProduction)).toEqual([
+		expect(blockers(disabledProduction, mapping, 'DATADOG')).toEqual([
 			expect.stringContaining(
 				'Flag "checkout-redesign" (production): Eppo serves no default',
 			),
@@ -575,12 +529,12 @@ describe('findEppoMigrationBlockers', () => {
 		const stagingOnly = new Map<number, DatadogEnvironment>([
 			[STAGING_ENV_ID, ddStaging],
 		]);
-		expect(blockers(splitFlag(), stagingOnly)).toEqual([
+		expect(blockers(splitFlag(), stagingOnly, 'DATADOG')).toEqual([
 			expect.stringContaining('(production): Eppo serves no default'),
 		]);
 	});
 
-	it('fails an active non-production environment with no default', () => {
+	it('fails a legacy flag whose active non-production environment has no default', () => {
 		const flag = splitFlag({
 			environments: [
 				{
@@ -598,42 +552,10 @@ describe('findEppoMigrationBlockers', () => {
 			],
 			allocations: [pureDefault()],
 		});
-		expect(blockers(flag)).toEqual([
-			'Flag "checkout-redesign" (staging): Eppo serves no default; unmatched subjects receive the SDK fallback value, which Datadog cannot represent. Set a default variation in Eppo and re-run the migration.',
+		expect(blockers(flag, mapping, 'DATADOG')).toEqual([
+			'Flag "checkout-redesign" (staging): Eppo serves no default; unmatched subjects receive the SDK fallback value. This flag was migrated before Eppo-compatible bucketing, so Datadog requires a default variant. Set a default variation in Eppo and re-run the migration.',
 		]);
-	});
-
-	it('allows missing defaults that a chosen variant or existing defaults cover', () => {
-		const flag = splitFlag({
-			environments: [
-				{
-					id: PROD_ENV_ID,
-					name: 'production',
-					active: true,
-					is_production: true,
-				},
-				{
-					id: STAGING_ENV_ID,
-					name: 'staging',
-					active: true,
-					is_production: false,
-				},
-			],
-			allocations: [experiment()],
-		});
-		const allocations = buildAllocations(
-			flag,
-			mapping,
-			undefined,
-			undefined,
-			undefined,
-			'EPPO',
-		);
-		expect(
-			findEppoMigrationBlockers(flag, mapping, allocations, 'EPPO', {
-				coveredDefaults: true,
-			}),
-		).toEqual([]);
+		expect(blockers(flag)).toEqual([]);
 	});
 
 	it('allows an inactive environment with no default', () => {
@@ -647,7 +569,7 @@ describe('findEppoMigrationBlockers', () => {
 				}),
 			],
 		});
-		expect(blockers(flag)).toEqual([]);
+		expect(blockers(flag, mapping, 'DATADOG')).toEqual([]);
 	});
 
 	it.each([
@@ -657,20 +579,22 @@ describe('findEppoMigrationBlockers', () => {
 		],
 		['a disabled default', pureDefault({ enabled: false })],
 		['a zero-exposure default', pureDefault({ percent_exposure: 0 })],
-	])('fails an active environment with %s', (_label, allocation) => {
-		expect(blockers(splitFlag({ allocations: [allocation] }))).toEqual([
+	])('fails a legacy flag whose active environment has %s', (_label, allocation) => {
+		const flag = splitFlag({ allocations: [allocation] });
+		expect(blockers(flag, mapping, 'DATADOG')).toEqual([
 			expect.stringContaining('Eppo serves no default'),
 		]);
+		expect(blockers(flag)).toEqual([]);
 	});
 
-	it('fails a default below 100% exposure', () => {
-		expect(
-			blockers(
-				splitFlag({ allocations: [pureDefault({ percent_exposure: 0.25 })] }),
-			),
-		).toEqual([
-			'Flag "checkout-redesign" (production): Eppo\'s default serves only 25% of subjects; the rest receive the SDK fallback value, which Datadog cannot represent. Set a default variation in Eppo, or run the migration interactively to choose one, and re-run the migration.',
+	it('fails a legacy flag whose default is below 100% exposure', () => {
+		const flag = splitFlag({
+			allocations: [pureDefault({ percent_exposure: 0.25 })],
+		});
+		expect(blockers(flag, mapping, 'DATADOG')).toEqual([
+			'Flag "checkout-redesign" (production): Eppo\'s default serves only 25% of subjects; the rest receive the SDK fallback value. This flag was migrated before Eppo-compatible bucketing, so Datadog requires a default variant. Set a default variation in Eppo and re-run the migration.',
 		]);
+		expect(blockers(flag)).toEqual([]);
 	});
 
 	it('fails a split whose active weights are all zero', () => {
@@ -752,84 +676,6 @@ describe('findEppoMigrationBlockers', () => {
 		expect(blockers(flag)).toEqual([
 			'Flag "checkout-redesign": targeting filter key(s) "experiment-alloc" would be used more than once, but Datadog requires them to be unique. Rename the Eppo allocations and re-run the migration.',
 		]);
-	});
-});
-
-describe('resolveFlagDefaultVariantKey', () => {
-	const flag = splitFlag();
-	const variants = buildVariants(flag);
-	const mapping = new Map<number, DatadogEnvironment[]>([
-		[STAGING_ENV_ID, [ddStaging]],
-		[PROD_ENV_ID, [ddDev, ddProd]],
-	]);
-
-	it("prefers the production environment's default", () => {
-		const perEnv = new Map([
-			['dd-staging', 'legacy'],
-			['dd-dev', 'treatment'],
-			['dd-prod', 'control'],
-		]);
-		expect(resolveFlagDefaultVariantKey(flag, mapping, perEnv, variants)).toBe(
-			'control',
-		);
-	});
-
-	it('then an active environment, then any mapped environment', () => {
-		expect(
-			resolveFlagDefaultVariantKey(
-				flag,
-				mapping,
-				new Map([
-					['dd-staging', 'legacy'],
-					['dd-dev', 'treatment'],
-				]),
-				variants,
-			),
-		).toBe('treatment');
-		expect(
-			resolveFlagDefaultVariantKey(
-				flag,
-				mapping,
-				new Map([['dd-staging', 'legacy']]),
-				variants,
-			),
-		).toBe('legacy');
-	});
-
-	it("uses the Eppo production default even when production isn't mapped", () => {
-		const withProductionDefault = splitFlag({
-			allocations: [
-				pureDefault({
-					variation_weight: [{ id: 903, variation_id: 200, weight: 100 }],
-				}),
-			],
-		});
-		expect(
-			resolveFlagDefaultVariantKey(
-				withProductionDefault,
-				new Map([[STAGING_ENV_ID, [ddStaging]]]),
-				new Map(),
-				variants,
-			),
-		).toBe('treatment');
-	});
-
-	it('uses the chosen variant when production has no default', () => {
-		expect(
-			resolveFlagDefaultVariantKey(
-				flag,
-				mapping,
-				new Map([['dd-staging', 'legacy']]),
-				variants,
-				'treatment',
-			),
-		).toBe('treatment');
-	});
-
-	it('falls back to the first variant when no environment has a default', () => {
-		expect(
-			resolveFlagDefaultVariantKey(flag, mapping, new Map(), variants),
-		).toBe('control');
 	});
 });
 

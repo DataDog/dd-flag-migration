@@ -276,6 +276,7 @@ describe('Eppo migration with Eppo-compatible bucketing', () => {
 			);
 			expect(flagRequests.map((r) => `${r.method} ${r.path}`)).toEqual([
 				'POST /api/v2/feature-flags',
+				'PUT /api/v2/feature-flags/checkout-redesign/environments/dd-prod/allocations?default_variant_key=control',
 				'PUT /api/v2/feature-flags/checkout-redesign/environments/dd-staging/allocations?default_variant_key=treatment',
 				'POST /api/v2/feature-flags/checkout-redesign/environments/dd-prod/enable',
 			]);
@@ -288,7 +289,6 @@ describe('Eppo migration with Eppo-compatible bucketing', () => {
 			expect(attributes).toMatchObject({
 				key: 'checkout-redesign',
 				bucketing_mode: 'EPPO',
-				default_variant_key: 'control',
 				migration_metadata: {
 					provider: 'eppo',
 					source_id: '1',
@@ -320,12 +320,13 @@ describe('Eppo migration with Eppo-compatible bucketing', () => {
 					{ environment_id: 'dd-prod', ...expectedProdAllocations[0] },
 				],
 			});
+			expect(attributes).not.toHaveProperty('default_variant_key');
 			expect(JSON.stringify(attributes)).not.toContain('sourceId');
 			expect(ddMock.history.post).toHaveLength(0);
 			expect(ddMock.history.put).toHaveLength(0);
 		});
 
-		it('sets differing environment defaults before enabling', async () => {
+		it('sets every environment default before enabling', async () => {
 			mockSources(eppoFlag());
 			const report = await run(false);
 
@@ -333,35 +334,45 @@ describe('Eppo migration with Eppo-compatible bucketing', () => {
 			expect(report.summary.created).toBe(1);
 			expect(writes.map((w) => `${w.method} ${w.url}`)).toEqual([
 				'POST /api/v2/feature-flags',
+				`PUT /api/v2/feature-flags/${FLAG_ID}/environments/dd-prod/allocations`,
 				`PUT /api/v2/feature-flags/${FLAG_ID}/environments/dd-staging/allocations`,
 				`POST /api/v2/feature-flags/${FLAG_ID}/environments/dd-prod/enable`,
 			]);
-			const stagingSync = ddMock.history.put.find((r) =>
-				r.url?.includes('/dd-staging/allocations'),
-			);
-			expect(stagingSync?.params).toEqual({ default_variant_key: 'treatment' });
+			expect(ddMock.history.put.map((r) => r.params)).toEqual([
+				{ default_variant_key: 'control' },
+				{ default_variant_key: 'treatment' },
+			]);
 		});
 
 		it.each([
 			true,
 			false,
-		])('fails without writing when production has no default (active=%s)', async (active) => {
+		])('creates the flag without a production default when Eppo has none (active=%s)', async (active) => {
 			const flag = eppoFlag();
 			flag.allocations = flag.allocations?.filter((a) => a.id !== 7002);
 			if (flag.environments?.[0]) flag.environments[0].active = active;
 			mockSources(flag);
 			const report = await run(false, flag);
 
-			expect(report.summary).toMatchObject({ created: 0, errored: 1 });
-			expect(report.failures).toEqual([
-				{
-					key: 'checkout-redesign',
-					error:
-						'Flag "checkout-redesign" (Production): Eppo serves no default; unmatched subjects receive the SDK fallback value, which Datadog cannot represent. Set a default variation in Eppo, or run the migration interactively to choose one, and re-run the migration.',
-				},
+			expect(report.failures).toEqual([]);
+			expect(report.summary.created).toBe(1);
+			const create = ddMock.history.post.find(
+				(r) => r.url === `${DD_BASE}/api/v2/feature-flags`,
+			);
+			expect(
+				JSON.parse(create?.data as string).data.attributes,
+			).not.toHaveProperty('default_variant_key');
+			// Production keeps no default, so unmatched subjects get the SDK
+			// fallback as in Eppo; only staging's default is set.
+			expect(writes.map((w) => `${w.method} ${w.url}`)).toEqual([
+				'POST /api/v2/feature-flags',
+				`PUT /api/v2/feature-flags/${FLAG_ID}/environments/dd-staging/allocations`,
+				...(active
+					? [
+							`POST /api/v2/feature-flags/${FLAG_ID}/environments/dd-prod/enable`,
+						]
+					: []),
 			]);
-			expect(writes).toEqual([]);
-			expect(process.exitCode).toBe(1);
 		});
 	});
 
