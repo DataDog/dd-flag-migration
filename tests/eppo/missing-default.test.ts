@@ -1,6 +1,7 @@
 /**
- * Interactive Eppo migrations ask for a default variant when Eppo's
- * production environment has none.
+ * Interactive Eppo migrations no longer ask for a default variant when Eppo's
+ * production environment has none: `EPPO` flags keep no default, so unmatched
+ * subjects get the SDK fallback value as in Eppo.
  */
 import fs from 'node:fs';
 import {
@@ -18,11 +19,6 @@ const DD_SITE = 'test.invalid';
 const DD_BASE = `https://api.${DD_SITE}`;
 const EPPO_BASE = 'https://eppo.cloud';
 const FLAG_ID = 'dd-flag-1';
-const DEFAULT_PROMPT =
-	'Choose the variant that matches the fallback value in your code:';
-
-/** Answers to default-variant prompts, in order; null skips the flag. */
-const defaultAnswers: Array<string | null> = [];
 const prompts: Array<{ message: string; choices: unknown[] }> = [];
 
 jest.unstable_mockModule('../../src/components/Select.js', () => ({
@@ -34,10 +30,6 @@ jest.unstable_mockModule('../../src/components/Select.js', () => ({
 		choices: unknown[];
 	}) => {
 		prompts.push({ message, choices });
-		if (message === DEFAULT_PROMPT) {
-			if (defaultAnswers.length === 0) throw new Error('Unexpected prompt');
-			return defaultAnswers.shift();
-		}
 		if (message.startsWith('Migrate ')) return 'migrate';
 		throw new Error(`Unexpected prompt: ${message}`);
 	},
@@ -124,7 +116,6 @@ describe('interactive Eppo migration without a production default', () => {
 	beforeEach(() => {
 		ddMock = new AxiosMockAdapter(ddClient as never);
 		eppoMock = new AxiosMockAdapter(eppoClient as never);
-		defaultAnswers.length = 0;
 		prompts.length = 0;
 		process.env.EPPO_API_KEY = 'eppo-api-key';
 		jest.spyOn(process.stdout, 'write').mockReturnValue(true as never);
@@ -203,26 +194,16 @@ describe('interactive Eppo migration without a production default', () => {
 		return post ? JSON.parse(post.data as string).data.attributes : undefined;
 	}
 
-	it('creates the flag with the chosen default for every environment without one', async () => {
+	it('creates the flag without a default and without asking for one', async () => {
 		mockSources();
-		defaultAnswers.push('off');
 		await run();
 
-		const defaultPrompts = prompts.filter((p) => p.message === DEFAULT_PROMPT);
-		expect(defaultPrompts).toHaveLength(1);
-		expect(defaultPrompts[0].choices).toEqual([
-			{ name: 'On', value: 'on', description: 'true' },
-			{ name: 'Off', value: 'off', description: 'false' },
-			{ name: 'Skip this flag', value: null },
+		expect(prompts.map((prompt) => prompt.message)).toEqual([
+			'Migrate 1 flag(s) to Datadog?',
 		]);
-		expect(console.log).toHaveBeenCalledWith(
-			expect.stringContaining('Unmatched subjects in Production, Staging'),
-		);
-		expect(createRequest()).toMatchObject({
-			bucketing_mode: 'EPPO',
-			default_variant_key: 'off',
-		});
-		// Staging's default equals the flag-level one, so no extra sync is needed.
+		expect(createRequest()).toMatchObject({ bucketing_mode: 'EPPO' });
+		expect(createRequest()).not.toHaveProperty('default_variant_key');
+		// No environment has an Eppo default, so none is set after creation.
 		expect(
 			ddMock.history.put.filter((r) => r.url?.endsWith('/allocations')),
 		).toEqual([]);
@@ -234,33 +215,19 @@ describe('interactive Eppo migration without a production default', () => {
 		);
 	});
 
-	it('skips the flag without writing when the user skips it', async () => {
-		mockSources();
-		defaultAnswers.push(null);
-		await run();
-
-		expect(createRequest()).toBeUndefined();
-		expect(ddMock.history.put).toHaveLength(0);
-	});
-
-	it('asks again for a flag migrated before Eppo bucketing', async () => {
+	it('fails a flag migrated before Eppo bucketing without asking', async () => {
 		mockSources({
 			key: 'checkout-redesign',
 			name: 'Checkout Redesign',
 			bucketing_mode: 'DATADOG',
 			migration_metadata: { provider: 'eppo', source_id: '1' },
 		});
-		defaultAnswers.push('off');
 		await run();
 
-		expect(prompts.filter((p) => p.message === DEFAULT_PROMPT)).toHaveLength(1);
-		const syncs = ddMock.history.put.filter((r) =>
-			r.url?.endsWith('/allocations'),
-		);
-		expect(syncs.map((r) => r.params)).toEqual([
-			{ default_variant_key: 'off' },
-			{ default_variant_key: 'off' },
+		expect(prompts.map((prompt) => prompt.message)).toEqual([
+			'Migrate 1 flag(s) to Datadog?',
 		]);
+		expect(ddMock.history.put).toHaveLength(0);
 	});
 
 	it('automatically restores an archived Eppo flag without an additional prompt', async () => {
@@ -288,7 +255,7 @@ describe('interactive Eppo migration without a production default', () => {
 		).toHaveLength(2);
 	});
 
-	it('does not ask about an EPPO flag, which keeps its Datadog defaults', async () => {
+	it('keeps the Datadog defaults of an existing EPPO flag', async () => {
 		mockSources({
 			key: 'checkout-redesign',
 			name: 'Checkout Redesign',
@@ -297,7 +264,9 @@ describe('interactive Eppo migration without a production default', () => {
 		});
 		await run();
 
-		expect(prompts.filter((p) => p.message === DEFAULT_PROMPT)).toHaveLength(0);
+		expect(prompts.map((prompt) => prompt.message)).toEqual([
+			'Migrate 1 flag(s) to Datadog?',
+		]);
 		const syncs = ddMock.history.put.filter((r) =>
 			r.url?.endsWith('/allocations'),
 		);

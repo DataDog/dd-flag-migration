@@ -59,7 +59,6 @@ import { extractEnvironments, fetchEppoFlags } from './api.js';
 import { migrateAudiences } from './audiences.js';
 import { EppoMigrationSummary } from './components/EppoMigrationSummary.js';
 import {
-	activeEnvironmentsWithoutDefault,
 	buildAllocations,
 	buildDefaultVariantKeyPerEnv,
 	buildVariants,
@@ -69,8 +68,6 @@ import {
 	getEnvsToEnable,
 	hasJsonArrayVariants,
 	mapVariationType,
-	productionEnvironmentsWithoutDefault,
-	resolveFlagDefaultVariantKey,
 	toCreateFlagVariants,
 } from './helpers/migration.js';
 import type {
@@ -359,79 +356,6 @@ const EPPO_FILTER_CATEGORIES: FilterCategory[] = [
 
 type ConfirmAction = 'migrate' | 'select-more' | 'cancel';
 
-function isMigratableFlagType(flag: EppoFlag): boolean {
-	return (
-		flag.type !== 'BANDIT' &&
-		flag.type !== 'LAYER' &&
-		!(flag.allocations ?? []).some((a) => a.type === 'SWITCHBACK') &&
-		(flag.variations ?? []).length > 0
-	);
-}
-
-/**
- * Ask for a default variant for each flag whose Eppo production environment
- * has none. Eppo then gives unmatched subjects the fallback value from the
- * caller's code, which Datadog cannot represent, so the user picks the variant
- * that matches it. The choice also covers the flag's other environments
- * without a default.
- *
- * Only flags this run would create, or re-migrate from before Eppo bucketing,
- * are asked about: an existing `EPPO` flag keeps the defaults chosen when it
- * was created. Returns flag key → chosen variant key, or null when the user
- * skips the flag.
- */
-async function promptForMissingDefaults(
-	flags: EppoFlag[],
-	datadogKeys: Map<string, string>,
-	datadogFlags: DatadogFlagEntry[],
-	envMapping: EnvironmentMapping<number>,
-): Promise<Map<string, string | null>> {
-	const chosen = new Map<string, string | null>();
-	for (const flag of flags) {
-		if (!isMigratableFlagType(flag)) continue;
-		const existingId = datadogIdForEppoFlag(flag, datadogKeys);
-		const existing = datadogFlags.find((f) => f.id === existingId);
-		if (
-			existing !== undefined &&
-			(classifyExistingFlag(existing) !== 'legacy' || existing.key !== flag.key)
-		) {
-			continue;
-		}
-		const productionEnvs = productionEnvironmentsWithoutDefault(flag);
-		if (productionEnvs.length === 0) continue;
-		const coveredEnvs = [
-			...new Set([
-				...productionEnvs,
-				...activeEnvironmentsWithoutDefault(flag, envMapping),
-			]),
-		];
-
-		console.log();
-		console.log(
-			`${chalk.cyan(flag.key)} has no default in Eppo's ${productionEnvs.join(', ')} environment. ` +
-				`Unmatched subjects in ${coveredEnvs.join(', ')} get the fallback value from your code, ` +
-				'but Datadog needs a default variant.',
-		);
-		const variantKey = await select<string | null>({
-			message:
-				'Choose the variant that matches the fallback value in your code:',
-			choices: [
-				...buildVariants(flag).map((variant) => ({
-					name: variant.name,
-					value: variant.key,
-					description:
-						variant.value.length > 60
-							? `${variant.value.slice(0, 57)}...`
-							: variant.value,
-				})),
-				{ name: 'Skip this flag', value: null },
-			],
-		});
-		chosen.set(flag.key, variantKey);
-	}
-	return chosen;
-}
-
 async function confirmMigration(
 	flags: EppoFlag[],
 	eppoApiKey: string,
@@ -505,15 +429,6 @@ async function confirmMigration(
 	) {
 		tagSyncMode = await selectMigrationTagMode();
 	}
-
-	const chosenDefaults = nonInteractive
-		? new Map<string, string | null>()
-		: await promptForMissingDefaults(
-				flags,
-				datadogKeys,
-				datadogFlags,
-				envMapping,
-			);
 
 	if (dryRun) {
 		console.log(chalk.bold.yellow('  Dry run — no flags will be created\n'));
@@ -784,25 +699,11 @@ async function confirmMigration(
 				const bucketingMode: BucketingMode =
 					existingKind === 'legacy' ? 'DATADOG' : 'EPPO';
 
-				const chosenDefault = chosenDefaults.get(flag.key);
-				if (chosenDefault === null) {
-					doSkip(
-						flag.key,
-						`Skipped ${chalk.cyan(flag.key)} — no default chosen for Eppo's production environment`,
-						'No default chosen for production',
-					);
-					continue;
-				}
-				// The chosen variant covers every environment without an Eppo default.
-				// An existing EPPO flag keeps the defaults chosen when it was created.
-				const coveredDefaults =
-					chosenDefault !== undefined ||
-					(existingKind === 'eppo' &&
-						productionEnvironmentsWithoutDefault(flag).length > 0);
+				// Environments without an Eppo default are left out. A new EPPO flag
+				// keeps no default there, and an existing flag keeps its Datadog one.
 				const defaultVariantKeyPerEnv = buildDefaultVariantKeyPerEnv(
 					flag,
 					envMapping,
-					chosenDefault,
 				);
 				const allocations = buildAllocations(
 					flag,
@@ -819,7 +720,6 @@ async function confirmMigration(
 					envMapping,
 					allocations,
 					bucketingMode,
-					{ coveredDefaults },
 				);
 				if (blockers.length > 0) {
 					doFail(flag.key, blockers.join(' '));
@@ -1354,16 +1254,10 @@ async function confirmMigration(
 						}
 					}
 				} else {
-					// Flag does not exist — create it with targeting rules, Eppo
-					// bucketing, and a default variant for every environment.
+					// Flag does not exist — create it with targeting rules and Eppo
+					// bucketing, without a flag-level default: environments without an
+					// Eppo default keep none, so unmatched subjects get the SDK fallback.
 					const tags = flag.tag_names ?? [];
-					const flagDefaultVariantKey = resolveFlagDefaultVariantKey(
-						flag,
-						envMapping,
-						defaultVariantKeyPerEnv,
-						variants,
-						chosenDefault,
-					);
 					const request: DatadogCreateFlagRequest = {
 						key: flag.key,
 						name: flag.name,
@@ -1376,20 +1270,15 @@ async function confirmMigration(
 							source_key: flag.key,
 						},
 						bucketing_mode: 'EPPO',
-						...(flagDefaultVariantKey !== undefined
-							? { default_variant_key: flagDefaultVariantKey }
-							: {}),
 						...(tags.length > 0 ? { tags } : {}),
 					};
 					// Allocations are already embedded in the create request, so an
-					// environment is synced again only to set a default that differs
-					// from the flag-level one. This happens before any environment is
-					// enabled, so no environment serves the wrong default.
+					// environment is synced again only to set its Eppo default. This
+					// happens before any environment is enabled, so no environment
+					// serves without its default.
 					const envDefaultsToSet = envsToSync.flatMap((ddEnv) => {
 						const dvk = defaultVariantKeyPerEnv.get(ddEnv.id);
-						return dvk !== undefined && dvk !== flagDefaultVariantKey
-							? [{ ddEnv, dvk }]
-							: [];
+						return dvk !== undefined ? [{ ddEnv, dvk }] : [];
 					});
 
 					if (dryRun) {

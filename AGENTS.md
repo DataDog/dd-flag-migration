@@ -143,29 +143,27 @@ immutable and a flag can gain splits before cutover.
   dropped before anything is computed.
 - **Partial exposure** (`0 < percent_exposure < 1`, on a 0–1 scale) becomes a
   single-step `NO_ROLLOUT` schedule with `scheduled_start: "now"`.
-- **Every environment needs a default.** The create request carries a
-  flag-level `default_variant_key` — Eppo production's default, whether or not
-  production is mapped; environments whose default differs are set with the
-  allocation sync, and environments are enabled only afterwards. Datadog
-  cannot represent Eppo's SDK fallback, so a missing default (no fully
-  exposed, untargeted Eppo default) fails the flag
-  (`findEppoMigrationBlockers`) when it is in Eppo's production environment
-  (mapped or not, active or not) or in another active environment. Disabled
-  environments get the flag-level default.
-- **Choosing a missing production default.** Interactive runs ask for a
-  variant (`promptForMissingDefaults`) before the run starts, for flags being
-  created or re-migrated from before Eppo bucketing; it covers every
-  environment without a default. Non-interactive runs fail those flags.
-  Existing `EPPO` flags are never asked: they keep their current Datadog
-  defaults, chosen when they were created.
+- **Defaults mirror Eppo, including no default.** An environment's default
+  is its fully exposed, untargeted Eppo default. Where Eppo has none, an
+  `EPPO` flag keeps a null default, so unmatched subjects get the SDK fallback
+  value as in Eppo; the CLI never invents one and never prompts for one. The
+  create request carries no flag-level `default_variant_key`; each mapped
+  environment with an Eppo default gets it through the allocation sync, and
+  environments are enabled only afterwards.
+- **Defaults can be set, not cleared.** Datadog cannot clear an existing
+  default, so when an Eppo default is removed, re-migrating an `EPPO` flag
+  keeps the Datadog default it already has.
 - **Existing flags.** `EPPO` flags re-migrate with Eppo IDs. `DATADOG` flags
   with Eppo `migration_metadata` were migrated before this mode existed
   ("legacy"; converting would reassign subjects a second time). They follow
   the same rules as new flags — raw weights, defaults, exposure, preflight
   failures — except what their bucketing mode forbids: no Eppo IDs (Datadog
-  rejects them), and allocation keys never change (they are part of a
-  `DATADOG` flag's salts). Any other flag with the same key is refused, never
-  overwritten.
+  rejects them), allocation keys never change (they are part of a
+  `DATADOG` flag's salts), and no null defaults. A missing default (no fully
+  exposed, untargeted Eppo default) fails a legacy flag
+  (`findEppoMigrationBlockers`) when it is in Eppo's production environment
+  (mapped or not, active or not) or in another active environment. Any other
+  flag with the same key is refused, never overwritten.
 - **The flag key is part of every Eppo salt**, so the Datadog key must equal
   the Eppo key. Allocation keys are not part of imported salts on `EPPO`
   flags, so they may be suffixed per environment to stay unique per org.
