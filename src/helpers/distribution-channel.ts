@@ -14,13 +14,8 @@ const EXPLICIT_CHANNELS: Record<
 
 export function resolveDistributionChannel(
 	mode: DistributionChannelMode,
-	hasSemverTargeting: boolean,
 ): DatadogDistributionChannel | undefined {
-	if (mode === 'auto') {
-		return hasSemverTargeting ? 'CLIENT' : undefined;
-	}
-
-	return EXPLICIT_CHANNELS[mode];
+	return mode === 'auto' ? undefined : EXPLICIT_CHANNELS[mode];
 }
 
 export async function selectDistributionChannelMode(): Promise<DistributionChannelMode> {
@@ -29,7 +24,7 @@ export async function selectDistributionChannelMode(): Promise<DistributionChann
 		default: 'auto',
 		choices: [
 			{
-				name: 'Auto — use Client for semver targeting; preserve/default otherwise',
+				name: 'Auto — preserve existing channels; use the Datadog default for new flags',
 				value: 'auto',
 				short: 'Auto',
 			},

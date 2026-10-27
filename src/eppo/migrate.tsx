@@ -29,7 +29,6 @@ import {
 	syncAllocationsForEnvironment,
 	syncVariantsCreatesAndUpdates,
 	unarchiveFeatureFlag,
-	updateFlagDistributionChannel,
 	updateFlagJsonSchema,
 	updateFlagName,
 	updateFlagTags,
@@ -69,7 +68,6 @@ import {
 	getEnvsToDisable,
 	getEnvsToEnable,
 	hasJsonArrayVariants,
-	hasSemverConditions,
 	mapVariationType,
 	productionEnvironmentsWithoutDefault,
 	resolveFlagDefaultVariantKey,
@@ -595,7 +593,6 @@ async function confirmMigration(
 		[];
 	const disableApprovalRequests: Array<{ key: string; env: string }> = [];
 	const skippedFlags: Array<{ key: string; reason: string }> = [];
-	const semverForcedClientKeys: string[] = [];
 	const jsonArrayWrappedKeys: string[] = [];
 	const legacyBucketingKeys: string[] = [];
 	const restoredKeys: string[] = [];
@@ -999,18 +996,6 @@ async function confirmMigration(
 									},
 								},
 							});
-							if (hasSemverConditions(allocations)) {
-								dryRunRequests.push({
-									method: 'PUT',
-									path: `/api/v2/feature-flags/${existingFlagId}`,
-									body: {
-										data: {
-											type: 'feature-flags',
-											attributes: { distribution_channel: 'CLIENT' },
-										},
-									},
-								});
-							}
 							for (const ddEnv of envsToSync) {
 								const syncReqs = toSyncRequests(allocations, ddEnv.id);
 								syncFilterCount += syncReqs.length;
@@ -1057,16 +1042,6 @@ async function confirmMigration(
 								syncTags,
 								site,
 							);
-							if (hasSemverConditions(allocations)) {
-								await updateFlagDistributionChannel(
-									ddApiKey,
-									ddAppKey,
-									existingFlagId,
-									'CLIENT',
-									site,
-								);
-								semverForcedClientKeys.push(flag.key);
-							}
 							for (const ddEnv of envsToSync) {
 								const syncReqs = toSyncRequests(allocations, ddEnv.id);
 								await syncAllocationsForEnvironment(
@@ -1162,18 +1137,6 @@ async function confirmMigration(
 								.length,
 							deleted: deleteRequests.length,
 						};
-						if (hasSemverConditions(allocations)) {
-							dryRunRequests.push({
-								method: 'PUT',
-								path: `/api/v2/feature-flags/${existingFlagId}`,
-								body: {
-									data: {
-										type: 'feature-flags',
-										attributes: { distribution_channel: 'CLIENT' },
-									},
-								},
-							});
-						}
 						let syncFilterCount = 0;
 						let syncRuleCount = 0;
 						for (const ddEnv of envsToSync) {
@@ -1264,16 +1227,6 @@ async function confirmMigration(
 								site,
 							);
 							const variantCounts = variantSyncResult.counts;
-							if (hasSemverConditions(allocations)) {
-								await updateFlagDistributionChannel(
-									ddApiKey,
-									ddAppKey,
-									existingFlagId,
-									'CLIENT',
-									site,
-								);
-								semverForcedClientKeys.push(flag.key);
-							}
 							// Sync targeting for every mapped environment before any is
 							// enabled, so an environment never serves stale defaults.
 							let syncedAllocCount = 0;
@@ -1426,9 +1379,6 @@ async function confirmMigration(
 						...(flagDefaultVariantKey !== undefined
 							? { default_variant_key: flagDefaultVariantKey }
 							: {}),
-						...(hasSemverConditions(allocations)
-							? { distribution_channel: 'CLIENT' as const }
-							: {}),
 						...(tags.length > 0 ? { tags } : {}),
 					};
 					// Allocations are already embedded in the create request, so an
@@ -1480,9 +1430,6 @@ async function confirmMigration(
 								request,
 								site,
 							);
-							if (hasSemverConditions(allocations)) {
-								semverForcedClientKeys.push(flag.key);
-							}
 
 							// Set every per-environment default before enabling any
 							// environment; a failure here leaves the flag disabled.
@@ -1612,8 +1559,6 @@ async function confirmMigration(
 			disableFailures,
 			disableApprovalRequests,
 			skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
-			semverForcedClientKeys:
-				semverForcedClientKeys.length > 0 ? semverForcedClientKeys : undefined,
 			jsonArrayWrappedKeys:
 				jsonArrayWrappedKeys.length > 0 ? jsonArrayWrappedKeys : undefined,
 			legacyBucketingKeys:

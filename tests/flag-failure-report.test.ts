@@ -296,42 +296,42 @@ describe('flag-level migration failures', () => {
 		return body.data.attributes;
 	}
 
-	it('omits the distribution channel for a new non-semver flag in Auto mode', async () => {
-		const attributes = await createLaunchDarklyFlag(ldFlag(), 'auto');
-		expect(attributes.distribution_channel).toBeUndefined();
-	});
-
-	it('sets CLIENT for a new semver flag in Auto mode', async () => {
+	it.each([
+		['non-semver', undefined],
+		['semver', 'semVerGreaterThan'],
+	] as const)('omits the distribution channel for a new %s flag in Auto mode', async (_label, op) => {
 		const flag = ldFlag();
-		const environment = flag.environments?.production;
-		if (!environment) throw new Error('Test flag is missing production');
-		environment.rules = [
-			{
-				_id: 'semver-rule',
-				variation: 0,
-				clauses: [
-					{
-						_id: 'semver-clause',
-						attribute: 'version',
-						op: 'semVerGreaterThan',
-						values: ['1.0.0'],
-						contextKind: 'user',
-						negate: false,
-					},
-				],
-				trackEvents: false,
-			},
-		];
+		if (op !== undefined) {
+			const environment = flag.environments?.production;
+			if (!environment) throw new Error('Test flag is missing production');
+			environment.rules = [
+				{
+					_id: 'semver-rule',
+					variation: 0,
+					clauses: [
+						{
+							_id: 'semver-clause',
+							attribute: 'version',
+							op,
+							values: ['1.0.0'],
+							contextKind: 'user',
+							negate: false,
+						},
+					],
+					trackEvents: false,
+				},
+			];
+		}
 
 		const attributes = await createLaunchDarklyFlag(flag, 'auto');
-		expect(attributes.distribution_channel).toBe('CLIENT');
+		expect(attributes.distribution_channel).toBeUndefined();
 	});
 
 	it.each([
 		['client', 'CLIENT'],
 		['server', 'SERVER'],
 		['all', 'BOTH'],
-	] as const)('sets %s explicitly for a new non-semver flag', async (mode, expected) => {
+	] as const)('sets %s explicitly for a new flag', async (mode, expected) => {
 		const attributes = await createLaunchDarklyFlag(ldFlag(), mode);
 		expect(attributes.distribution_channel).toBe(expected);
 	});
@@ -386,7 +386,7 @@ describe('flag-level migration failures', () => {
 		]);
 	});
 
-	it('does not update an existing non-semver channel in Auto mode', async () => {
+	it('does not update an existing channel in Auto mode', async () => {
 		const flag = ldFlag();
 		flag.name = flag.key;
 		const datadogKey = `prefixed-${flag.key}`;
