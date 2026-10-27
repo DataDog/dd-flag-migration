@@ -17,6 +17,7 @@ import {
 	extractEnvironments,
 	fetchEppoFlag,
 	fetchEppoFlags,
+	fetchEppoTeams,
 	findEppoFlagByKey,
 } from '../../src/eppo/api.js';
 import type { EppoFlag } from '../../src/eppo/types.js';
@@ -438,5 +439,36 @@ describe('fetching a single Eppo flag', () => {
 		await expect(
 			findEppoFlagByKey('eppo-key', 'checkout'),
 		).resolves.toBeUndefined();
+	});
+});
+
+describe('fetchEppoTeams', () => {
+	let mock: AxiosMockAdapter;
+
+	beforeEach(() => {
+		mock = new AxiosMockAdapter(eppoClient as never);
+	});
+
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('fetches teams with their feature flag relations', async () => {
+		const teams = [
+			{ id: 1, name: 'Team A', feature_flags: [10, 11], archived_at: null },
+		];
+		mock.onGet('https://eppo.cloud/api/v1/teams').reply((config) => {
+			expect(config.headers?.['x-eppo-token']).toBe('eppo-key');
+			expect(config.params).toEqual({ with_relations: true });
+			return [200, teams];
+		});
+
+		await expect(fetchEppoTeams('eppo-key')).resolves.toEqual(teams);
+	});
+
+	it('returns an empty list for a non-array response', async () => {
+		mock.onGet('https://eppo.cloud/api/v1/teams').reply(200, {});
+
+		await expect(fetchEppoTeams('eppo-key')).resolves.toEqual([]);
 	});
 });

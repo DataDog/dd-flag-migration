@@ -202,6 +202,16 @@ describe('non-interactive tag modes', () => {
 					},
 				]);
 				eppo.onGet('https://eppo.cloud/api/v1/audiences').reply(200, []);
+				eppo
+					.onGet('https://eppo.cloud/api/v1/teams')
+					.reply(200, [
+						{ id: 1, name: 'Team A', feature_flags: [1], archived_at: null },
+					]);
+				dd.onGet(`${base}/api/v2/team`).reply(200, {
+					data: [
+						{ id: 'team-id', attributes: { handle: 'team-a', name: 'Team A' } },
+					],
+				});
 				await runEppoMigration('test', 'test', 'test.invalid', dryRun, {
 					nonInteractive: {
 						envMap: [['Production', 'Production']],
@@ -241,6 +251,7 @@ describe('non-interactive tag modes', () => {
 					...(tagMode === 'replace' ? [] : existingTags),
 					...sourceTags,
 					...(provider === 'launchdarkly' ? ['project:project'] : []),
+					...(provider === 'eppo' ? ['team:team-a'] : []),
 				]),
 			]);
 			if (provider === 'launchdarkly') {

@@ -2,19 +2,22 @@
  * Unit tests for Eppo → Datadog migration functions:
  * mapVariationType, mapOperator, buildVariants, buildTargetingRules,
  * buildAllocations, getEnvsToEnable,
- * buildDefaultVariantKeyPerEnv.
+ * buildDefaultVariantKeyPerEnv, and team tags.
  */
 import { describe, expect, it } from '@jest/globals';
 import type { DatadogEnvironment } from '../../src/datadog/types.js';
 import {
 	buildAllocations,
 	buildDefaultVariantKeyPerEnv,
+	buildEppoFlagTags,
 	buildTargetingRules,
 	buildVariants,
 	getEnvsToDisable,
 	getEnvsToEnable,
+	indexEppoTeamsByFlagId,
 	mapOperator,
 	mapVariationType,
+	matchDatadogTeamHandle,
 } from '../../src/eppo/helpers/migration.js';
 import { ddDev, ddProd, makeAllocation, makeFlag } from './helpers.js';
 
@@ -1422,5 +1425,74 @@ describe('buildAllocations with defaultVariantKeyPerEnv', () => {
 
 		expect(allocations).toHaveLength(1);
 		expect(allocations[0].key).toBe('alloc-with-audience');
+	});
+});
+
+// ─── Team Tags ────────────────────────────────────────────────────────────────
+
+describe('indexEppoTeamsByFlagId', () => {
+	it('indexes active team names by flag ID, including flags in several teams', () => {
+		const index = indexEppoTeamsByFlagId([
+			{ id: 1, name: 'Team A', feature_flags: [10, 11], archived_at: null },
+			{ id: 2, name: 'Team B', feature_flags: ['11'] },
+			{
+				id: 3,
+				name: 'Archived Team',
+				feature_flags: [10],
+				archived_at: '2026-01-01T00:00:00Z',
+			},
+		]);
+
+		expect(index.get('10')).toEqual(['Team A']);
+		expect(index.get('11')).toEqual(['Team A', 'Team B']);
+	});
+
+	it('ignores teams without flags or names', () => {
+		const index = indexEppoTeamsByFlagId([
+			{ id: 1, name: 'Team A' },
+			{ id: 2, name: '', feature_flags: [10] },
+		]);
+
+		expect(index.size).toBe(0);
+	});
+});
+
+describe('matchDatadogTeamHandle', () => {
+	const ddTeams = [
+		{ id: 'dd-1', handle: 'team-a', name: 'Alpha Squad' },
+		{ id: 'dd-2', handle: 'beta', name: 'Team B' },
+		{ id: 'dd-3', handle: 'default', name: 'Default' },
+	];
+
+	it('matches a Datadog handle exactly', () => {
+		expect(matchDatadogTeamHandle('beta', ddTeams)).toBe('beta');
+	});
+
+	it('matches a Datadog handle by the slugified Eppo name', () => {
+		expect(matchDatadogTeamHandle('Team A', ddTeams)).toBe('team-a');
+	});
+
+	it('matches a Datadog team name ignoring case', () => {
+		expect(matchDatadogTeamHandle('team b', ddTeams)).toBe('beta');
+	});
+
+	it('does not match a name with no letters or digits to the default slug', () => {
+		expect(matchDatadogTeamHandle('***', ddTeams)).toBeUndefined();
+	});
+
+	it('returns undefined when nothing matches', () => {
+		expect(matchDatadogTeamHandle('Team C', ddTeams)).toBeUndefined();
+	});
+});
+
+describe('buildEppoFlagTags', () => {
+	it('adds deduplicated team tags to the Eppo tags', () => {
+		expect(
+			buildEppoFlagTags(['tag-a', 'team:team-a'], ['team-a', 'beta']),
+		).toEqual(['tag-a', 'team:team-a', 'team:beta']);
+	});
+
+	it('returns the Eppo tags when no team matches', () => {
+		expect(buildEppoFlagTags(['tag-a'])).toEqual(['tag-a']);
 	});
 });

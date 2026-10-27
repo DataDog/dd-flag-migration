@@ -57,7 +57,9 @@ When introducing a new field in this tier: a missing value in the source must pr
 - **Tags**, including `team:*` tags: interactive migrations ask whether to
   merge source-derived tags into existing Datadog tags or overwrite them.
   LaunchDarkly team tags are included only when the source team is matched to
-  a Datadog team.
+  a Datadog team. Eppo team tags come from the teams that own each flag
+  (`GET /api/v1/teams`), matched to Datadog teams by handle or name; they are
+  tags only and never grant permissions.
   Merge preserves Datadog-only tags; overwrite is Tier 1 full sync and an empty
   source array clears all tags. Non-interactive migrations default to additive merge, preserving Datadog-only
   tags even when the source tag array is empty. Use `--tag-mode replace` to

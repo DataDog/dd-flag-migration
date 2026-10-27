@@ -89,6 +89,14 @@ export interface EppoFlag {
 	allocations?: EppoAllocation[];
 }
 
+export interface EppoTeam {
+	id: number;
+	name: string;
+	/** IDs of the team's feature flags (numbers in practice; strings in the spec). */
+	feature_flags?: Array<number | string>;
+	archived_at?: string | null;
+}
+
 // ─── Eppo Migration File Types ──────────────────────────────────────────────
 
 export interface MigrationFlagFailure {
