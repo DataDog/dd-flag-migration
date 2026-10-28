@@ -1352,13 +1352,18 @@ export async function fetchCurrentUserIdentity(
 	apiKey: string,
 	appKey: string,
 	site = 'datadoghq.com',
-): Promise<{ userId: string; orgId: string }> {
+): Promise<{ userId: string; orgId: string; orgName?: string }> {
 	const baseUrl = datadogBaseUrl(site);
 	const response = await ddClient.get<{
 		data: {
 			id: string;
 			relationships: { org: { data: { id: string } } };
 		};
+		included?: Array<{
+			id: string;
+			type: string;
+			attributes?: { name?: string };
+		}>;
 	}>(`${baseUrl}/api/v2/current_user`, {
 		headers: ddHeaders(apiKey, appKey),
 	});
@@ -1369,7 +1374,10 @@ export async function fetchCurrentUserIdentity(
 			'Could not determine Datadog user and org IDs from /api/v2/current_user',
 		);
 	}
-	return { userId, orgId };
+	const orgName = response.data.included
+		?.find((resource) => resource.type === 'orgs' && resource.id === orgId)
+		?.attributes?.name?.trim();
+	return { userId, orgId, ...(orgName ? { orgName } : {}) };
 }
 
 /**

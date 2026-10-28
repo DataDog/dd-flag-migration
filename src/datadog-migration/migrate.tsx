@@ -1269,7 +1269,7 @@ export async function runDatadogMigration(
 		const selectedEnvs = await selectSourceEnvironments(
 			sourceEnvironments,
 			prevSelectedEnvs,
-			'Select source org environments to migrate from:',
+			`Select source org environments to migrate from${pair.source.orgName ? ` [${pair.source.orgName}]` : ''}:`,
 		);
 		if (selectedEnvs === null) break;
 		if (selectedEnvs.length === 0) {
@@ -1288,6 +1288,7 @@ export async function runDatadogMigration(
 				targetEnvironments,
 				prevEnvMapping,
 				printHeader,
+				pair.target.orgName,
 			);
 			if (mapping === null) break;
 			prevEnvMapping = mapping;

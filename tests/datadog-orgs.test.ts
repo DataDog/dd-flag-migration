@@ -18,12 +18,13 @@ const values = {
 	TARGET_DD_SITE: 'target.example',
 } as Record<EnvVarName, string>;
 
-function currentUser(orgId: string) {
+function currentUser(orgId: string, orgName?: string) {
 	return {
 		data: {
 			id: 'user-id',
 			relationships: { org: { data: { id: orgId } } },
 		},
+		included: [{ id: orgId, type: 'orgs', attributes: { name: orgName } }],
 	};
 }
 
@@ -95,13 +96,15 @@ describe('assertDistinctDatadogOrgs', () => {
 		);
 	});
 
-	it('accepts two different orgs', async () => {
+	it('accepts two different orgs and retains their names for display', async () => {
 		mock
 			.onGet('https://api.source.example/api/v2/current_user')
-			.replyOnce(200, currentUser('org-1'))
+			.replyOnce(200, currentUser('org-1', 'Source Org'))
 			.onGet('https://api.source.example/api/v2/current_user')
-			.replyOnce(200, currentUser('org-2'));
+			.replyOnce(200, currentUser('org-2', 'Target Org'));
 		await expect(assertDistinctDatadogOrgs(pair)).resolves.toBeUndefined();
+		expect(pair.source.orgName).toBe('Source Org');
+		expect(pair.target.orgName).toBe('Target Org');
 	});
 
 	it('only warns when org identity cannot be confirmed', async () => {

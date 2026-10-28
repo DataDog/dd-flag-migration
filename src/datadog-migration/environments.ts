@@ -63,6 +63,7 @@ export async function linkDatadogEnvironments(
 	targetEnvironments: DatadogEnvironment[],
 	previousMapping: EnvironmentMapping<string>,
 	printHeader: () => Promise<void>,
+	targetOrgName?: string,
 ): Promise<EnvironmentMapping<string> | null> {
 	const selectedIds = new Set(sourceEnvironments.map((env) => env.id));
 	const mapping = new Map(
@@ -111,7 +112,7 @@ export async function linkDatadogEnvironments(
 		}
 
 		const result = await filterableCheckbox<DatadogEnvironment>({
-			message: 'Select matching environments in the target org:',
+			message: `Select matching environments in the target org${targetOrgName ? ` [${targetOrgName}]` : ''}:`,
 			choices: available.map((env) => ({
 				name: environmentLabel(env),
 				value: env,

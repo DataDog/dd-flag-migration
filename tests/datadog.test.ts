@@ -1608,7 +1608,7 @@ describe('fetchCurrentUserIdentity', () => {
 		mock.restore();
 	});
 
-	it('returns the authenticated user and org UUIDs', async () => {
+	it('returns the authenticated user and org UUIDs with the matching org name', async () => {
 		mock.onGet(`${BASE}/api/v2/current_user`).reply(200, {
 			data: {
 				id: 'user-uuid',
@@ -1617,11 +1617,20 @@ describe('fetchCurrentUserIdentity', () => {
 					org: { data: { id: 'org-uuid', type: 'orgs' } },
 				},
 			},
+			included: [
+				{ id: 'other-org', type: 'orgs', attributes: { name: 'Other Org' } },
+				{ id: 'org-uuid', type: 'roles', attributes: { name: 'Admin' } },
+				{ id: 'org-uuid', type: 'orgs', attributes: { name: ' My Org ' } },
+			],
 		});
 
 		await expect(
 			fetchCurrentUserIdentity(API_KEY, APP_KEY, SITE),
-		).resolves.toEqual({ userId: 'user-uuid', orgId: 'org-uuid' });
+		).resolves.toEqual({
+			userId: 'user-uuid',
+			orgId: 'org-uuid',
+			orgName: 'My Org',
+		});
 	});
 
 	it('throws when the response does not contain both IDs', async () => {

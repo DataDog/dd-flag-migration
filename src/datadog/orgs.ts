@@ -13,6 +13,7 @@ export interface DatadogOrgConnection {
 	apiKey: string;
 	appKey: string;
 	site: string;
+	orgName?: string;
 }
 
 export interface DatadogOrgPair {
@@ -96,6 +97,7 @@ export function requireDatadogOrgPair(): DatadogOrgPair {
  * would rewrite flags from themselves and a diff would always report no
  * differences. Identity lookup failures only warn, because the check is a
  * safety net rather than a required permission.
+ * Retain resolved org names on the connections for interactive prompts.
  */
 export async function assertDistinctDatadogOrgs(
 	pair: DatadogOrgPair,
@@ -112,7 +114,7 @@ export async function assertDistinctDatadogOrgs(
 	let sourceOrgId: string;
 	let targetOrgId: string;
 	try {
-		[{ orgId: sourceOrgId }, { orgId: targetOrgId }] = await Promise.all([
+		const [sourceIdentity, targetIdentity] = await Promise.all([
 			fetchCurrentUserIdentity(
 				pair.source.apiKey,
 				pair.source.appKey,
@@ -124,6 +126,10 @@ export async function assertDistinctDatadogOrgs(
 				pair.target.site,
 			),
 		]);
+		sourceOrgId = sourceIdentity.orgId;
+		targetOrgId = targetIdentity.orgId;
+		pair.source.orgName = sourceIdentity.orgName;
+		pair.target.orgName = targetIdentity.orgName;
 	} catch {
 		console.warn(
 			chalk.yellow(
