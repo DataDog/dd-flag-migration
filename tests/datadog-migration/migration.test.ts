@@ -486,7 +486,7 @@ describe('unsupportedTargetingReason', () => {
 	it.each([
 		[{ type: 'CANARY' }, /CANARY progressive rollout/],
 		[{ experiment_id: 'experiment-1' }, /linked to an experiment/],
-		[{ exposure_schedule: { steps: [] } }, /scheduled rollout/],
+		[{ exposure_schedule: { steps: [] } }, /invalid exposure schedule/],
 	])('rejects %o', (overrides, message) => {
 		const flag = sourceFlag();
 		flag.environments[0].allocations = [

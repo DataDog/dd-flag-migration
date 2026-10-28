@@ -31,6 +31,10 @@ import {
 	updateFlagName,
 	updateFlagTags,
 } from '../datadog/api.js';
+import {
+	copyMigratableExposureSchedule,
+	retainTargetStrategyForCompletedSchedule,
+} from '../datadog/exposure-schedules.js';
 import { resolveFlagNameForSync } from '../datadog/flag-names.js';
 import type { DatadogOrgConnection, DatadogOrgPair } from '../datadog/orgs.js';
 import type {
@@ -71,6 +75,7 @@ import {
 	findTargetFlag,
 	getDatadogEnvsToDisable,
 	getDatadogEnvsToEnable,
+	liveAllocations,
 	planDatadogVariantSync,
 	remapAllocationVariantKeys,
 	remapDefaultVariantKeys,
@@ -261,22 +266,28 @@ function allocationsPutRequest(
 function targetingCounts(
 	allocations: DatadogAllocationForFlagCreation[],
 	environments: DatadogEnvironment[],
-): { filters: number; rules: number } {
+): { filters: number; rules: number; schedules: number } {
 	let filters = 0;
 	let rules = 0;
+	let schedules = 0;
 	for (const environment of environments) {
 		const requests = toSyncRequests(allocations, environment.id);
 		filters += requests.length;
+		schedules += requests.filter((request) => request.exposure_schedule).length;
 		rules += requests.reduce(
 			(sum, request) => sum + (request.targeting_rules?.length ?? 0),
 			0,
 		);
 	}
-	return { filters, rules };
+	return { filters, rules, schedules };
 }
 
-function targetingLabel(counts: { filters: number; rules: number }): string {
-	return `${counts.filters} targeting filter(s)${counts.rules > 0 ? `, ${counts.rules} rule(s)` : ''}`;
+function targetingLabel(counts: {
+	filters: number;
+	rules: number;
+	schedules: number;
+}): string {
+	return `${counts.filters} targeting filter(s)${counts.rules > 0 ? `, ${counts.rules} rule(s)` : ''}${counts.schedules > 0 ? `, ${counts.schedules} exposure schedule(s)` : ''}`;
 }
 
 function environmentsLabel(
@@ -523,6 +534,8 @@ async function syncExistingFlag(
 				toSyncRequests(targetAllocations, environment.id),
 				target.site,
 				targetDefaults.get(environment.id),
+				undefined,
+				true,
 			);
 		}
 		// Safe only now: the targeting writes above no longer reference these.
@@ -589,6 +602,8 @@ async function createTargetFlag(
 	const filterLabel = targetingLabel({
 		filters: allocations.length,
 		rules: ruleCount,
+		schedules: allocations.filter((allocation) => allocation.exposure_schedule)
+			.length,
 	});
 	const schemaLabel = valueType === 'JSON' ? ', 1 JSON schema' : '';
 
@@ -623,6 +638,17 @@ async function createTargetFlag(
 		};
 	}
 
+	for (const allocation of allocations) {
+		if (!allocation.exposure_schedule) continue;
+		const checked = copyMigratableExposureSchedule(
+			allocation.exposure_schedule,
+			new Map(),
+		);
+		if ('reason' in checked)
+			throw new Error(
+				`Targeting filter "${allocation.name}" ${checked.reason}`,
+			);
+	}
 	const created = await createFeatureFlag(
 		target.apiKey,
 		target.appKey,
@@ -638,6 +664,8 @@ async function createTargetFlag(
 			toSyncRequests(allocations, environmentId),
 			target.site,
 			defaultVariantKey,
+			undefined,
+			true,
 		);
 	}
 	const enabled = await enableEnvironments(
@@ -927,7 +955,7 @@ async function executeDatadogMigration(
 		for (const flag of flags) {
 			activeRunner.beginFlag(flag.key);
 			try {
-				const detail = details.get(flag.id);
+				let detail = details.get(flag.id);
 				if (!detail) {
 					doFail(
 						flag.key,
@@ -935,6 +963,23 @@ async function executeDatadogMigration(
 							'Source flag details were not available',
 					);
 					continue;
+				}
+				// Inventory can be several minutes old after interactive selection.
+				if (
+					detail.environments.some(
+						(env) =>
+							envMapping.has(env.environmentId) &&
+							liveAllocations(env).some(
+								(allocation) => allocation.exposure_schedule,
+							),
+					)
+				) {
+					detail = await fetchDatadogStatusFlagDetail(
+						pair.source.apiKey,
+						pair.source.appKey,
+						flag.id,
+						pair.source.site,
+					);
 				}
 				const valueType = datadogValueType(detail);
 				if (valueType === undefined) {
@@ -976,6 +1021,66 @@ async function executeDatadogMigration(
 
 				const existing = findTargetFlag(targetFlags, detail);
 				if (existing) {
+					if (plan.envsToEnable.length > 0) {
+						const targetDetail = await fetchDatadogStatusFlagDetail(
+							pair.target.apiKey,
+							pair.target.appKey,
+							existing.id,
+							pair.target.site,
+						);
+						const targetKeys = new Map(
+							targetDetail.variants.map((variant) => [variant.id, variant.key]),
+						);
+						let targetReason: string | undefined;
+						for (const env of targetDetail.environments) {
+							if (
+								!plan.envsToEnable.some(
+									(targetEnv) => targetEnv.id === env.environmentId,
+								)
+							)
+								continue;
+							for (const allocation of liveAllocations(env)) {
+								if (allocation.exposure_schedule == null) continue;
+								const checked = copyMigratableExposureSchedule(
+									allocation.exposure_schedule,
+									targetKeys,
+								);
+								if ('reason' in checked) {
+									targetReason = `Target targeting filter "${allocation.name ?? allocation.key}" ${checked.reason}`;
+									break;
+								}
+								const incoming = plan.allocations.find(
+									(item) =>
+										item.environment_id === env.environmentId &&
+										item.key === allocation.key,
+								)?.exposure_schedule;
+								if (incoming) {
+									incoming.rollout_options =
+										retainTargetStrategyForCompletedSchedule(
+											incoming,
+											allocation.exposure_schedule,
+										).rollout_options;
+								}
+								if (checked.completed && incoming) {
+									const sourceSchedule = copyMigratableExposureSchedule(
+										incoming,
+										new Map(),
+									);
+									if (
+										'schedule' in sourceSchedule &&
+										!sourceSchedule.completed
+									) {
+										targetReason = `Target targeting filter "${allocation.name ?? allocation.key}" has completed; it cannot be reset to an unstarted schedule`;
+										break;
+									}
+								}
+							}
+						}
+						if (targetReason) {
+							doSkip(flag.key, targetReason);
+							continue;
+						}
+					}
 					if (plan.envsToEnable.length > 0) {
 						activeRunner.printMessage(
 							`⚠ ${chalk.cyan(flag.key)} exists in the target org — targeting filters in ${plan.envsToEnable.map((env) => env.name).join(', ')} will be overwritten`,
@@ -1164,7 +1269,7 @@ export async function runDatadogMigration(
 		const selectedEnvs = await selectSourceEnvironments(
 			sourceEnvironments,
 			prevSelectedEnvs,
-			'Select source org environments to migrate from:',
+			`Select source org environments to migrate from${pair.source.orgName ? ` [${pair.source.orgName}]` : ''}:`,
 		);
 		if (selectedEnvs === null) break;
 		if (selectedEnvs.length === 0) {
@@ -1183,6 +1288,7 @@ export async function runDatadogMigration(
 				targetEnvironments,
 				prevEnvMapping,
 				printHeader,
+				pair.target.orgName,
 			);
 			if (mapping === null) break;
 			prevEnvMapping = mapping;

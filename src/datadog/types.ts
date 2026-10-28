@@ -42,6 +42,7 @@ export interface DatadogStatusAllocation {
 	order_position?: number;
 	experiment_id?: string | null;
 	exposure_schedule?: unknown;
+	guardrail_metrics?: unknown[];
 	targeting_rules?: Array<{
 		conditions?: Array<{
 			operator?: string;
@@ -131,20 +132,23 @@ export interface DatadogVariantWeightRequest {
 	eppo_variant_weight_id?: number;
 }
 
-/**
- * A single-step exposure schedule. The Eppo migration sends one that starts
- * immediately to carry over an allocation's partial exposure.
- */
+/** Exposure schedule request shared by Eppo and Datadog migrations. */
 export interface DatadogExposureScheduleRequest {
+	id?: string;
+	absolute_start_time?: string | null;
+	scheduled_start_time?: string | null;
+	control_variant_key?: string;
 	rollout_options: {
-		strategy: 'NO_ROLLOUT';
-		scheduled_start: 'now';
+		strategy: 'UNIFORM_INTERVALS' | 'NO_ROLLOUT';
+		autostart?: boolean;
+		scheduled_start?: string;
+		selection_interval_ms?: number;
 	};
 	rollout_steps: Array<{
 		exposure_ratio: number;
-		interval_ms: null;
-		is_pause_record: false;
 		grouped_step_index: number;
+		interval_ms?: number | null;
+		is_pause_record: boolean;
 	}>;
 }
 
@@ -152,7 +156,7 @@ export interface DatadogAllocationForFlagCreation {
 	environment_id: string;
 	name: string;
 	key: string;
-	type: 'FEATURE_GATE';
+	type: 'FEATURE_GATE' | 'CANARY';
 	variant_weights: DatadogVariantWeightRequest[];
 	targeting_rules?: DatadogTargetingRule[];
 	exposure_schedule?: DatadogExposureScheduleRequest;

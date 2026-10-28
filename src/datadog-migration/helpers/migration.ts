@@ -1,8 +1,10 @@
+import { copyMigratableExposureSchedule } from '../../datadog/exposure-schedules.js';
 import type {
 	DatadogAllocationForFlagCreation,
 	DatadogCondition,
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,
+	DatadogExposureScheduleRequest,
 	DatadogFlagEntry,
 	DatadogStatusAllocation,
 	DatadogStatusFlagDetail,
@@ -229,10 +231,28 @@ export function planDatadogVariantSync(
 
 /** Rewrite targeting variant references to the target org's variant keys. */
 export function remapAllocationVariantKeys<
-	T extends { variant_weights: Array<{ variant_key: string; value: number }> },
+	T extends {
+		variant_weights: Array<{ variant_key: string; value: number }>;
+		exposure_schedule?: DatadogExposureScheduleRequest;
+	},
 >(allocations: T[], targetKeys: ReadonlyMap<string, string>): T[] {
 	return allocations.map((allocation) => ({
 		...allocation,
+		...(allocation.exposure_schedule
+			? {
+					exposure_schedule: {
+						...allocation.exposure_schedule,
+						...(allocation.exposure_schedule.control_variant_key !== undefined
+							? {
+									control_variant_key:
+										targetKeys.get(
+											allocation.exposure_schedule.control_variant_key,
+										) ?? allocation.exposure_schedule.control_variant_key,
+								}
+							: {}),
+					},
+				}
+			: {}),
 		variant_weights: allocation.variant_weights.map((weight) => ({
 			...weight,
 			variant_key: targetKeys.get(weight.variant_key) ?? weight.variant_key,
@@ -339,17 +359,35 @@ export function liveAllocations(
 
 /**
  * Explain why a targeting filter cannot be reproduced in another org, or
- * return undefined when it can. Progressive rollouts, scheduled exposure, and
- * experiments hold runtime state and org-specific references.
+ * return undefined when it can. Unstarted and completed standalone schedules can move
+ * between orgs; experiments and guardrails have org-specific references.
  */
 export function unsupportedAllocationReason(
 	allocation: DatadogStatusAllocation,
 ): string | undefined {
-	if (allocation.type !== undefined && allocation.type !== 'FEATURE_GATE') {
+	if (allocation.experiment_id) return 'is linked to an experiment';
+	if (allocation.guardrail_metrics?.length)
+		return 'uses org-specific guardrail metrics';
+	if (
+		allocation.type !== undefined &&
+		allocation.type !== 'FEATURE_GATE' &&
+		!(allocation.type === 'CANARY' && allocation.exposure_schedule)
+	) {
 		return `uses a ${allocation.type} progressive rollout`;
 	}
-	if (allocation.experiment_id) return 'is linked to an experiment';
-	if (allocation.exposure_schedule) return 'uses a scheduled rollout';
+	if (allocation.exposure_schedule != null) {
+		// Control references are resolved separately when building/comparing.
+		const raw = allocation.exposure_schedule;
+		const controlId =
+			typeof raw === 'object' && raw !== null && 'control_variant_id' in raw
+				? String(raw.control_variant_id)
+				: '';
+		const copied = copyMigratableExposureSchedule(
+			raw,
+			new Map([[controlId, controlId]]),
+		);
+		if ('reason' in copied) return copied.reason;
+	}
 	return undefined;
 }
 
@@ -449,6 +487,26 @@ export function buildDatadogAllocations(
 		const targets = mappedDatadogEnvironments(mapped);
 		for (const target of targets) {
 			for (const allocation of liveAllocations(environment)) {
+				const unsupported = unsupportedAllocationReason(allocation);
+				if (unsupported)
+					return {
+						flagSkip: `Targeting filter "${allocation.name ?? allocation.key}" ${unsupported}`,
+					};
+				const copied =
+					allocation.exposure_schedule == null
+						? undefined
+						: copyMigratableExposureSchedule(
+								allocation.exposure_schedule,
+								variantKeysById,
+							);
+				if (copied && 'reason' in copied) {
+					return {
+						flagSkip: `Targeting filter "${allocation.name ?? allocation.key}" ${copied.reason}`,
+					};
+				}
+				// All finite steps have expired: this filter no longer serves
+				// any subject, so preserve its fallthrough by omitting it.
+				if (copied?.schedule === null) continue;
 				const targetingRules: DatadogTargetingRule[] = [];
 				for (const rule of allocation.targeting_rules ?? []) {
 					const conditions: DatadogCondition[] = [];
@@ -495,7 +553,10 @@ export function buildDatadogAllocations(
 						targets.length > 1
 							? `${allocation.key}-${environmentSlug(target.name)}`
 							: allocation.key,
-					type: 'FEATURE_GATE',
+					type: allocation.type === 'CANARY' ? 'CANARY' : 'FEATURE_GATE',
+					...(copied && 'schedule' in copied
+						? { exposure_schedule: copied.schedule }
+						: {}),
 					variant_weights: variantWeights,
 					...(targetingRules.length > 0
 						? { targeting_rules: targetingRules }

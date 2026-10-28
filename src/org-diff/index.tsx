@@ -289,14 +289,14 @@ export async function runOrgDiffWorkflow(
 	let selectedEnvironments = await selectSourceEnvironments(
 		sourceEnvironments,
 		[],
-		'Select source org environments to compare:',
+		`Select source org environments to compare${source.orgName ? ` [${source.orgName}]` : ''}:`,
 	);
 	while (selectedEnvironments?.length === 0) {
 		console.log(chalk.yellow('Please select at least one environment.'));
 		selectedEnvironments = await selectSourceEnvironments(
 			sourceEnvironments,
 			[],
-			'Select source org environments to compare:',
+			`Select source org environments to compare${source.orgName ? ` [${source.orgName}]` : ''}:`,
 		);
 	}
 	if (!selectedEnvironments) return null;
@@ -306,6 +306,7 @@ export async function runOrgDiffWorkflow(
 		targetEnvironments,
 		new Map(),
 		printHeader,
+		target.orgName,
 	);
 	if (!mapping) return null;
 	const pairs = environmentPairs(mapping, selectedEnvironments);

@@ -4,6 +4,10 @@ import {
 	datadogHeaders,
 	datadogSensitiveHeaderNames,
 } from './auth.js';
+import {
+	copyMigratableExposureSchedule,
+	retainTargetStrategyForCompletedSchedule,
+} from './exposure-schedules.js';
 import { flagNameCandidate, MAX_FLAG_NAME_SUFFIX } from './flag-names.js';
 import {
 	eppoSourceIdLookupKey,
@@ -677,7 +681,7 @@ type JsonApiFlagDetail = {
 			status: 'ENABLED' | 'DISABLED';
 			default_variant_id?: string | null;
 			default_variant_key?: string;
-			allocations: Array<{ id: string; key: string }> | null;
+			allocations: Array<DatadogStatusAllocation & { id: string }> | null;
 		}>;
 	};
 };
@@ -920,6 +924,7 @@ export async function fetchFlagDetail(
 	variantKeyToId: Map<string, string>;
 	variants: DatadogVariantDetail[];
 	allocationKeyToIdByEnv: Map<string, Map<string, string>>;
+	allocationsByEnv: Map<string, DatadogStatusAllocation[]>;
 }> {
 	const baseUrl = datadogBaseUrl(site);
 	const response = await ddClient.get<{ data: JsonApiFlagDetail }>(
@@ -954,6 +959,12 @@ export async function fetchFlagDetail(
 		variantKeyToId,
 		variants: variantDetails,
 		allocationKeyToIdByEnv,
+		allocationsByEnv: new Map(
+			(feature_flag_environments ?? []).map((env) => [
+				env.environment_id,
+				env.allocations ?? [],
+			]),
+		),
 	};
 }
 
@@ -1205,22 +1216,50 @@ export async function syncAllocationsForEnvironment(
 	site = 'datadoghq.com',
 	defaultVariantKey?: string,
 	variantKeyToIdAliases?: ReadonlyMap<string, string>,
+	migratableSchedulesOnly = false,
 ): Promise<void> {
 	const baseUrl = datadogBaseUrl(site);
 
 	// Fetch flag detail to get existing allocation IDs (so the sync endpoint
 	// treats them as updates) and variant key→UUID mapping
-	const { variantKeyToId, allocationKeyToIdByEnv } = await fetchFlagDetail(
-		apiKey,
-		appKey,
-		flagId,
-		site,
-	);
+	const { variantKeyToId, allocationKeyToIdByEnv, allocationsByEnv } =
+		await fetchFlagDetail(apiKey, appKey, flagId, site);
 	for (const [key, id] of variantKeyToIdAliases ?? []) {
 		variantKeyToId.set(key, id);
 	}
 	const existingKeyToId =
 		allocationKeyToIdByEnv.get(environmentId) ?? new Map<string, string>();
+	const existingAllocations = allocationsByEnv.get(environmentId) ?? [];
+	const variantKeysById = new Map(
+		[...variantKeyToId].map(([key, id]) => [id, key]),
+	);
+	if (migratableSchedulesOnly) {
+		for (const allocation of existingAllocations) {
+			if (allocation.exposure_schedule == null) continue;
+			const copied = copyMigratableExposureSchedule(
+				allocation.exposure_schedule,
+				variantKeysById,
+			);
+			if ('reason' in copied)
+				throw new Error(
+					`Target targeting filter "${allocation.name ?? allocation.key}" ${copied.reason}`,
+				);
+			const incoming = allocations.find(
+				(item) => item.key === allocation.key,
+			)?.exposure_schedule;
+			if (copied.completed && incoming) {
+				const source = copyMigratableExposureSchedule(
+					incoming,
+					variantKeysById,
+				);
+				if ('schedule' in source && !source.completed) {
+					throw new Error(
+						`Target targeting filter "${allocation.name ?? allocation.key}" has completed; it cannot be reset to an unstarted schedule`,
+					);
+				}
+			}
+		}
+	}
 
 	const unresolvedVariantKeys = new Set<string>();
 	const resolveVariantId = (variantKey: string): string => {
@@ -1235,6 +1274,46 @@ export async function syncAllocationsForEnvironment(
 			id: existingKeyToId.get(alloc.key) ?? undefined,
 			attributes: {
 				...alloc,
+				...(migratableSchedulesOnly && alloc.exposure_schedule
+					? {
+							exposure_schedule: (() => {
+								const copied = copyMigratableExposureSchedule(
+									alloc.exposure_schedule,
+									variantKeysById,
+								);
+								if ('reason' in copied)
+									throw new Error(
+										`Targeting filter "${alloc.name}" ${copied.reason}`,
+									);
+								if (copied.schedule === null) {
+									throw new Error(
+										`Targeting filter "${alloc.name}" has an expired exposure schedule`,
+									);
+								}
+								const existingSchedule = existingAllocations.find(
+									(item) => item.key === alloc.key,
+								)?.exposure_schedule;
+								const { control_variant_key, ...schedule } =
+									retainTargetStrategyForCompletedSchedule(
+										copied.schedule,
+										existingSchedule,
+									);
+								return {
+									...schedule,
+									...(isRecord(existingSchedule) &&
+									typeof existingSchedule.id === 'string'
+										? { id: existingSchedule.id }
+										: {}),
+									...(control_variant_key !== undefined
+										? {
+												control_variant_id:
+													resolveVariantId(control_variant_key),
+											}
+										: {}),
+								};
+							})(),
+						}
+					: {}),
 				variant_weights: alloc.variant_weights.map((vw) => ({
 					variant_id: resolveVariantId(vw.variant_key),
 					value: vw.value,
@@ -1273,13 +1352,18 @@ export async function fetchCurrentUserIdentity(
 	apiKey: string,
 	appKey: string,
 	site = 'datadoghq.com',
-): Promise<{ userId: string; orgId: string }> {
+): Promise<{ userId: string; orgId: string; orgName?: string }> {
 	const baseUrl = datadogBaseUrl(site);
 	const response = await ddClient.get<{
 		data: {
 			id: string;
 			relationships: { org: { data: { id: string } } };
 		};
+		included?: Array<{
+			id: string;
+			type: string;
+			attributes?: { name?: string };
+		}>;
 	}>(`${baseUrl}/api/v2/current_user`, {
 		headers: ddHeaders(apiKey, appKey),
 	});
@@ -1290,7 +1374,10 @@ export async function fetchCurrentUserIdentity(
 			'Could not determine Datadog user and org IDs from /api/v2/current_user',
 		);
 	}
-	return { userId, orgId };
+	const orgName = response.data.included
+		?.find((resource) => resource.type === 'orgs' && resource.id === orgId)
+		?.attributes?.name?.trim();
+	return { userId, orgId, ...(orgName ? { orgName } : {}) };
 }
 
 /**
