@@ -63,6 +63,7 @@ describe('Datadog migration workflow', () => {
 		active: boolean,
 		existing = true,
 		jsonSchema?: string | null,
+		schedules: { source?: unknown; target?: unknown } = {},
 	) {
 		for (const [base, org] of [
 			[sourceBase, 'source'],
@@ -103,7 +104,20 @@ describe('Datadog migration workflow', () => {
 							environment_id: `${org}-prod`,
 							status: active ? 'ENABLED' : 'DISABLED',
 							default_variant_id: `${org}-variant`,
-							allocations: [],
+							allocations: schedules[org]
+								? [
+										{
+											id: `${org}-filter`,
+											key: 'scheduled-filter',
+											name: 'Scheduled filter',
+											type: 'CANARY',
+											exposure_schedule: schedules[org],
+											variant_weights: [
+												{ variant_id: `${org}-variant`, value: 100 },
+											],
+										},
+									]
+								: [],
 						},
 					],
 				}),
@@ -171,6 +185,389 @@ describe('Datadog migration workflow', () => {
 						.map((request) => JSON.parse(request.data).data.attributes),
 				).toContainEqual(attributes);
 			}
+		});
+	});
+
+	const pendingSchedule = {
+		id: 'source-schedule',
+		absolute_start_time: null,
+		scheduled_start_time: '2099-01-01T00:00:00Z',
+		control_variant_id: 'source-variant',
+		rollout_options: {
+			strategy: 'NO_ROLLOUT',
+			autostart: false,
+			selection_interval_ms: 0,
+		},
+		rollout_steps: [
+			{
+				id: 'source-step',
+				exposure_ratio: 1,
+				grouped_step_index: 0,
+				is_pause_record: false,
+			},
+		],
+	};
+
+	describe.each([true, false])('schedule migration dryRun=%s', (dryRun) => {
+		it.each([
+			true,
+			false,
+		])('copies schedules on create (active=%s)', async (active) => {
+			inventory(active, false, undefined, { source: pendingSchedule });
+			mock.onPost(targetBase).reply(201, {
+				data: { id: 'target-flag', attributes: { key: 'config' } },
+			});
+			mock
+				.onPost(`${targetBase}/target-flag/environments/target-prod/enable`)
+				.reply(200, {});
+			const report = await run(dryRun);
+			expect(report.failures).toEqual([]);
+			expect(report.summary.created).toBe(1);
+			const body = dryRun
+				? report.requests.find(
+						(request) =>
+							request.method === 'POST' &&
+							request.path === '/api/v2/feature-flags',
+					)?.body
+				: JSON.parse(
+						mock.history.post.find((request) => request.url === targetBase)
+							?.data,
+					);
+			expect(body).toMatchObject({
+				data: {
+					attributes: {
+						allocations: [
+							expect.objectContaining({
+								type: 'CANARY',
+								exposure_schedule: expect.objectContaining({
+									control_variant_key: 'config',
+									rollout_options: expect.objectContaining({
+										scheduled_start: 'absolute:2099-01-01T00:00:00.000Z',
+									}),
+								}),
+							}),
+						],
+					},
+				},
+			});
+			expect(JSON.stringify(body)).not.toContain('source-schedule');
+			expect(JSON.stringify(body)).not.toContain('source-step');
+		});
+
+		it.each([
+			true,
+			false,
+		])('syncs schedules only in active environments (active=%s)', async (active) => {
+			inventory(active, true, undefined, {
+				source: pendingSchedule,
+				target: {
+					...pendingSchedule,
+					id: 'target-schedule',
+					control_variant_id: 'target-variant',
+				},
+			});
+			mock
+				.onPost(`${targetBase}/target-flag/environments/target-prod/enable`)
+				.reply(200, {});
+			const report = await run(dryRun);
+			expect(report.failures).toEqual([]);
+			expect(report.summary.synced).toBe(1);
+			if (dryRun) {
+				const request = report.requests.find((request) =>
+					request.path.includes('/allocations'),
+				);
+				if (active)
+					expect(request?.body).toEqual([
+						expect.objectContaining({
+							exposure_schedule: expect.objectContaining({
+								control_variant_key: 'config',
+							}),
+						}),
+					]);
+				else expect(request).toBeUndefined();
+			} else {
+				const request = mock.history.put.find((request) =>
+					request.url?.includes('/allocations'),
+				);
+				if (active) {
+					expect(JSON.parse(request?.data)).toMatchObject({
+						data: [
+							{
+								attributes: {
+									exposure_schedule: expect.objectContaining({
+										id: 'target-schedule',
+										control_variant_id: 'target-variant',
+									}),
+								},
+							},
+						],
+					});
+					expect(request?.data).not.toContain('source-schedule');
+				} else expect(request).toBeUndefined();
+			}
+		});
+
+		it.each([
+			'source',
+			'target',
+		] as const)('skips before writing when the %s schedule is running', async (org) => {
+			inventory(true, true, undefined, {
+				[org]: {
+					...pendingSchedule,
+					control_variant_id: `${org}-variant`,
+					absolute_start_time: new Date(Date.now() - 1000).toISOString(),
+					scheduled_start_time: null,
+					rollout_options: {
+						strategy: 'UNIFORM_INTERVALS',
+						autostart: false,
+						selection_interval_ms: 60000,
+					},
+					rollout_steps: [
+						{
+							exposure_ratio: 0.1,
+							grouped_step_index: 0,
+							is_pause_record: false,
+							interval_ms: 60000,
+						},
+						{
+							exposure_ratio: 1,
+							grouped_step_index: 1,
+							is_pause_record: false,
+							interval_ms: null,
+						},
+					],
+				},
+			});
+			const report = await run(dryRun);
+			expect(report.summary.skipped).toBe(1);
+			expect(mock.history.put).toHaveLength(0);
+			expect(mock.history.post).toHaveLength(0);
+		});
+
+		describe.each([
+			true,
+			false,
+		])('completed rollouts existing=%s', (existing) => {
+			it.each([
+				true,
+				false,
+			])('copies final exposure without replaying a ramp (active=%s)', async (active) => {
+				inventory(active, existing, undefined, {
+					source: {
+						...pendingSchedule,
+						absolute_start_time: '2020-01-01T00:00:00Z',
+						scheduled_start_time: null,
+						rollout_options: {
+							strategy: 'UNIFORM_INTERVALS',
+							autostart: false,
+							selection_interval_ms: 60000,
+						},
+						rollout_steps: [
+							{
+								exposure_ratio: 0.1,
+								grouped_step_index: 0,
+								is_pause_record: false,
+								interval_ms: 60000,
+							},
+							{
+								exposure_ratio: 0.4,
+								grouped_step_index: 1,
+								is_pause_record: false,
+								interval_ms: null,
+							},
+						],
+					},
+					target: existing
+						? {
+								...pendingSchedule,
+								id: 'target-schedule',
+								control_variant_id: 'target-variant',
+							}
+						: undefined,
+				});
+				mock.onPost(targetBase).reply(201, {
+					data: { id: 'target-flag', attributes: { key: 'config' } },
+				});
+				mock
+					.onPost(`${targetBase}/target-flag/environments/target-prod/enable`)
+					.reply(200, {});
+				const report = await run(dryRun);
+				expect(report.failures).toEqual([]);
+				expect(existing ? report.summary.synced : report.summary.created).toBe(
+					1,
+				);
+				const expected = expect.objectContaining({
+					absolute_start_time: '2020-01-01T00:00:00.000Z',
+					rollout_options: {
+						strategy: 'NO_ROLLOUT',
+						autostart: false,
+						scheduled_start: 'now',
+						selection_interval_ms: 0,
+					},
+					rollout_steps: [
+						{
+							exposure_ratio: 0.4,
+							grouped_step_index: 0,
+							is_pause_record: false,
+							interval_ms: null,
+						},
+					],
+				});
+				if (existing && !active) {
+					expect(
+						report.requests?.some((request) =>
+							request.path.includes('/allocations'),
+						) ?? false,
+					).toBe(false);
+					expect(
+						mock.history.put.some((request) =>
+							request.url?.includes('/allocations'),
+						),
+					).toBe(false);
+				} else if (dryRun) {
+					if (existing)
+						expect(
+							report.requests.find((request) =>
+								request.path.includes('/allocations'),
+							)?.body,
+						).toEqual([
+							expect.objectContaining({ exposure_schedule: expected }),
+						]);
+					else
+						expect(
+							report.requests.find(
+								(request) => request.path === '/api/v2/feature-flags',
+							)?.body,
+						).toMatchObject({
+							data: {
+								attributes: { allocations: [{ exposure_schedule: expected }] },
+							},
+						});
+				} else {
+					expect(
+						JSON.parse(
+							mock.history.put.find((request) =>
+								request.url?.includes('/allocations'),
+							)?.data,
+						),
+					).toMatchObject({
+						data: [{ attributes: { exposure_schedule: expected } }],
+					});
+				}
+			});
+		});
+
+		it('removes an unstarted target schedule when absent from the source', async () => {
+			inventory(true, true, undefined, {
+				target: { ...pendingSchedule, control_variant_id: 'target-variant' },
+			});
+			mock
+				.onPost(`${targetBase}/target-flag/environments/target-prod/enable`)
+				.reply(200, {});
+			const report = await run(dryRun);
+			expect(report.failures).toEqual([]);
+			if (dryRun)
+				expect(
+					report.requests.find((request) =>
+						request.path.includes('/allocations'),
+					)?.body,
+				).toEqual([]);
+			else
+				expect(
+					JSON.parse(
+						mock.history.put.find((request) =>
+							request.url?.includes('/allocations'),
+						)?.data,
+					),
+				).toEqual({ data: [] });
+		});
+
+		it('syncs completed targets without changing strategy or replaying the ramp', async () => {
+			const completed = {
+				...pendingSchedule,
+				absolute_start_time: '2020-01-01T00:00:00Z',
+				scheduled_start_time: null,
+				rollout_options: {
+					strategy: 'UNIFORM_INTERVALS',
+					autostart: true,
+					selection_interval_ms: 60000,
+				},
+				rollout_steps: [
+					{
+						exposure_ratio: 0.1,
+						grouped_step_index: 0,
+						is_pause_record: false,
+						interval_ms: 60000,
+					},
+					{
+						exposure_ratio: 0.4,
+						grouped_step_index: 1,
+						is_pause_record: false,
+						interval_ms: null,
+					},
+				],
+			};
+			inventory(true, true, undefined, {
+				source: completed,
+				target: {
+					...completed,
+					id: 'target-schedule',
+					control_variant_id: 'target-variant',
+				},
+			});
+			mock
+				.onPost(`${targetBase}/target-flag/environments/target-prod/enable`)
+				.reply(200, {});
+			const report = await run(dryRun);
+			expect(report.failures).toEqual([]);
+			expect(report.summary.synced).toBe(1);
+			const expected = expect.objectContaining({
+				rollout_options: expect.objectContaining({
+					strategy: 'UNIFORM_INTERVALS',
+					selection_interval_ms: 60000,
+					scheduled_start: 'now',
+				}),
+				rollout_steps: [
+					{
+						exposure_ratio: 0.4,
+						grouped_step_index: 0,
+						interval_ms: null,
+						is_pause_record: false,
+					},
+				],
+			});
+			if (dryRun)
+				expect(
+					report.requests.find((request) =>
+						request.path.includes('/allocations'),
+					)?.body,
+				).toEqual([expect.objectContaining({ exposure_schedule: expected })]);
+			else
+				expect(
+					JSON.parse(
+						mock.history.put.find((request) =>
+							request.url?.includes('/allocations'),
+						)?.data,
+					),
+				).toMatchObject({
+					data: [{ attributes: { exposure_schedule: expected } }],
+				});
+		});
+
+		it('does not reset a completed target to an unstarted schedule', async () => {
+			inventory(true, true, undefined, {
+				source: pendingSchedule,
+				target: {
+					...pendingSchedule,
+					control_variant_id: 'target-variant',
+					absolute_start_time: '2020-01-01T00:00:00Z',
+					scheduled_start_time: null,
+				},
+			});
+			const report = await run(dryRun);
+			expect(report.summary.skipped).toBe(1);
+			expect(mock.history.put).toHaveLength(0);
+			expect(mock.history.post).toHaveLength(0);
 		});
 	});
 

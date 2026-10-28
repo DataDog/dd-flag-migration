@@ -104,7 +104,7 @@ Filters managed by another migration, or whose name matches more than one target
 
 ### What is synced
 
-Flags are matched by key. Variant keys are copied as-is. Name, description, JSON schema (including removal), distribution channel, and tags sync on every run; tags follow `--tag-mode` or the tag prompt. Targeting and default variants sync in each mapped environment where the source flag is enabled, and each mapped target environment is enabled or disabled to match its source environment.
+Flags are matched by key. Variant keys are copied as-is. Name, description, JSON schema (including removal), distribution channel, and tags sync on every run; tags follow `--tag-mode` or the tag prompt. Targeting and default variants sync in each mapped environment where the source flag is enabled, and each mapped target environment is enabled or disabled to match its source environment. Standalone exposure schedules (including progressive rollouts) are copied when unstarted or completed. Idle schedules stay idle, and future start times and rollout steps are preserved. Completed rollouts become a single immediately effective step at their final exposure level, including rollouts that end below 100%; their ramp and pause history are not replayed. Filters whose finite schedule has fully expired are omitted because they no longer serve traffic. Schedule and step IDs are not copied between orgs, and control variants are mapped to target variants. Re-migration updates or removes unstarted and completed schedules with the rest of the targeting; disabled source environments keep the existing metadata-only sync behavior. Flags with running, paused, or otherwise unverifiable schedules are skipped, as are schedules with guardrails or APM retention, experiment-linked targeting, and environment overrides. A running or paused target schedule also blocks re-migration in an environment whose targeting would be overwritten. A completed target schedule cannot be reset to an unstarted schedule. Restriction policies and team permissions aren't copied.
 
 See [Re-syncing existing flags](README.md#re-syncing-existing-flags) for general behavior.
 
@@ -176,7 +176,7 @@ Credentials come from the same `SOURCE_DD_*` and `TARGET_DD_*` variables as a [m
 3. Select the flags to compare. The list includes flags from both orgs, labeled by which org has them. Type a tag (such as `team:checkout`) to filter by tag, press **Tab** to filter to flags in both orgs or in only one, and press **Ctrl+A** to check every visible flag.
 4. Confirm the environment pairs.
 
-The selected flags are paired by key across both orgs and reported as **Only in source org**, **Only in target org**, **Differs**, **In sync**, or **Needs review**. Each pair compares the flag's name, description, value type, distribution channel, tags, and variants. For each environment pair, it also compares enablement, the default variant, any environment override, and targeting. Targeting is compared by behavior: filter order, rules, and rollout weights. Filter keys and names are ignored. Saved-filter references are matched across orgs by migration metadata or by a name that is unique in both orgs; their contents are not compared. Environments that are disabled in both orgs don't have their targeting compared. Progressive rollouts, scheduled rollouts, and experiments are reported as **Needs review**.
+The selected flags are paired by key across both orgs and reported as **Only in source org**, **Only in target org**, **Differs**, **In sync**, or **Needs review**. Each pair compares the flag's name, description, value type, distribution channel, tags, and variants. For each environment pair, it also compares enablement, the default variant, any environment override, and targeting. Targeting is compared by behavior: filter order, rules, rollout weights, unstarted exposure schedules, and completed final exposure. Filter keys and names are ignored. Saved-filter references are matched across orgs by migration metadata or by a name that is unique in both orgs; their contents are not compared. Environments that are disabled in both orgs don't have their targeting compared. Running, paused, or unsupported exposure schedules, guardrails, and experiments are reported as **Needs review**.
 
 An `org-diff-<source-site>-<target-site>-<timestamp>.xlsx` workbook is written to the current directory, with a summary tab and one tab per environment pair. To fix differences, decide which org is correct and run `migrate` with **Datadog → Datadog**, using that org as the source.
 
@@ -188,7 +188,7 @@ An `org-diff-<source-site>-<target-site>-<timestamp>.xlsx` workbook is written t
 
 | Feature | Reason |
 |---|---|
-| Progressive rollouts, scheduled rollouts, experiments, and environment overrides | That state can't be copied between orgs. Flags whose targeting uses any of them are skipped with an explanation. |
+| Running or paused rollouts, schedules with guardrails or APM retention, experiments, and environment overrides | These are skipped with an explanation. Unstarted schedules and completed final exposure are copied. |
 
 ### Not copied
 

@@ -1,3 +1,4 @@
+import { copyMigratableExposureSchedule } from '../datadog/exposure-schedules.js';
 import { resolveFlagNameForSync } from '../datadog/flag-names.js';
 import type {
 	DatadogFlagEntry,
@@ -29,7 +30,7 @@ type FlagEnvironment = DatadogStatusFlagDetail['environments'][number];
 export const ORG_DIFF_LIMITATIONS = [
 	'Saved-filter references are compared, but saved-filter contents are not assessed.',
 	'Targeting filter keys and names are not compared; evaluation order, rules, and rollout weights are.',
-	'Progressive rollouts, scheduled rollouts, and experiments reference org-specific state and are reported as Needs review.',
+	'Running, paused, or unsupported exposure schedules, guardrails, and experiments are reported as Needs review. Unstarted schedules and completed final exposure are compared.',
 	'Permissions, restriction policies, and approval settings are not assessed.',
 	'Differences do not identify which org changed.',
 ];
@@ -180,6 +181,7 @@ interface CanonicalAllocation {
 	type: string;
 	rules: string[];
 	weights: Array<{ variantKey: string; value: number }>;
+	schedule?: unknown;
 }
 
 /**
@@ -196,6 +198,20 @@ export function canonicalEnvironmentTargeting(
 ): string {
 	const canonical: CanonicalAllocation[] = [];
 	for (const allocation of liveAllocations(environment)) {
+		const copied =
+			allocation.exposure_schedule == null
+				? undefined
+				: copyMigratableExposureSchedule(
+						allocation.exposure_schedule,
+						variantKeysById,
+					);
+		if (copied && 'schedule' in copied && copied.schedule === null) continue;
+		// Completion timestamps/history can differ across orgs; only the final
+		// exposure configuration affects evaluations after completion.
+		const canonicalSchedule =
+			copied && 'schedule' in copied && copied.completed
+				? { schedule: { ...copied.schedule, absolute_start_time: undefined } }
+				: copied;
 		const rules = (allocation.targeting_rules ?? [])
 			.map((rule) =>
 				stableJson(
@@ -222,14 +238,20 @@ export function canonicalEnvironmentTargeting(
 			type: allocation.type ?? 'FEATURE_GATE',
 			rules,
 			weights,
+			...(allocation.exposure_schedule != null
+				? {
+						schedule: canonicalSchedule,
+					}
+				: {}),
 		});
-		if (rules.length === 0) break;
+		if (rules.length === 0 && allocation.exposure_schedule == null) break;
 	}
 	const last = canonical.at(-1);
 	if (
 		last &&
 		last.rules.length === 0 &&
 		last.type === 'FEATURE_GATE' &&
+		last.schedule === undefined &&
 		last.weights.length === 1 &&
 		last.weights[0].value === 100 &&
 		last.weights[0].variantKey === environment.defaultVariantKey
@@ -348,6 +370,19 @@ function translateVariantKeys(
 		allocations:
 			environment.allocations?.map((allocation) => ({
 				...allocation,
+				...(allocation.exposure_schedule !== null &&
+				typeof allocation.exposure_schedule === 'object' &&
+				'control_variant_key' in allocation.exposure_schedule &&
+				typeof allocation.exposure_schedule.control_variant_key === 'string'
+					? {
+							exposure_schedule: {
+								...allocation.exposure_schedule,
+								control_variant_key: translate(
+									allocation.exposure_schedule.control_variant_key,
+								),
+							},
+						}
+					: {}),
 				variant_weights: allocation.variant_weights?.map((weight) => ({
 					...weight,
 					variant_key: optional(weight.variant_key),
@@ -462,7 +497,9 @@ function compareEnvironment(
 	);
 	if (sourceTargeting !== targetTargeting) {
 		changes.push('targeting');
-		details.push('Targeting filters or rollout weights differ.');
+		details.push(
+			'Targeting filters, rollout weights, or exposure schedules differ.',
+		);
 	}
 
 	return {
