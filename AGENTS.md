@@ -6,6 +6,19 @@ Guidance for future changes to dd-flag-migration.
 
 Use the term "targeting filters" or "targeting" instead of "allocations" in customer-facing text.
 
+## CLI boolean options
+
+All CLI boolean options must preserve three states at the parsing layer (`boolean | undefined`):
+
+- Omitted → `undefined` (not specified).
+- Bare option (for example, `--export`) → `true`.
+- `--export=false` or `--export false` → `false`.
+- `--export=true` or `--export true` → `true`.
+
+Apply defaults in the consuming command with `??`, not `||`, so explicit `false` is never mistaken for omission. Preserve existing omitted-option behavior: `--interactive` resolves to `true`; `--dry-run`, `--show-table`, and `--use-latest-migration` resolve to `false`. An omitted `--export` keeps the command's existing export prompt where applicable (no export in non-interactive mode); explicit `true` exports without prompting and explicit `false` skips without prompting. Use `shouldExportResults` in `src/helpers/export.ts` to resolve those export choices.
+
+Use the shared parsers in `src/helpers/boolean-args.ts` instead of checking only for an option's presence. A bare boolean must not consume the following option. Reject invalid explicit boolean values, and cover omitted, bare, equals, and space-separated forms, plus command defaults and prompt behavior, in tests.
+
 ## API specifications
 
 Use these specifications as the source of truth when working on the API integrations:

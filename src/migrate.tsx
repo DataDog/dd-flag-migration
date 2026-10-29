@@ -5,6 +5,7 @@ import {
 	type MigrateArgs,
 	type MigrateProviderValue,
 	parseMigrateArgs,
+	resolveMigrationDefaults,
 } from './args.js';
 import { HEADER_SUBTITLES, Header } from './components/Header.js';
 import { PromptCancelledError, renderStatic } from './components/mount.js';
@@ -120,7 +121,7 @@ async function prepareDatadogOrgPair(): Promise<DatadogOrgPair> {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-	const args = parseArgs();
+	const args = resolveMigrationDefaults(parseArgs());
 
 	if (!args.interactive && args.nonInteractive?.provider === 'datadog') {
 		const ni = args.nonInteractive;
@@ -228,7 +229,10 @@ async function main(): Promise<void> {
 		const { runDatadogMigration } = await import(
 			'./datadog-migration/migrate.js'
 		);
-		await runDatadogMigration(pair, args.dryRun, { tagMode: args.tagMode });
+		await runDatadogMigration(pair, args.dryRun, {
+			tagMode: args.tagMode,
+			doExport: args.doExport,
+		});
 		return;
 	}
 
@@ -249,11 +253,13 @@ async function main(): Promise<void> {
 		await runLaunchDarklyMigration(ddApiKey, ddAppKey, ddSite, args.dryRun, {
 			distributionChannelMode: args.distributionChannelMode,
 			tagMode: args.tagMode,
+			doExport: args.doExport,
 		});
 	} else {
 		const { runEppoMigration } = await import('./eppo/migrate.js');
 		await runEppoMigration(ddApiKey, ddAppKey, ddSite, args.dryRun, {
 			tagMode: args.tagMode,
+			doExport: args.doExport,
 		});
 	}
 }

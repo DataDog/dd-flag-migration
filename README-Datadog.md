@@ -131,7 +131,7 @@ Non-interactive migrations write a JSON result document to stdout. Status messag
 | Flag | Description |
 |---|---|
 | `--dry-run` | Preview changes without writing to Datadog |
-| `--export=<bool>` | Export results to an `.xlsx` file in the current directory (default: `false`) |
+| `--export[=<bool>]` | Export results to an `.xlsx` file in the current directory (bare option enables export; default: `false`) |
 | `--tag-mode <merge\|replace>` | Tag sync behavior (non-interactive default: `merge`) |
 
 **Examples**

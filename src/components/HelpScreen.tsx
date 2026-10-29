@@ -114,6 +114,21 @@ export function HelpScreen(): JSX.Element {
 		},
 		{ id: 'space-commands', render: () => <Text> </Text> },
 		{
+			id: 'boolean-syntax',
+			render: () => (
+				<Text>
+					{'Boolean options: --flag, --flag=true|false, or --flag true|false.'}
+				</Text>
+			),
+		},
+		{
+			id: 'boolean-defaults',
+			render: () => (
+				<Text>{'Omitted booleans preserve command defaults and prompts.'}</Text>
+			),
+		},
+		{ id: 'space-booleans', render: () => <Text> </Text> },
+		{
 			id: 'migrate-title',
 			render: () => (
 				<Text>
@@ -126,7 +141,7 @@ export function HelpScreen(): JSX.Element {
 			render: () => (
 				<Text>
 					{
-						'  --dry-run                    Preview changes without creating flags'
+						'  --dry-run[=<bool>]           Preview changes without creating flags'
 					}
 				</Text>
 			),
@@ -146,7 +161,7 @@ export function HelpScreen(): JSX.Element {
 			render: () => (
 				<Text>
 					{
-						'  --interactive=<bool>         Set to false to run without prompts (default: true)'
+						'  --interactive[=<bool>]       Set to false to run without prompts (default: true)'
 					}
 				</Text>
 			),
@@ -156,7 +171,7 @@ export function HelpScreen(): JSX.Element {
 			render: () => (
 				<Text>
 					{
-						'  --export=<bool>              Non-interactive only: export results to xlsx (default: false)'
+						'  --export[=<bool>]            Export results to xlsx (omitted: prompt interactively, otherwise false)'
 					}
 				</Text>
 			),
@@ -256,7 +271,7 @@ export function HelpScreen(): JSX.Element {
 			render: () => (
 				<Text>
 					{
-						'  --dry-run                    Preview tag changes without writing to Datadog'
+						'  --dry-run[=<bool>]           Preview tag changes without writing to Datadog'
 					}
 				</Text>
 			),
@@ -276,7 +291,7 @@ export function HelpScreen(): JSX.Element {
 			render: () => (
 				<Text>
 					{
-						'  --interactive=<bool>         Set to false to run without prompts (default: true)'
+						'  --interactive[=<bool>]       Set to false to run without prompts (default: true)'
 					}
 				</Text>
 			),
@@ -345,7 +360,7 @@ export function HelpScreen(): JSX.Element {
 			render: () => (
 				<Text>
 					{
-						'  --use-latest-migration       Skip migration file selector; use most recent'
+						'  --use-latest-migration[=<bool>]  Skip migration file selector; use most recent'
 					}
 				</Text>
 			),
@@ -395,7 +410,7 @@ export function HelpScreen(): JSX.Element {
 			render: () => (
 				<Text>
 					{
-						'  --show-table                 Force table output even for large result sets'
+						'  --show-table[=<bool>]        Force table output even for large result sets'
 					}
 				</Text>
 			),
@@ -441,7 +456,7 @@ export function HelpScreen(): JSX.Element {
 			render: () => (
 				<Text>
 					{
-						'  --export                     Export a flag evaluation to .xlsx without asking'
+						'  --export[=<bool>]            Export a flag evaluation to .xlsx (omitted: prompt on a TTY)'
 					}
 				</Text>
 			),

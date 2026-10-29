@@ -66,7 +66,7 @@ Each migration guide describes the additional steps for its source:
 
 Credentials and the Datadog site are read from environment variables; see the credentials section of your [migration guide](#guides). For fully scripted runs, see [Non-interactive mode](#non-interactive-mode) below.
 
-When the migration completes, a record is saved to `~/.dd-flag-migration/migration-<timestamp>.json`. In interactive mode you'll be prompted to export results to an `.xlsx` file; in non-interactive mode pass `--export=true` to generate one.
+When the migration completes, a record is saved to `~/.dd-flag-migration/migration-<timestamp>.json`. In interactive mode you'll be prompted to export results to an `.xlsx` file unless `--export` explicitly enables or disables export. In non-interactive mode pass `--export` to generate one.
 
 ### Large migrations
 
@@ -86,7 +86,7 @@ When a migration updates existing Datadog flags, interactive runs ask whether to
 
 What is synced, and how existing flags are matched, depends on your migration. See your [migration guide](#guides).
 
-### Non-interactive mode
+### Scripted migrations
 
 Pass `--interactive=false` to run the migration entirely from CLI arguments, with no prompts. This is useful for scripted or CI environments. See the options and examples in your migration guide:
 
@@ -137,7 +137,7 @@ Use these flags to skip the matching prompts, for example in scripted runs.
 | `--provider=eppo` | flag | Source provider of the flag. Only `eppo` is supported |
 | `--flag=<key>` | flag | Key of the flag to evaluate |
 | `--subjects=<n>` | flag | Number of random subjects (default: 10,000) |
-| `--export` | flag | Export every evaluation to an `.xlsx` file |
+| `--export` | flag | Export every evaluation to an `.xlsx` file; omitted prompts on interactive terminals, explicit `false` skips without prompting |
 
 Evaluate the latest migration:
 

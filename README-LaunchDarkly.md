@@ -127,7 +127,7 @@ Non-interactive migrations write a JSON result document to stdout. Status messag
 | Flag | Description |
 |---|---|
 | `--dry-run` | Preview changes without writing to Datadog |
-| `--export=<bool>` | Export results to an `.xlsx` file in the current directory (default: `false`). Dry-run reports label planned changes as “Would create” or “Would sync”. |
+| `--export[=<bool>]` | Export results to an `.xlsx` file in the current directory (bare option enables export; default: `false`). Dry-run reports label planned changes as “Would create” or “Would sync”. |
 | `--distribution-channel <auto\|client\|server\|all>` | Distribution-channel behavior (default: `auto`); applies to new and existing flags |
 | `--tag-mode <merge\|replace>` | Tag sync behavior (non-interactive default: `merge`) |
 

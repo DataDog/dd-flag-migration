@@ -542,7 +542,7 @@ describe('migration status comparison', () => {
 });
 
 describe('Datadog migration status detail reader', () => {
-	const mock = new AxiosMockAdapter(ddClient);
+	const mock = new AxiosMockAdapter(ddClient as never);
 	afterEach(() => mock.reset());
 
 	it('uses GET and preserves targeting filter bodies', async () => {

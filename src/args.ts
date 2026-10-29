@@ -1,4 +1,11 @@
+import {
+	ArgParseError,
+	parseBooleanValue as parseBool,
+	parseBooleanOption,
+} from './helpers/boolean-args.js';
 import type { DistributionChannelMode } from './helpers/distribution-channel.js';
+
+export { ArgParseError } from './helpers/boolean-args.js';
 
 export type ProviderValue = 'eppo' | 'launchdarkly';
 
@@ -16,10 +23,10 @@ export interface NonInteractiveArgs {
 
 export interface MigrateArgs {
 	tagMode?: TagMode;
-	dryRun: boolean;
+	dryRun: boolean | undefined;
 	datadogSite: string | undefined;
-	interactive: boolean;
-	doExport: boolean;
+	interactive: boolean | undefined;
+	doExport: boolean | undefined;
 	distributionChannelMode: DistributionChannelMode | undefined;
 	nonInteractive?: NonInteractiveArgs;
 }
@@ -32,23 +39,28 @@ export interface MigrateTagsNonInteractiveArgs {
 }
 
 export interface MigrateTagsArgs {
-	dryRun: boolean;
+	dryRun: boolean | undefined;
 	datadogSite: string | undefined;
-	interactive: boolean;
+	interactive: boolean | undefined;
 	/** Set when --tag-mode is passed; undefined prompts interactively. */
 	tagMode: TagMode | undefined;
 	nonInteractive?: MigrateTagsNonInteractiveArgs;
 }
 
-export class ArgParseError extends Error {}
-
-function parseBool(raw: string, flag: string): boolean {
-	const v = raw.trim().toLowerCase();
-	if (v === 'true' || v === '1' || v === 'yes') return true;
-	if (v === 'false' || v === '0' || v === 'no') return false;
-	throw new ArgParseError(
-		`${flag} expects a boolean (true|false), got: ${raw}`,
-	);
+/** Apply command defaults without collapsing an omitted export choice. */
+export function resolveMigrationDefaults<
+	T extends Pick<MigrateArgs, 'dryRun' | 'interactive'>,
+>(
+	args: T,
+): Omit<T, 'dryRun' | 'interactive'> & {
+	dryRun: boolean;
+	interactive: boolean;
+} {
+	return {
+		...args,
+		dryRun: args.dryRun ?? false,
+		interactive: args.interactive ?? true,
+	};
 }
 
 function normalizeProvider(raw: string): ProviderValue {
@@ -103,9 +115,9 @@ interface FlagDef {
 
 const FLAGS: FlagDef[] = [
 	{ name: '--dry-run', takesValue: false },
-	{ name: '--export', takesValue: true },
+	{ name: '--export', takesValue: false },
 	{ name: '--datadog-site', takesValue: true },
-	{ name: '--interactive', takesValue: true },
+	{ name: '--interactive', takesValue: false },
 	{ name: '--provider', takesValue: true },
 	{ name: '--project', takesValue: true },
 	{ name: '--env-map', takesValue: true },
@@ -119,8 +131,8 @@ const FLAGS: FlagDef[] = [
  * Throws ArgParseError on malformed input.
  */
 export function parseMigrateArgs(argv: string[]): MigrateArgs {
-	let dryRun = false;
-	let doExport = false;
+	let dryRun: boolean | undefined;
+	let doExport: boolean | undefined;
 	let datadogSite: string | undefined;
 	let interactive: boolean | undefined;
 	let provider: MigrateProviderValue | undefined;
@@ -162,13 +174,15 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 			if (value.trim().length === 0) {
 				throw new ArgParseError(`${name} value must not be empty`);
 			}
-		} else if (valueFromEquals !== undefined) {
-			throw new ArgParseError(`${name} does not take a value`);
+		} else {
+			const parsed = parseBooleanOption(argv, i);
+			value = String(parsed.value);
+			i = parsed.nextIndex;
 		}
 
 		switch (name) {
 			case '--dry-run':
-				dryRun = true;
+				dryRun = parseBool(value as string, name);
 				break;
 			case '--export':
 				doExport = parseBool(value as string, name);
@@ -213,9 +227,7 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 		}
 	}
 
-	const isInteractive = interactive ?? true;
-
-	if (!isInteractive) {
+	if (interactive === false) {
 		if (!provider) {
 			throw new ArgParseError('--provider is required in non-interactive mode');
 		}
@@ -268,7 +280,7 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 	return {
 		dryRun,
 		datadogSite,
-		interactive: true,
+		interactive,
 		doExport,
 		distributionChannelMode,
 		tagMode,
@@ -278,7 +290,7 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 const TAG_FLAGS: FlagDef[] = [
 	{ name: '--dry-run', takesValue: false },
 	{ name: '--datadog-site', takesValue: true },
-	{ name: '--interactive', takesValue: true },
+	{ name: '--interactive', takesValue: false },
 	{ name: '--provider', takesValue: true },
 	{ name: '--project', takesValue: true },
 	{ name: '--feature-flag', takesValue: true },
@@ -292,7 +304,7 @@ const TAG_FLAGS: FlagDef[] = [
  * sync strategy ("additive" merge vs "replace" full replace).
  */
 export function parseMigrateTagsArgs(argv: string[]): MigrateTagsArgs {
-	let dryRun = false;
+	let dryRun: boolean | undefined;
 	let datadogSite: string | undefined;
 	let interactive: boolean | undefined;
 	let provider: ProviderValue | undefined;
@@ -332,13 +344,15 @@ export function parseMigrateTagsArgs(argv: string[]): MigrateTagsArgs {
 			if (value.trim().length === 0) {
 				throw new ArgParseError(`${name} value must not be empty`);
 			}
-		} else if (valueFromEquals !== undefined) {
-			throw new ArgParseError(`${name} does not take a value`);
+		} else {
+			const parsed = parseBooleanOption(argv, i);
+			value = String(parsed.value);
+			i = parsed.nextIndex;
 		}
 
 		switch (name) {
 			case '--dry-run':
-				dryRun = true;
+				dryRun = parseBool(value as string, name);
 				break;
 			case '--datadog-site':
 				datadogSite = (value as string).trim();
@@ -361,9 +375,7 @@ export function parseMigrateTagsArgs(argv: string[]): MigrateTagsArgs {
 		}
 	}
 
-	const isInteractive = interactive ?? true;
-
-	if (!isInteractive) {
+	if (interactive === false) {
 		if (!provider) {
 			throw new ArgParseError('--provider is required in non-interactive mode');
 		}
@@ -400,7 +412,7 @@ export function parseMigrateTagsArgs(argv: string[]): MigrateTagsArgs {
 	return {
 		dryRun,
 		datadogSite,
-		interactive: true,
+		interactive,
 		tagMode,
 	};
 }

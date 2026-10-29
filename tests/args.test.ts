@@ -2,11 +2,11 @@ import { describe, expect, it } from '@jest/globals';
 import { ArgParseError, parseMigrateArgs } from '../src/args.js';
 
 describe('parseMigrateArgs', () => {
-	it('defaults to interactive mode', () => {
+	it('preserves omitted booleans without selecting non-interactive mode', () => {
 		const args = parseMigrateArgs([]);
-		expect(args.interactive).toBe(true);
-		expect(args.dryRun).toBe(false);
-		expect(args.doExport).toBe(false);
+		expect(args.interactive).toBeUndefined();
+		expect(args.dryRun).toBeUndefined();
+		expect(args.doExport).toBeUndefined();
 		expect(args.distributionChannelMode).toBeUndefined();
 		expect(args.nonInteractive).toBeUndefined();
 	});
@@ -244,31 +244,26 @@ describe('parseMigrateArgs', () => {
 		).toThrow(/--env-map must be/);
 	});
 
-	it('accepts --export=true', () => {
+	it.each([
+		[['--export'], true],
+		[['--export=true'], true],
+		[['--export', 'true'], true],
+		[['--export=false'], false],
+		[['--export', 'false'], false],
+	] as const)('parses export arguments %j as %s in non-interactive mode', (exportArgs, expected) => {
 		const args = parseMigrateArgs([
 			'--interactive=false',
 			'--provider=eppo',
 			'--datadog-site=datadoghq.com',
 			'--env-map=p,p',
 			'--feature-flag=x',
-			'--export=true',
+			...exportArgs,
 		]);
-		expect(args.doExport).toBe(true);
+		expect(args.interactive).toBe(false);
+		expect(args.doExport).toBe(expected);
 	});
 
-	it('accepts --export=false', () => {
-		const args = parseMigrateArgs([
-			'--interactive=false',
-			'--provider=eppo',
-			'--datadog-site=datadoghq.com',
-			'--env-map=p,p',
-			'--feature-flag=x',
-			'--export=false',
-		]);
-		expect(args.doExport).toBe(false);
-	});
-
-	it('defaults doExport to false when --export is omitted', () => {
+	it('preserves omitted --export in non-interactive mode', () => {
 		const args = parseMigrateArgs([
 			'--interactive=false',
 			'--provider=eppo',
@@ -276,11 +271,11 @@ describe('parseMigrateArgs', () => {
 			'--env-map=p,p',
 			'--feature-flag=x',
 		]);
-		expect(args.doExport).toBe(false);
+		expect(args.doExport).toBeUndefined();
 	});
 
-	it('rejects --export without a value', () => {
-		expect(() => parseMigrateArgs(['--export'])).toThrow(/requires a value/);
+	it('accepts --export without a value', () => {
+		expect(parseMigrateArgs(['--export']).doExport).toBe(true);
 	});
 
 	it('rejects --export=maybe', () => {
@@ -289,15 +284,64 @@ describe('parseMigrateArgs', () => {
 		);
 	});
 
-	it('rejects --interactive without a value', () => {
-		expect(() => parseMigrateArgs(['--interactive'])).toThrow(
-			/requires a value/,
-		);
+	it('accepts --interactive without a value', () => {
+		expect(parseMigrateArgs(['--interactive']).interactive).toBe(true);
 	});
 
 	it('rejects --interactive=maybe', () => {
 		expect(() => parseMigrateArgs(['--interactive=maybe'])).toThrow(
 			/expects a boolean/,
+		);
+	});
+});
+
+describe.each([
+	['--dry-run', 'dryRun'],
+	['--export', 'doExport'],
+	['--interactive', 'interactive'],
+] as const)('parseMigrateArgs boolean option %s', (flag, field) => {
+	const base = ['--provider=eppo', '--env-map=p,p', '--feature-flag=x'];
+
+	it('preserves omission as undefined', () => {
+		expect(parseMigrateArgs(base)[field]).toBeUndefined();
+	});
+
+	it.each([
+		['', [], true],
+		['=true', [], true],
+		['', ['true'], true],
+		['=false', [], false],
+		['', ['false'], false],
+	] as const)('parses %s with trailing values %j as %s', (suffix, values, expected) => {
+		expect(
+			parseMigrateArgs([`${flag}${suffix}`, ...values, ...base])[field],
+		).toBe(expected);
+	});
+
+	it('does not consume the following option', () => {
+		const args = parseMigrateArgs([flag, ...base]);
+		expect(args[field]).toBe(true);
+		expect(args.dryRun).toBe(flag === '--dry-run' ? true : undefined);
+	});
+
+	it('uses the last value when repeated', () => {
+		expect(parseMigrateArgs([flag, `${flag}=false`, ...base])[field]).toBe(
+			false,
+		);
+		expect(parseMigrateArgs([`${flag}=false`, flag, ...base])[field]).toBe(
+			true,
+		);
+	});
+
+	it.each(['', 'maybe'])('rejects an invalid equals value %j', (value) => {
+		expect(() => parseMigrateArgs([`${flag}=${value}`, ...base])).toThrow(
+			/ expects a boolean/,
+		);
+	});
+
+	it('rejects an invalid space-separated value', () => {
+		expect(() => parseMigrateArgs([flag, 'maybe', ...base])).toThrow(
+			/ expects a boolean/,
 		);
 	});
 });
