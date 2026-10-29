@@ -35,6 +35,12 @@ import {
 } from './eppo/evaluate.js';
 import type { EppoFlag, MigrationFile } from './eppo/types.js';
 import {
+	type EvaluateArgs,
+	type EvaluationTarget,
+	parseEvaluateArgs,
+	resolveEvaluateDefaults,
+} from './evaluate/args.js';
+import {
 	formatExampleTable,
 	parseCsv,
 	validateHeader,
@@ -63,8 +69,10 @@ import {
 	SyntheticSource,
 	type TestCaseSource,
 } from './evaluate/test-case-sources.js';
+import { ArgParseError } from './helpers/boolean-args.js';
 import { CONFIG_DIR } from './helpers/config.js';
 import { requireEnvVars } from './helpers/env.js';
+import { shouldExportResults } from './helpers/export.js';
 import { promptForDatadogSite } from './helpers/prompt-for-datadog-site.js';
 import { MIGRATION_PROVIDERS } from './helpers/providers.js';
 import { fetchEnvironmentSdkKey, findSdkKeyOwner } from './launchdarkly/api.js';
@@ -174,123 +182,21 @@ async function validateLDSdkKey(
 
 // ─── Arg Parsing ──────────────────────────────────────────────────────────────
 
-type EvaluationTarget = 'migration' | 'flag';
-
-type EvaluateArgs = {
-	target: EvaluationTarget | undefined;
-	testSubjectId: string | undefined;
-	useLatestMigration: boolean;
-	flagEnvironment: string | undefined;
-	datadogSite: string | undefined;
-	csvPath: string | undefined;
-	forceShowTable: boolean;
-	provider: string | undefined;
-	flagKey: string | undefined;
-	subjectCount: number | undefined;
-	exportXlsx: boolean;
-};
-
 function exitWithArgError(message: string): never {
 	process.stderr.write(chalk.red(`\n${message}\n\n`));
 	process.exit(1);
 }
 
 function parseArgs(): EvaluateArgs {
-	const args = process.argv.slice(2);
-	const useLatestMigration = args.includes('--use-latest-migration');
-	const forceShowTable = args.includes('--show-table');
-	const subjectArg = args.find((a) => a.startsWith('--test-subject-id='));
-	const testSubjectId = subjectArg
-		? subjectArg.slice('--test-subject-id='.length)
-		: undefined;
-	const envArg = args.find((a) => a.startsWith('--flag-environment='));
-	const flagEnvironment = envArg
-		? envArg.slice('--flag-environment='.length)
-		: undefined;
-	const siteArg = args.find((a) => a.startsWith('--datadog-site='));
-	const datadogSite = siteArg
-		? siteArg.slice('--datadog-site='.length).trim()
-		: undefined;
-	if (datadogSite !== undefined && datadogSite.length === 0) {
-		process.stderr.write(chalk.red('\n--datadog-site must not be empty.\n\n'));
-		process.exit(1);
-	}
-	const csvArg = args.find((a) => a.startsWith('--csv='));
-	const csvPath = csvArg ? csvArg.slice('--csv='.length) : undefined;
-
-	const argValue = (name: string): string | undefined => {
-		const arg = args.find((a) => a.startsWith(`--${name}=`));
-		return arg === undefined ? undefined : arg.slice(name.length + 3).trim();
-	};
-	const provider = argValue('provider')?.toLowerCase();
-	const flagKey = argValue('flag');
-	if (flagKey !== undefined && flagKey.length === 0) {
-		exitWithArgError('--flag must not be empty.');
-	}
-	const subjectsArg = argValue('subjects');
-	let subjectCount: number | undefined;
-	if (subjectsArg !== undefined) {
-		subjectCount = Number(subjectsArg);
-		if (!/^\d+$/.test(subjectsArg) || subjectCount <= 0) {
-			exitWithArgError('--subjects must be a positive integer.');
+	try {
+		return parseEvaluateArgs(process.argv.slice(2));
+	} catch (err) {
+		if (err instanceof ArgParseError) {
+			process.stderr.write(chalk.red(`\n${err.message}\n\n`));
+			process.exit(1);
 		}
+		throw err;
 	}
-
-	// Infer the target from mode-specific flags so existing scripted runs of
-	// migration evaluation keep working without a new prompt.
-	const targetArg = argValue('target');
-	if (
-		targetArg !== undefined &&
-		targetArg !== 'migration' &&
-		targetArg !== 'flag'
-	) {
-		exitWithArgError('--target must be "migration" or "flag".');
-	}
-	const exportXlsx = args.includes('--export');
-	const usesFlagArgs =
-		provider !== undefined ||
-		flagKey !== undefined ||
-		subjectCount !== undefined ||
-		exportXlsx;
-	const usesMigrationArgs =
-		useLatestMigration ||
-		testSubjectId !== undefined ||
-		csvPath !== undefined ||
-		forceShowTable;
-	if (usesFlagArgs && usesMigrationArgs) {
-		exitWithArgError(
-			'--provider, --flag, --subjects, and --export evaluate a single flag; ' +
-				'--use-latest-migration, --test-subject-id, --csv, and --show-table evaluate a migration. ' +
-				'Use options for one target.',
-		);
-	}
-	let target = targetArg as EvaluationTarget | undefined;
-	if (target === undefined && usesFlagArgs) target = 'flag';
-	if (target === undefined && usesMigrationArgs) target = 'migration';
-	if (target === 'flag' && usesMigrationArgs) {
-		exitWithArgError(
-			'--use-latest-migration, --test-subject-id, --csv, and --show-table apply to --target=migration.',
-		);
-	}
-	if (target === 'migration' && usesFlagArgs) {
-		exitWithArgError(
-			'--provider, --flag, --subjects, and --export apply to --target=flag.',
-		);
-	}
-
-	return {
-		target,
-		testSubjectId,
-		useLatestMigration,
-		flagEnvironment,
-		datadogSite,
-		csvPath,
-		forceShowTable,
-		provider,
-		flagKey,
-		subjectCount,
-		exportXlsx,
-	};
 }
 
 // ─── Migration File Selection ─────────────────────────────────────────────────
@@ -968,14 +874,15 @@ async function runFlagEvaluation(
 
 	printFlagComparison(result, sourceLabel);
 
-	// Ask only when a person can answer; scripted runs opt in with --export.
-	const shouldExport =
-		args.exportXlsx ||
-		(process.stdin.isTTY &&
-			(await confirm({
+	const shouldExport = await shouldExportResults(
+		args.exportXlsx,
+		process.stdin.isTTY === true,
+		() =>
+			confirm({
 				message: 'Export every evaluation to an .xlsx file?',
 				default: true,
-			})));
+			}),
+	);
 	if (shouldExport) {
 		const exportSpinner = createSpinner(
 			`Writing ${result.evaluations} evaluation(s) to .xlsx…`,
@@ -1017,7 +924,7 @@ async function runFlagEvaluation(
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-	const args = parseArgs();
+	const args = resolveEvaluateDefaults(parseArgs());
 	const {
 		testSubjectId,
 		useLatestMigration,

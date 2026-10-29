@@ -59,6 +59,7 @@ import {
 	resolveDistributionChannel,
 	selectDistributionChannelMode,
 } from '../helpers/distribution-channel.js';
+import { shouldExportResults } from '../helpers/export.js';
 import { formatAxiosError } from '../helpers/format-axios-error.js';
 import { toSyncRequests } from '../helpers/migration.js';
 import { writeJsonOutput } from '../helpers/output.js';
@@ -2442,16 +2443,16 @@ async function executeMigration(
 			fs.writeFileSync(filepath, JSON.stringify(migrationData, null, 2));
 			console.log(chalk.gray(`  Migration saved to ${filepath}`));
 
-			let exportToSheets: boolean;
-			if (nonInteractive) {
-				exportToSheets = doExport ?? false;
-			} else {
-				exportToSheets = await confirm({
-					message:
-						'Would you like to export migration results to an .xlsx file?',
-					default: true,
-				});
-			}
+			const exportToSheets = await shouldExportResults(
+				doExport,
+				!nonInteractive,
+				() =>
+					confirm({
+						message:
+							'Would you like to export migration results to an .xlsx file?',
+						default: true,
+					}),
+			);
 			if (exportToSheets) {
 				const { exportLDMigrationToXlsx } = await import('./helpers/xlsx.js');
 				await exportLDMigrationToXlsx(migrationData);
@@ -2763,6 +2764,7 @@ export async function runLaunchDarklyMigration(
 						conflictResolution,
 						distributionChannelMode: options?.distributionChannelMode,
 						tagMode: options?.tagMode,
+						doExport: options?.doExport,
 					},
 				);
 				if (action === 'cancel') break outer;

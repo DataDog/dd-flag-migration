@@ -2,10 +2,10 @@ import { describe, expect, it } from '@jest/globals';
 import { ArgParseError, parseMigrateTagsArgs } from '../src/args.js';
 
 describe('parseMigrateTagsArgs', () => {
-	it('defaults to interactive mode with no tag mode', () => {
+	it('preserves omitted booleans without selecting non-interactive mode', () => {
 		const args = parseMigrateTagsArgs([]);
-		expect(args.interactive).toBe(true);
-		expect(args.dryRun).toBe(false);
+		expect(args.interactive).toBeUndefined();
+		expect(args.dryRun).toBeUndefined();
 		expect(args.tagMode).toBeUndefined();
 		expect(args.nonInteractive).toBeUndefined();
 	});
@@ -168,15 +168,60 @@ describe('parseMigrateTagsArgs', () => {
 		expect(args.nonInteractive?.tagMode).toBe('additive');
 	});
 
-	it('rejects --interactive without a value', () => {
-		expect(() => parseMigrateTagsArgs(['--interactive'])).toThrow(
-			/requires a value/,
-		);
+	it('accepts --interactive without a value', () => {
+		expect(parseMigrateTagsArgs(['--interactive']).interactive).toBe(true);
 	});
 
 	it('rejects --interactive=maybe', () => {
 		expect(() => parseMigrateTagsArgs(['--interactive=maybe'])).toThrow(
 			/expects a boolean/,
+		);
+	});
+});
+
+describe.each([
+	['--dry-run', 'dryRun'],
+	['--interactive', 'interactive'],
+] as const)('parseMigrateTagsArgs boolean option %s', (flag, field) => {
+	const base = [
+		'--provider=eppo',
+		'--datadog-site=datadoghq.com',
+		'--feature-flag=x',
+	];
+
+	it('preserves omission as undefined', () => {
+		expect(parseMigrateTagsArgs(base)[field]).toBeUndefined();
+	});
+
+	it.each([
+		['', [], true],
+		['=true', [], true],
+		['', ['true'], true],
+		['=false', [], false],
+		['', ['false'], false],
+	] as const)('parses %s with trailing values %j as %s', (suffix, values, expected) => {
+		const args = parseMigrateTagsArgs([`${flag}${suffix}`, ...values, ...base]);
+		expect(args[field]).toBe(expected);
+	});
+
+	it('uses the last value when repeated', () => {
+		expect(parseMigrateTagsArgs([flag, `${flag}=false`, ...base])[field]).toBe(
+			false,
+		);
+		expect(parseMigrateTagsArgs([`${flag}=false`, flag, ...base])[field]).toBe(
+			true,
+		);
+	});
+
+	it.each(['', 'maybe'])('rejects an invalid equals value %j', (value) => {
+		expect(() => parseMigrateTagsArgs([`${flag}=${value}`, ...base])).toThrow(
+			/ expects a boolean/,
+		);
+	});
+
+	it('rejects an invalid space-separated value', () => {
+		expect(() => parseMigrateTagsArgs([flag, 'maybe', ...base])).toThrow(
+			/ expects a boolean/,
 		);
 	});
 });

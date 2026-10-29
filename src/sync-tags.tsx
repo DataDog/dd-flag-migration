@@ -5,6 +5,7 @@ import {
 	type MigrateTagsArgs,
 	type ProviderValue,
 	parseMigrateTagsArgs,
+	resolveMigrationDefaults,
 } from './args.js';
 import { HEADER_SUBTITLES, Header } from './components/Header.js';
 import { PromptCancelledError, renderStatic } from './components/mount.js';
@@ -95,7 +96,7 @@ async function checkRequiredPermissions(
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-	const args = parseArgs();
+	const args = resolveMigrationDefaults(parseArgs());
 
 	// Validate Datadog env vars up front. Provider-specific env vars are
 	// validated after the provider is known so that, e.g., a LaunchDarkly tag

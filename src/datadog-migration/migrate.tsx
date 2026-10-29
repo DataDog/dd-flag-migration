@@ -44,6 +44,7 @@ import type {
 } from '../datadog/types.js';
 import { mapWithConcurrency } from '../helpers/concurrency.js';
 import { CONFIG_DIR } from '../helpers/config.js';
+import { shouldExportResults } from '../helpers/export.js';
 import { formatAxiosError } from '../helpers/format-axios-error.js';
 import { toSyncRequests } from '../helpers/migration.js';
 import { writeJsonOutput } from '../helpers/output.js';
@@ -695,7 +696,7 @@ async function executeDatadogMigration(
 		dryRun,
 		tagMode: configuredTagMode,
 		nonInteractive = false,
-		doExport = false,
+		doExport,
 	} = opts;
 
 	if (flags.length === 0) {
@@ -1056,16 +1057,18 @@ async function executeDatadogMigration(
 		const filepath = saveMigrationFile(migrationData);
 		console.log(chalk.gray(`  Migration saved to ${filepath}`));
 
-		let exportToSheets: boolean;
-		if (nonInteractive) {
-			exportToSheets = doExport;
-		} else {
-			const { confirm } = await import('../components/Confirm.js');
-			exportToSheets = await confirm({
-				message: 'Would you like to export migration results to an .xlsx file?',
-				default: true,
-			});
-		}
+		const exportToSheets = await shouldExportResults(
+			doExport,
+			!nonInteractive,
+			async () => {
+				const { confirm } = await import('../components/Confirm.js');
+				return confirm({
+					message:
+						'Would you like to export migration results to an .xlsx file?',
+					default: true,
+				});
+			},
+		);
 		if (exportToSheets) {
 			const { exportDatadogMigrationToXlsx } = await import('./xlsx.js');
 			await exportDatadogMigrationToXlsx(migrationData);
@@ -1204,7 +1207,12 @@ export async function runDatadogMigration(
 					prevEnvMapping,
 					sourceEnvironments,
 					targetFlags,
-					{ pair, dryRun, tagMode: options?.tagMode },
+					{
+						pair,
+						dryRun,
+						tagMode: options?.tagMode,
+						doExport: options?.doExport,
+					},
 				);
 				if (action === 'cancel' || action === 'migrate') break outer;
 			}

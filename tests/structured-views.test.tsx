@@ -65,6 +65,10 @@ describe('structured static views', () => {
 		expect(output).toContain('bulk-permissions');
 		expect(output).toContain('bulk-enable');
 		expect(output).toContain('--dry-run');
+		expect(output).toContain('--flag=true|false');
+		expect(output).toContain(
+			'Omitted booleans preserve command defaults and prompts.',
+		);
 		expect(output).toContain('--provider');
 		expect(output).toContain('--env-map');
 		expect(output).toContain('--feature-flag');
