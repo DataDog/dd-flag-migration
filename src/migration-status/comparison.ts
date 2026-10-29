@@ -4,6 +4,7 @@ import type {
 	DatadogStatusAllocation,
 	DatadogStatusFlagDetail,
 	DatadogVariantDetail,
+	SourceVariant,
 } from '../datadog/types.js';
 import {
 	buildAllocations,
@@ -153,13 +154,16 @@ function compareFlag(
 		flagWideChanges.push('name');
 		flagWideDetails.push('Flag name differs.');
 	}
-	const variantDetails = compareVariants(source, actual);
+	const variantDetails = compareSourceVariants(buildVariants(source), actual);
 	if (variantDetails.length > 0) {
 		flagWideChanges.push('variants');
 		flagWideDetails.push(...variantDetails);
 	}
 
-	const variantAliases = sourceVariantAliases(source, actual.variants);
+	const variantAliases = sourceVariantAliases(
+		buildVariants(source),
+		actual.variants,
+	);
 	const environments = compareEnvironments(
 		source,
 		actual,
@@ -340,12 +344,12 @@ function compareEnvironments(
 	return output;
 }
 
-function sourceVariantAliases(
-	source: LDFlag,
+export function sourceVariantAliases(
+	source: SourceVariant[],
 	actual: DatadogVariantDetail[],
 ): Map<string, string> {
 	const aliases = new Map<string, string>();
-	for (const expected of buildVariants(source)) {
+	for (const expected of source) {
 		const bySourceId = actual.find(
 			(variant) => variant.migration_metadata?.source_id === expected.sourceId,
 		);
@@ -356,11 +360,10 @@ function sourceVariantAliases(
 	return aliases;
 }
 
-function compareVariants(
-	source: LDFlag,
+export function compareSourceVariants(
+	expected: SourceVariant[],
 	actual: DatadogStatusFlagDetail,
 ): string[] {
-	const expected = buildVariants(source);
 	const unmatched = [...actual.variants];
 	const details: string[] = [];
 	for (const variant of expected) {
@@ -458,7 +461,7 @@ function canonicalActualTargeting(
 	);
 }
 
-function canonicalCondition(condition: {
+export function canonicalCondition(condition: {
 	operator?: string;
 	attribute?: string;
 	value?: unknown;
@@ -498,7 +501,7 @@ function isEquivalentDefaultFallthrough(
 	return key === expectedDefault;
 }
 
-function overallStatus(
+export function overallStatus(
 	flagWideChanges: ChangeKind[],
 	environments: EnvironmentStatusResult[],
 ): FlagMigrationStatus {

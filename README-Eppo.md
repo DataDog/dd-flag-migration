@@ -13,6 +13,8 @@ Credentials are read from environment variables, and each section below lists th
   - [Advanced filtering](#advanced-filtering)
   - [Re-syncing existing flags](#re-syncing-existing-flags)
 - [Non-interactive migrations](#non-interactive-migrations)
+- [Migration status](#migration-status)
+  - [Migration status credentials](#migration-status-credentials)
 - [Evaluate the migration](#evaluate-the-migration)
   - [Evaluation credentials](#evaluation-credentials)
   - [Evaluate a single flag](#evaluate-a-single-flag)
@@ -128,6 +130,31 @@ npx @datadog/dd-flag-migration migrate --interactive=false \
   --env-map production,Production \
   --feature-flag my-flag
 ```
+
+---
+
+## Migration status
+
+```bash
+npx @datadog/dd-flag-migration migration-status   # choose "Eppo → Datadog"
+
+# When running from this repository:
+yarn migration-status
+```
+
+This is an interactive, read-only comparison. Select Eppo environments, map each to one or more Datadog environments, and select the flags to check. The flag picker supports the same **Tab** migration-state filters as migration. No flags, audiences, or environment settings are changed.
+
+The report labels flags **Not yet migrated**, **Partially migrated**, **Out of sync**, **In sync**, or **Needs review**. Only the selected environment mappings affect environment status. It compares flag names, variants, environment enablement, defaults, targeting filters, weights, partial exposure, and Eppo bucketing IDs. Disabled environments' targeting is compared too, matching the Eppo re-migration behavior.
+
+A `migration-status-eppo-<timestamp>.xlsx` workbook is written automatically to the current directory, with a summary and one status tab per selected Datadog environment.
+
+Flags are linked by Eppo migration metadata and source flag ID. Same-key flags without matching metadata, duplicate matches, differing source/target flag keys, and configurations that cannot be verified require review rather than being treated as successfully migrated.
+
+**Limitations:** Tags, permissions, restriction policies, JSON schemas, and saved-filter contents are not assessed. Audience references are compared, including legacy inline audience references. Missing audience data or unsupported negation requires review. Legacy flags retain Datadog bucketing, so matching configuration does not guarantee matching subject assignments in splits or partial rollouts; use [evaluation](#evaluate-the-migration) to check assignments. If Eppo removes a default, the report shows the retained Datadog default as a difference, but Datadog cannot clear it during re-migration.
+
+### Migration status credentials
+
+Set `DD_API_KEY`, `DD_APP_KEY`, and `EPPO_API_KEY`. `DD_SITE` optionally pre-fills the site prompt. The Datadog application key needs only `feature_flag_config_read` and `feature_flag_environment_config_read`; write permissions, `teams_read`, SDK keys, and LaunchDarkly credentials are not required.
 
 ---
 
