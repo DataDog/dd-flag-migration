@@ -32,6 +32,7 @@ describe('Datadog read model', () => {
 						name: 'Example Flag',
 						description: 'An example flag',
 						value_type: 'BOOLEAN',
+						bucketing_mode: 'EPPO',
 						distribution_channel: 'CLIENT',
 						tags: ['team:example'],
 						variants: [
@@ -48,11 +49,18 @@ describe('Datadog read model', () => {
 									{
 										id: 'allocation-id',
 										key: 'example-flag-rollout',
+										eppo_allocation_id: 42,
 										type: 'CANARY',
 										status: 'published',
 										order_position: 0,
 										experiment_id: null,
-										variant_weights: [{ variant_id: 'v-on', value: 100 }],
+										variant_weights: [
+											{
+												variant_id: 'v-on',
+												value: 100,
+												eppo_variant_weight_id: 43,
+											},
+										],
 									},
 								],
 							},
@@ -66,16 +74,55 @@ describe('Datadog read model', () => {
 		expect(detail).toMatchObject({
 			description: 'An example flag',
 			valueType: 'BOOLEAN',
+			bucketingMode: 'EPPO',
 			distributionChannel: 'CLIENT',
 			tags: ['team:example'],
 			environments: [
 				{
 					defaultVariantKey: 'off',
 					overrideVariantKey: 'on',
-					allocations: [{ type: 'CANARY', order_position: 0 }],
+					allocations: [
+						{
+							type: 'CANARY',
+							order_position: 0,
+							eppo_allocation_id: 42,
+							variant_weights: [{ eppo_variant_weight_id: 43 }],
+						},
+					],
 				},
 			],
 		});
+	});
+
+	it('does not infer an Eppo default from a targeting filter named fallthrough', async () => {
+		mock
+			.onGet('https://api.datadoghq.com/api/v2/feature-flags/flag-id')
+			.reply(200, {
+				data: {
+					id: 'flag-id',
+					attributes: {
+						key: 'eppo-flag',
+						name: 'Eppo flag',
+						bucketing_mode: 'EPPO',
+						variants: [{ id: 'v-on', key: 'on', name: 'On', value: 'true' }],
+						feature_flag_environments: [
+							{
+								environment_id: 'env-prod',
+								status: 'ENABLED',
+								default_variant_id: null,
+								allocations: [
+									{
+										key: 'eppo-fallthrough',
+										variant_weights: [{ variant_id: 'v-on', value: 100 }],
+									},
+								],
+							},
+						],
+					},
+				},
+			});
+		const detail = await fetchDatadogStatusFlagDetail('api', 'app', 'flag-id');
+		expect(detail.environments[0].defaultVariantKey).toBeUndefined();
 	});
 
 	it('honors DD_BASE_URL when fetching flag details', async () => {

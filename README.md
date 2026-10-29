@@ -13,6 +13,7 @@ A CLI tool for migrating feature flags from your current provider into [Datadog 
 | [Eppo → Datadog](README-Eppo.md) | Migrate flags from Eppo |
 | [LaunchDarkly → Datadog](README-LaunchDarkly.md) | Migrate flags from LaunchDarkly |
 | [Datadog → Datadog](README-Datadog.md) | Copy flags between Datadog orgs, and compare two orgs with `org-diff` |
+| [Handling large migrations](README-Large-Migrations.md) | Split a large flag set across multiple runs and track progress with `migration-status` |
 | [Post-migration actions](README-Post-Migration.md) | Bulk management of migrated flags: team permissions, environment enablement, and tag sync |
 | [Evaluate flags without APM or Infrastructure Monitoring](README-Without-APM.md) | Configure the Datadog Agent and your services to evaluate flags with APM tracing and Infrastructure Monitoring turned off |
 
@@ -70,11 +71,7 @@ When the migration completes, a record is saved to `~/.dd-flag-migration/migrati
 
 ### Large migrations
 
-For large flag sets, the tool supports splitting work across multiple runs:
-
-- **Progress bar** — a sticky progress bar shows how many flags have been migrated so far, updating in real time
-- **Tab to filter** — during flag selection, press **Tab** to open the advanced-filter screen and narrow the list by category, such as `not-yet-migrated`. Combined with **Ctrl+A**, this makes it easy to select only the remaining flags for the next run
-- **Ctrl+C to save progress** — pressing **Ctrl+C** during migration saves a partial migration file (`~/.dd-flag-migration/migration-<timestamp>.json`) with all flags that completed successfully before the interruption. You can resume later by filtering to `not-yet-migrated` with **Tab** on the flag selection screen
+For large flag sets, you can split work across multiple runs, stop a run with **Ctrl+C** and resume it later, and check progress with `migration-status`. See [Handling large migrations](README-Large-Migrations.md).
 
 ### Re-syncing existing flags
 
@@ -187,10 +184,13 @@ npx @datadog/dd-flag-migration migration-status
 yarn migration-status
 ```
 
-First choose the migration to check: **LaunchDarkly → Datadog** or **Datadog → Datadog**. **Eppo → Datadog** is listed as coming soon and can't be selected yet.
+First choose the migration to check: **Eppo → Datadog**, **LaunchDarkly → Datadog**, or **Datadog → Datadog**.
 
+- [Eppo → Datadog migration status](README-Eppo.md#migration-status)
 - [LaunchDarkly → Datadog migration status](README-LaunchDarkly.md#migration-status)
 - [Datadog → Datadog migration status](README-Datadog.md#migration-status)
+
+To track progress across several migration runs, see [Handling large migrations](README-Large-Migrations.md#check-migration-status).
 
 ---
 

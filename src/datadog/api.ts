@@ -789,7 +789,9 @@ export async function fetchDatadogStatusFlagDetail(
 				status: environment.status as DatadogEnvironmentStatus,
 				defaultVariantKey:
 					declaredDefaultVariantKey ??
-					inferStatusDefaultVariantKey(allocations, variants),
+					(attributes.bucketing_mode === 'EPPO'
+						? undefined
+						: inferStatusDefaultVariantKey(allocations, variants)),
 				...(overrideVariantKey !== undefined ? { overrideVariantKey } : {}),
 				allocations,
 			};
@@ -800,6 +802,10 @@ export async function fetchDatadogStatusFlagDetail(
 		id: data.id,
 		key: attributes.key,
 		name: attributes.name,
+		...(attributes.bucketing_mode === 'EPPO' ||
+		attributes.bucketing_mode === 'DATADOG'
+			? { bucketingMode: attributes.bucketing_mode }
+			: {}),
 		...(typeof attributes.description === 'string'
 			? { description: attributes.description }
 			: {}),

@@ -107,7 +107,11 @@ interface EnvironmentSheetRow {
 function environmentNextAction(
 	status: EnvironmentSheetStatus,
 	hasIdentityWarning: boolean,
+	isEppo: boolean,
 ): string {
+	if (hasIdentityWarning && isEppo) {
+		return 'Review the Eppo migration metadata and flag keys before migrating.';
+	}
 	if (hasIdentityWarning) {
 		return 'Flag was created independently of migration tooling. Archive flag in Datadog, then re-run migration.';
 	}
@@ -174,6 +178,12 @@ function environmentSheetStatus(
 ): EnvironmentSheetStatus {
 	if (!flag.datadogFlagKey) {
 		return flag.status === 'needs-review' ? 'needs-review' : 'not-yet-migrated';
+	}
+	if (
+		flag.status === 'needs-review' &&
+		flag.flagWideChanges.includes('identity')
+	) {
+		return 'needs-review';
 	}
 	const statuses: EnvironmentSheetStatus[] = [];
 	if (flag.flagWideChanges.some((change) => change !== 'identity')) {
@@ -273,6 +283,8 @@ export async function writeMigrationStatusWorkbook(
 	result: MigrationStatusResult,
 	output: string,
 ): Promise<string> {
+	const isEppo = result.sourceProvider === 'eppo';
+	const provider = isEppo ? 'Eppo' : 'LaunchDarkly';
 	const workbook = new ExcelJS.Workbook();
 	workbook.creator = 'Datadog Feature Flag Migration';
 	workbook.created = result.generatedAt;
@@ -282,12 +294,12 @@ export async function writeMigrationStatusWorkbook(
 		summary,
 		2,
 		'Feature Flag Migration Status',
-		'Status is calculated only for the selected LaunchDarkly-to-Datadog environment mappings. Unselected environments do not affect the results.',
+		`Status is calculated only for the selected ${provider}-to-Datadog environment mappings. Unselected environments do not affect the results.`,
 	);
 	addEnvironmentMappingSection(
 		summary,
 		2,
-		'LaunchDarkly',
+		provider,
 		result.mappings.map((mapping) => ({
 			sourceLabel: mapping.sourceEnvironmentName,
 			datadogLabel: mapping.datadogEnvironmentName,
@@ -296,9 +308,14 @@ export async function writeMigrationStatusWorkbook(
 	addHeaderRow(summary, ['Metric', 'Value']);
 	const counts = migrationStatusCounts(result);
 	const summaryRows: Array<[string, string | number]> = [
-		['LaunchDarkly project', `${result.projectName} (${result.projectKey})`],
+		isEppo
+			? ['Source', 'Eppo']
+			: [
+					'LaunchDarkly project',
+					`${result.projectName} (${result.projectKey})`,
+				],
 		['Generated at', result.generatedAt.toISOString()],
-		['LaunchDarkly flags', result.flags.length],
+		[`${provider} flags`, result.flags.length],
 		['Not yet migrated', counts['not-yet-migrated']],
 		['Partially migrated', counts['partially-migrated']],
 		['Out of sync', counts['out-of-sync']],
@@ -322,7 +339,7 @@ export async function writeMigrationStatusWorkbook(
 			status,
 			8,
 			`Migration Status — ${environment.name}`,
-			'One row is shown for each selected LaunchDarkly mapping into this Datadog environment. Flag-wide differences are included in every affected environment tab.',
+			`One row is shown for each selected ${provider} mapping into this Datadog environment. Flag-wide differences are included in every affected environment tab.`,
 		);
 		const statusSummary = status.addRow(
 			[
@@ -344,9 +361,9 @@ export async function writeMigrationStatusWorkbook(
 		addHeaderRow(status, [
 			'Status',
 			'Flag name',
-			'LaunchDarkly key',
+			`${provider} key`,
 			'Datadog key',
-			'LaunchDarkly environment',
+			`${provider} environment`,
 			'Datadog environment',
 			'What changed',
 			'Recommended action',
@@ -362,7 +379,11 @@ export async function writeMigrationStatusWorkbook(
 					statusRow.sourceEnvironmentName,
 					statusRow.datadogEnvironmentName,
 					statusRow.details,
-					environmentNextAction(statusRow.status, statusRow.hasIdentityWarning),
+					environmentNextAction(
+						statusRow.status,
+						statusRow.hasIdentityWarning,
+						isEppo,
+					),
 				].map(safeCell),
 			);
 			colorEnvironmentSheetRow(row, statusRow.status);

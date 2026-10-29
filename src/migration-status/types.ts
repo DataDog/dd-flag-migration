@@ -1,8 +1,10 @@
 import type {
 	DatadogEnvironment,
+	DatadogFlagEntry,
 	DatadogStatusFlagDetail,
 	EnvironmentMapping,
 } from '../datadog/types.js';
+import type { EppoFlag, EppoFlagEnvironment } from '../eppo/types.js';
 import type { LDEnvironment, LDFlag } from '../launchdarkly/types.js';
 
 export type FlagMigrationStatus =
@@ -56,6 +58,7 @@ export interface MigrationStatusMapping {
 }
 
 export interface MigrationStatusResult {
+	sourceProvider?: 'launchdarkly' | 'eppo';
 	projectKey: string;
 	projectName: string;
 	generatedAt: Date;
@@ -82,6 +85,25 @@ export interface MigrationStatusComparisonInput {
 	selectedSourceEnvironments: LDEnvironment[];
 	environmentMapping: EnvironmentMapping<string>;
 	savedFilterLookup?: ReadonlyMap<string, string>;
+}
+
+export interface EppoMigrationStatusComparisonInput {
+	sourceFlags: EppoFlag[];
+	sourceDetailErrors: ReadonlyMap<string, string>;
+	datadogFlags: DatadogFlagEntry[];
+	datadogDetails: ReadonlyMap<string, DatadogStatusFlagDetail>;
+	datadogDetailErrors: ReadonlyMap<string, string>;
+	selectedSourceEnvironments: EppoFlagEnvironment[];
+	environmentMapping: EnvironmentMapping<number>;
+	savedFilterLookup?: ReadonlyMap<number, string>;
+	fingerprintLookup?: ReadonlyMap<string, string>;
+	audienceCollectionError?: string;
+}
+
+export interface LinkedEppoFlag {
+	source: EppoFlag;
+	datadog?: DatadogFlagEntry;
+	identityProblem?: string;
 }
 
 export interface LinkedFlag {

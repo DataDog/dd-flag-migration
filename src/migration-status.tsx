@@ -12,6 +12,7 @@ import {
 } from './datadog/orgs.js';
 import { requireEnvVars } from './helpers/env.js';
 import { promptForDatadogSite } from './helpers/prompt-for-datadog-site.js';
+import { runEppoMigrationStatusWorkflow } from './migration-status/eppo.js';
 import { runMigrationStatusWorkflow } from './migration-status/index.js';
 import { runOrgDiffWorkflow } from './org-diff/index.js';
 
@@ -27,7 +28,7 @@ const PROVIDERS: Array<{
 	value: StatusProvider;
 	disabled?: boolean;
 }> = [
-	{ name: 'Eppo → Datadog (coming soon)', value: 'eppo', disabled: true },
+	{ name: 'Eppo → Datadog', value: 'eppo' },
 	{ name: 'Datadog → Datadog', value: 'datadog' },
 	{ name: 'LaunchDarkly → Datadog', value: 'launchdarkly' },
 ];
@@ -61,7 +62,8 @@ Choose a migration to check, then generate a read-only status workbook.
   Datadog → Datadog       Map environments between the SOURCE_DD_* and
                           TARGET_DD_* orgs and compare them (same report as
                           org-diff).
-  Eppo → Datadog          Coming soon.`);
+  Eppo → Datadog          Select Eppo environments and flags, map them to
+                          Datadog environments, and compare.`);
 		return;
 	}
 	if (args.length > 0) {
@@ -80,7 +82,10 @@ Choose a migration to check, then generate a read-only status workbook.
 	}
 
 	const dd = requireEnvVars(['DD_API_KEY', 'DD_APP_KEY']);
-	const ld = requireEnvVars(['LAUNCHDARKLY_API_KEY']);
+	const sourceApiKey =
+		provider === 'eppo'
+			? requireEnvVars(['EPPO_API_KEY']).EPPO_API_KEY
+			: requireEnvVars(['LAUNCHDARKLY_API_KEY']).LAUNCHDARKLY_API_KEY;
 	const site = await promptForDatadogSite();
 	const permissions = await fetchCurrentUserPermissions(
 		dd.DD_API_KEY,
@@ -95,12 +100,11 @@ Choose a migration to check, then generate a read-only status workbook.
 		process.exitCode = 1;
 		return;
 	}
-	await runMigrationStatusWorkflow(
-		ld.LAUNCHDARKLY_API_KEY,
-		dd.DD_API_KEY,
-		dd.DD_APP_KEY,
-		site,
-	);
+	const workflow =
+		provider === 'eppo'
+			? runEppoMigrationStatusWorkflow
+			: runMigrationStatusWorkflow;
+	await workflow(sourceApiKey, dd.DD_API_KEY, dd.DD_APP_KEY, site);
 }
 
 main().catch((error: unknown) => {
