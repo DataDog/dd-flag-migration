@@ -65,23 +65,24 @@ yarn migration-status
 
 The report shows which flags are migrated and whether each migrated flag still matches the source. Run it between batches to see what's left, and again before you switch over.
 
-First choose the migration to check: **LaunchDarkly → Datadog** or **Datadog → Datadog**. **Eppo → Datadog** is listed as coming soon and can't be selected yet.
+First choose the migration to check: **Eppo → Datadog**, **LaunchDarkly → Datadog**, or **Datadog → Datadog**.
 
 The workflow depends on your migration:
 
+- [Eppo → Datadog migration status](README-Eppo.md#migration-status): select environments, map each to one or more Datadog environments, and select flags. The flag picker supports the same migration-state filters as migration.
 - [LaunchDarkly → Datadog migration status](README-LaunchDarkly.md#migration-status): select a project, environments, environment mappings, and flags, the same way you do for a migration. Press **Tab** in the flag picker to use the advanced filters, and **Ctrl+A** to check every visible flag.
 - [Datadog → Datadog migration status](README-Datadog.md#migration-status): compares the source and target orgs and produces the same report as [Org diff](README-Datadog.md#org-diff).
 
 ### Statuses
 
-For LaunchDarkly → Datadog, each selected flag is reported as one of:
+For Eppo → Datadog and LaunchDarkly → Datadog, each selected flag is reported as one of:
 
 | Status | Meaning |
 |---|---|
 | **Not yet migrated** | No linked Datadog flag was found |
 | **Partially migrated** | A linked Datadog flag exists, but at least one mapped environment hasn't been migrated |
-| **Out of sync** | The flag is migrated, but its configuration differs from LaunchDarkly |
-| **In sync** | The flag is migrated and matches LaunchDarkly in every selected mapping |
+| **Out of sync** | The flag is migrated, but its configuration differs from the source |
+| **In sync** | The flag is migrated and matches the source in every selected mapping |
 | **Needs review** | The tool couldn't verify the flag, for example because flag details couldn't be loaded |
 
 Environment sync is calculated only for the selected mappings. Unselected Datadog environments don't affect the result.
@@ -92,12 +93,13 @@ For Datadog → Datadog statuses, see [Org diff](README-Datadog.md#org-diff).
 
 ### Status report
 
-For LaunchDarkly → Datadog, a `migration-status-launchdarkly-<project>-<timestamp>.xlsx` workbook is written automatically to the current directory. It has a global summary and one status tab per selected Datadog environment. Each environment tab includes scoped status counts at the top.
+A workbook is written automatically to the current directory: `migration-status-eppo-<timestamp>.xlsx` for Eppo, or `migration-status-launchdarkly-<project>-<timestamp>.xlsx` for LaunchDarkly. It has a global summary and one status tab per selected Datadog environment. Each environment tab includes scoped status counts at the top.
 
 ### Credentials
 
 `migration-status` uses the same credentials as a migration:
 
+- [Eppo → Datadog migration status credentials](README-Eppo.md#migration-status-credentials)
 - [LaunchDarkly → Datadog migration status credentials](README-LaunchDarkly.md#migration-status-credentials)
 - [Datadog → Datadog migration status](README-Datadog.md#migration-status)
 

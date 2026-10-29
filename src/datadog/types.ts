@@ -42,6 +42,7 @@ export interface DatadogStatusAllocation {
 	order_position?: number;
 	experiment_id?: string | null;
 	exposure_schedule?: unknown;
+	eppo_allocation_id?: number;
 	targeting_rules?: Array<{
 		conditions?: Array<{
 			operator?: string;
@@ -54,11 +55,13 @@ export interface DatadogStatusAllocation {
 		variant_id?: string;
 		variant_key?: string;
 		value: number;
+		eppo_variant_weight_id?: number;
 	}>;
 }
 
 export interface DatadogStatusFlagDetail {
 	id: string;
+	bucketingMode?: BucketingMode;
 	key: string;
 	name: string;
 	description?: string;

@@ -260,7 +260,7 @@ export async function runMigrationStatusWorkflow(
 	return path;
 }
 
-async function loadDetails<T>(
+export async function loadDetails<T>(
 	label: string,
 	items: T[],
 	loader: (item: T) => Promise<void>,
@@ -351,7 +351,7 @@ function printScope(
 	console.log();
 }
 
-function printSummary(result: MigrationStatusResult): void {
+export function printSummary(result: MigrationStatusResult): void {
 	const counts = migrationStatusCounts(result);
 	console.log();
 	console.log(chalk.bold(`Migration status for ${result.projectName}\n`));
@@ -377,15 +377,15 @@ function printSummary(result: MigrationStatusResult): void {
 	console.log();
 }
 
-async function printHeader(): Promise<void> {
+export async function printHeader(): Promise<void> {
 	await renderStatic(<Header subtitle={HEADER_SUBTITLES.migrationStatus} />);
 }
 
-function clearScreen(): void {
+export function clearScreen(): void {
 	process.stdout.write('\x1Bc');
 }
 
-async function withProgress<T>(
+export async function withProgress<T>(
 	loading: string,
 	action: () => Promise<T>,
 	success: (value: T) => string,
@@ -401,6 +401,6 @@ async function withProgress<T>(
 	}
 }
 
-function errorMessage(error: unknown): string {
+export function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }

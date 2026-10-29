@@ -165,10 +165,11 @@ function flagLabel(
 
 // ─── Prompt Steps ─────────────────────────────────────────────────────────────
 
-async function linkEnvironments(
+export async function linkEnvironments(
 	eppoEnvs: EppoFlagEnvironment[],
 	ddEnvs: DatadogEnvironment[],
 	previousMapping: EnvironmentMapping<number>,
+	headerSubtitle: string = HEADER_SUBTITLES.eppo,
 ): Promise<EnvironmentMapping<number> | null> {
 	const selectedIds = new Set(eppoEnvs.map((env) => env.id));
 	const mapping = new Map(
@@ -192,7 +193,7 @@ async function linkEnvironments(
 		);
 
 		clearScreen();
-		await printHeader();
+		await renderStatic(<Header subtitle={headerSubtitle} />);
 		console.log(
 			chalk.bold('Linking environment ') +
 				chalk.green(`${i + 1}`) +
@@ -236,10 +237,11 @@ async function linkEnvironments(
 	return mapping;
 }
 
-async function selectEnvironments(
+export async function selectEnvironments(
 	flags: EppoFlag[],
 	environments: EppoFlagEnvironment[],
 	previouslySelected: EppoFlagEnvironment[] = [],
+	message = 'Select environments to migrate from:',
 ): Promise<EppoFlagEnvironment[] | null> {
 	const flagCount = new Map<number, number>();
 	for (const flag of flags) {
@@ -264,7 +266,7 @@ async function selectEnvironments(
 	);
 
 	return filterableCheckbox<EppoFlagEnvironment>({
-		message: 'Select environments to migrate from:',
+		message,
 		choices: environments.map((env) => ({
 			name: envLabel(env, flagCount.get(env.id) ?? 0),
 			value: env,
@@ -280,6 +282,7 @@ export async function selectFlags(
 	selectedEnvs: EppoFlagEnvironment[],
 	previouslySelected: EppoFlag[] = [],
 	datadogFlags: DatadogFlagEntry[] = [],
+	message = 'Select flags to migrate to Datadog:',
 ): Promise<EppoFlag[] | null> {
 	const selectedEnvIds = new Set(selectedEnvs.map((e) => e.id));
 	const visibleFlags =
@@ -320,7 +323,7 @@ export async function selectFlags(
 	const pageSize = Math.max(5, (process.stdout.rows ?? 24) - 9);
 
 	return filterableCheckbox<EppoFlag>({
-		message: 'Select flags to migrate to Datadog:',
+		message,
 		choices: sortedFlags.map((flag) => ({
 			name: flagLabel(
 				flag,

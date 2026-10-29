@@ -184,8 +184,9 @@ npx @datadog/dd-flag-migration migration-status
 yarn migration-status
 ```
 
-First choose the migration to check: **LaunchDarkly → Datadog** or **Datadog → Datadog**. **Eppo → Datadog** is listed as coming soon and can't be selected yet.
+First choose the migration to check: **Eppo → Datadog**, **LaunchDarkly → Datadog**, or **Datadog → Datadog**.
 
+- [Eppo → Datadog migration status](README-Eppo.md#migration-status)
 - [LaunchDarkly → Datadog migration status](README-LaunchDarkly.md#migration-status)
 - [Datadog → Datadog migration status](README-Datadog.md#migration-status)
 
