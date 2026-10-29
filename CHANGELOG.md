@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.7.0] — 2026-10-29
+
+### CLI
+
+- Fix: accept bare, equals, and space-separated boolean options consistently, preserving explicit `false` values and existing defaults when omitted
+- Fix: honor explicit `--export` choices without prompting; omitting the option preserves the interactive export prompt and skips export in non-interactive mode
+
+### Migration — LaunchDarkly & Eppo
+
+- Fix: stop forcing the CLIENT distribution channel for semver targeting now that server SDKs support it; auto mode preserves existing channels and uses the Datadog default for new flags (#175)
+
+### Migration — Eppo
+
+- Feat: add read-only Eppo migration status reports with flag and per-environment comparisons, review warnings, and automatic `.xlsx` export through `migration-status`
+- Feat: tag migrated flags with `team:<handle>` for owning Eppo teams matched to Datadog teams, with interactive mapping for unmatched teams; team tags do not grant permissions (#173)
+- Feat: allow Eppo-compatible flags without defaults so unmatched subjects receive the SDK fallback value, without prompting for a default (#174)
+  - Flags migrated before Eppo-compatible bucketing still require a default; existing Datadog defaults are retained because they cannot be cleared
+- Fix: automatically restore archived Datadog flags during Eppo re-migration (#172)
+
+### Documentation
+
+- Split migration instructions into provider-specific guides and a separate post-migration guide (#168)
+- Add a guide for handling large migrations, including batching, resuming, and checking migration status
+- Add a guide for evaluating flags without APM or infrastructure monitoring (#170)
+
+### Dependencies
+
+- Fix: update dependencies and patch axios vulnerabilities
+- Fix: add missing third-party dependency license attributions
+
 ## [1.6.0] — 2026-10-22
 
 ### CLI
