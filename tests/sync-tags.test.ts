@@ -149,7 +149,7 @@ describe('resolveMigrationTargetTags', () => {
 	let mock: AxiosMockAdapter;
 
 	beforeEach(() => {
-		mock = new AxiosMockAdapter(ddClient);
+		mock = new AxiosMockAdapter(ddClient as never);
 	});
 
 	afterEach(() => {
