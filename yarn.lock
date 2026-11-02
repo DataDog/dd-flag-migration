@@ -521,22 +521,22 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"@datadog/flagging-core@npm:3.3.0, @datadog/flagging-core@npm:^3.3.0":
-  version: 3.3.0
-  resolution: "@datadog/flagging-core@npm:3.3.0"
+"@datadog/flagging-core@npm:3.4.0, @datadog/flagging-core@npm:^3.3.0":
+  version: 3.4.0
+  resolution: "@datadog/flagging-core@npm:3.4.0"
   dependencies:
     "@bufbuild/protobuf": "npm:^2.13.0"
     spark-md5: "npm:^3.0.2"
-  checksum: 10c0/041821f0be059dd569ee931cfa64ade558c7a2c773a4af1ea1988d0463e27a8aea4a0d719d4434f2889a0a5973c4a7ecb1cefa1a51b9951c92190fecd678b73d
+  checksum: 10c0/bed47f0590653b642ce499e6295c342a2bb34b090c3623996c16eba71d1c6941c51251e1083ba3a257252efd7cbd14a71fde44a5501ff32f03dd58f6e20d401d
   languageName: node
   linkType: hard
 
 "@datadog/openfeature-node-server@npm:^2.6.0":
-  version: 2.6.0
-  resolution: "@datadog/openfeature-node-server@npm:2.6.0"
+  version: 2.7.0
+  resolution: "@datadog/openfeature-node-server@npm:2.7.0"
   dependencies:
-    "@datadog/flagging-core": "npm:3.3.0"
-  checksum: 10c0/c66a3de9dda7020d700bc063c8fe3be0bab63ed5ff027ddf48f08265b853c7dfc8c1feaeeb41c7d66c82931db90d8f088d513bdb716c03f10a1038d09227a63a
+    "@datadog/flagging-core": "npm:3.4.0"
+  checksum: 10c0/e85a807361e221b1b32045f75c528e6a2cd13c2ef24e3568a2acba7e3c1d164947608bdcba30aaa780749bf76c3082f2cb57a7bc38a9268e3d3fb22aea48bb6d
   languageName: node
   linkType: hard
 
