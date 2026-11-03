@@ -15,7 +15,7 @@ A CLI tool for migrating feature flags from your current provider into [Datadog 
 | [Datadog → Datadog](README-Datadog.md) | Copy flags between Datadog orgs, and compare two orgs with `org-diff` |
 | [Handling large migrations](README-Large-Migrations.md) | Split a large flag set across multiple runs and track progress with `migration-status` |
 | [Post-migration actions](README-Post-Migration.md) | Bulk management of migrated flags: team permissions, environment enablement, and tag sync |
-| [Evaluate flags without APM or Infrastructure Monitoring](README-Without-APM.md) | Configure the Datadog Agent and your services to evaluate flags with APM tracing and Infrastructure Monitoring turned off |
+| [Set up Agent-based Feature Flags without APM tracing or Infrastructure Monitoring](README-Without-APM.md) | Configure the Datadog Agent and your services to evaluate flags with APM tracing and Infrastructure Monitoring turned off |
 
 ---
 
