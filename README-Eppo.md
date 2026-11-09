@@ -150,7 +150,7 @@ A `migration-status-eppo-<timestamp>.xlsx` workbook is written automatically to 
 
 Flags are linked by Eppo migration metadata and source flag ID. Same-key flags without matching metadata, duplicate matches, differing source/target flag keys, and configurations that cannot be verified require review rather than being treated as successfully migrated.
 
-**Limitations:** Tags, permissions, restriction policies, JSON schemas, and saved-filter contents are not assessed. Audience references are compared, including legacy inline audience references. Missing audience data or unsupported negation requires review. Legacy flags retain Datadog bucketing, so matching configuration does not guarantee matching subject assignments in splits or partial rollouts; use [evaluation](#evaluate-the-migration) to check assignments. If Eppo removes a default, the report shows the retained Datadog default as a difference, but Datadog cannot clear it during re-migration.
+**Limitations:** Tags, permissions, restriction policies, JSON schemas, and saved-filter contents are not assessed. Audience references are compared, including legacy inline audience references. Missing audience data or unsupported negation requires review. Flag migrated prior to v1.7.0 retain Datadog bucketing, so matching configuration does not guarantee matching subject assignments in splits or partial rollouts; use [evaluation](#evaluate-the-migration) to check assignments. If Eppo removes a default, the report shows the retained Datadog default as a difference, but Datadog cannot clear it during re-migration.
 
 ### Migration status credentials
 
