@@ -47,6 +47,10 @@ import { CONFIG_DIR } from '../helpers/config.js';
 import { shouldExportResults } from '../helpers/export.js';
 import { formatAxiosError } from '../helpers/format-axios-error.js';
 import { toSyncRequests } from '../helpers/migration.js';
+import {
+	dryRunFilename,
+	migrationFilename,
+} from '../helpers/migration-files.js';
 import { writeJsonOutput } from '../helpers/output.js';
 import {
 	resolveMigrationTargetTags,
@@ -875,7 +879,7 @@ async function executeDatadogMigration(
 	const saveMigrationFile = (data: DatadogMigrationFile): string => {
 		if (!fs.existsSync(CONFIG_DIR))
 			fs.mkdirSync(CONFIG_DIR, { recursive: true });
-		const filepath = path.join(CONFIG_DIR, `migration-${data.migratedAt}.json`);
+		const filepath = path.join(CONFIG_DIR, migrationFilename(data.migratedAt));
 		fs.writeFileSync(filepath, JSON.stringify(data, null, 2));
 		return filepath;
 	};
@@ -1049,7 +1053,7 @@ async function executeDatadogMigration(
 		};
 		outputData = dryRunData;
 		if (report.dryRunRequests.length > 0) {
-			const filepath = path.join(process.cwd(), `dry-run-${migratedAt}.json`);
+			const filepath = path.join(process.cwd(), dryRunFilename(migratedAt));
 			fs.writeFileSync(filepath, JSON.stringify(dryRunData, null, 2));
 			console.log(chalk.gray(`  Requests written to ${filepath}`));
 		}

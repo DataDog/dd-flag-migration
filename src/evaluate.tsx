@@ -73,6 +73,10 @@ import { ArgParseError } from './helpers/boolean-args.js';
 import { CONFIG_DIR } from './helpers/config.js';
 import { requireEnvVars } from './helpers/env.js';
 import { shouldExportResults } from './helpers/export.js';
+import {
+	listMigrationFiles,
+	parseFileTimestamp,
+} from './helpers/migration-files.js';
 import { promptForDatadogSite } from './helpers/prompt-for-datadog-site.js';
 import { MIGRATION_PROVIDERS } from './helpers/providers.js';
 import { fetchEnvironmentSdkKey, findSdkKeyOwner } from './launchdarkly/api.js';
@@ -212,11 +216,7 @@ async function selectMigrationFile(useLatest = false): Promise<MigrationFile> {
 		process.exit(1);
 	}
 
-	const files = fs
-		.readdirSync(CONFIG_DIR)
-		.filter((f) => f.startsWith('migration-') && f.endsWith('.json'))
-		.sort()
-		.reverse(); // newest-first (ISO timestamps sort lexicographically)
+	const files = listMigrationFiles(CONFIG_DIR);
 
 	if (files.length === 0) {
 		console.log(chalk.red('\n  No migration files found.'));
@@ -239,11 +239,8 @@ async function selectMigrationFile(useLatest = false): Promise<MigrationFile> {
 		chosen = await select<string>({
 			message: 'Select a migration to evaluate:',
 			choices: files.map((f) => {
-				const iso = f.replace('migration-', '').replace('.json', '');
-				const date = new Date(iso);
-				const dateStr = Number.isNaN(date.getTime())
-					? ''
-					: `  ${chalk.gray(date.toLocaleString())}`;
+				const date = parseFileTimestamp(f);
+				const dateStr = date ? `  ${chalk.gray(date.toLocaleString())}` : '';
 				return { name: `${f}${dateStr}`, value: f, short: f };
 			}),
 		});
