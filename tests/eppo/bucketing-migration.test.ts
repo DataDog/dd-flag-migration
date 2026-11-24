@@ -27,6 +27,7 @@ interface Report {
 	failures: Array<{ key: string; error: string }>;
 	legacyBucketingKeys?: string[];
 	restoredKeys?: string[];
+	replacedKeys?: string[];
 	requests?: Array<{
 		method: string;
 		path: string;
@@ -226,9 +227,14 @@ describe('Eppo migration with Eppo-compatible bucketing', () => {
 		ddMock.onPost(/.*/).reply(record(200));
 	}
 
-	async function run(dryRun: boolean, flag = eppoFlag()): Promise<Report> {
+	async function run(
+		dryRun: boolean,
+		flag = eppoFlag(),
+		replaceLegacyFlags?: boolean,
+	): Promise<Report> {
 		await runEppoMigration('dd-api-key', 'dd-app-key', DD_SITE, dryRun, {
 			tagMode: 'replace',
+			replaceLegacyFlags,
 			nonInteractive: {
 				envMap: [
 					['Production', 'Production'],
@@ -624,6 +630,327 @@ describe('Eppo migration with Eppo-compatible bucketing', () => {
 			expect(report.summary.errored).toBe(1);
 			expect(report.restoredKeys).toBeUndefined();
 			expect(writes).toEqual([]);
+		});
+	});
+
+	describe('a Datadog flag migrated before Eppo bucketing', () => {
+		const LEGACY_ID = 'legacy-flag';
+
+		function legacyAttributes(): Record<string, unknown> {
+			return {
+				key: 'checkout-redesign',
+				name: 'Checkout Redesign',
+				archived_at: '2026-10-22T00:00:00Z',
+				bucketing_mode: 'DATADOG',
+				migration_metadata: { provider: 'eppo', source_id: '1' },
+			};
+		}
+
+		function mockLegacy(
+			flag = eppoFlag(),
+			attributes = legacyAttributes(),
+		): void {
+			mockSources(flag, [{ id: LEGACY_ID, attributes }]);
+			ddMock.onGet(`${DD_BASE}/api/v2/feature-flags/${LEGACY_ID}`).reply(200, {
+				data: {
+					id: LEGACY_ID,
+					type: 'feature-flags',
+					attributes: {
+						variants: migratedVariants,
+						feature_flag_environments: [
+							{
+								environment_id: 'dd-prod',
+								status: 'DISABLED',
+								allocations: [
+									{ id: 'legacy-alloc-1', key: 'experiment-alloc' },
+								],
+							},
+							{
+								environment_id: 'dd-staging',
+								status: 'DISABLED',
+								allocations: [],
+							},
+							{
+								environment_id: 'dd-unmapped',
+								status: 'DISABLED',
+								allocations: [{ id: 'legacy-alloc-2', key: 'qa-alloc' }],
+							},
+						],
+					},
+				},
+			});
+		}
+
+		const clearPaths = [
+			`/api/v2/feature-flags/${LEGACY_ID}/environments/dd-prod/allocations`,
+			`/api/v2/feature-flags/${LEGACY_ID}/environments/dd-unmapped/allocations`,
+		];
+
+		it('replaces an archived flag with a new EPPO flag after clearing its targeting filters', async () => {
+			mockLegacy();
+			const report = await run(false, eppoFlag(), true);
+
+			expect(report.failures).toEqual([]);
+			expect(report.summary).toMatchObject({
+				created: 1,
+				synced: 0,
+				errored: 0,
+			});
+			expect(report.replacedKeys).toEqual(['checkout-redesign']);
+			expect(report.restoredKeys).toBeUndefined();
+			expect(report.legacyBucketingKeys).toBeUndefined();
+			expect(writes.map((w) => `${w.method} ${w.url}`)).toEqual([
+				...clearPaths.map((p) => `PUT ${p}`),
+				'POST /api/v2/feature-flags',
+				`PUT /api/v2/feature-flags/${FLAG_ID}/environments/dd-prod/allocations`,
+				`PUT /api/v2/feature-flags/${FLAG_ID}/environments/dd-staging/allocations`,
+				`POST /api/v2/feature-flags/${FLAG_ID}/environments/dd-prod/enable`,
+			]);
+			expect(writes[0].body).toEqual({ data: [] });
+			expect(writes[1].body).toEqual({ data: [] });
+			const attributes = (
+				writes[2].body as { data: { attributes: Record<string, unknown> } }
+			).data.attributes;
+			expect(attributes).toMatchObject({
+				key: 'checkout-redesign',
+				bucketing_mode: 'EPPO',
+				migration_metadata: { provider: 'eppo', source_id: '1' },
+				allocations: [
+					{ environment_id: 'dd-prod', ...expectedProdAllocations[0] },
+				],
+			});
+		});
+
+		it('previews the replacement in a dry run without writing', async () => {
+			mockLegacy();
+			const report = await run(true, eppoFlag(), true);
+
+			expect(report.failures).toEqual([]);
+			expect(report.summary.created).toBe(1);
+			expect(report.replacedKeys).toEqual(['checkout-redesign']);
+			expect(writes).toEqual([]);
+			const flagRequests = (report.requests ?? []).filter((r) =>
+				r.path.startsWith('/api/v2/feature-flags'),
+			);
+			expect(flagRequests.map((r) => `${r.method} ${r.path}`)).toEqual([
+				...clearPaths.map((p) => `PUT ${p}`),
+				'POST /api/v2/feature-flags',
+				'PUT /api/v2/feature-flags/checkout-redesign/environments/dd-prod/allocations?default_variant_key=control',
+				'PUT /api/v2/feature-flags/checkout-redesign/environments/dd-staging/allocations?default_variant_key=treatment',
+				'POST /api/v2/feature-flags/checkout-redesign/environments/dd-prod/enable',
+			]);
+			expect(flagRequests[0].body).toEqual([]);
+		});
+
+		it('replaces a flag whose key differs, using the Eppo key', async () => {
+			mockLegacy(eppoFlag(), { ...legacyAttributes(), key: 'original-key' });
+			const report = await run(false, eppoFlag(), true);
+
+			expect(report.failures).toEqual([]);
+			expect(report.replacedKeys).toEqual(['checkout-redesign']);
+			const create = writes.find((w) => w.url === '/api/v2/feature-flags');
+			expect(
+				(create?.body as { data: { attributes: { key: string } } }).data
+					.attributes.key,
+			).toBe('checkout-redesign');
+		});
+
+		it.each([
+			undefined,
+			false,
+		])('restores it with Datadog bucketing when replaceLegacyFlags=%s', async (replaceLegacyFlags) => {
+			mockLegacy();
+			const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+			const report = await run(false, eppoFlag(), replaceLegacyFlags);
+
+			expect(report.failures).toEqual([]);
+			expect(report.summary.synced).toBe(1);
+			expect(report.restoredKeys).toEqual(['checkout-redesign']);
+			expect(report.legacyBucketingKeys).toEqual(['checkout-redesign']);
+			expect(report.replacedKeys).toBeUndefined();
+			expect(writes[0].url).toBe(
+				`/api/v2/feature-flags/${LEGACY_ID}/unarchive`,
+			);
+			expect(writes.some((w) => w.url === '/api/v2/feature-flags')).toBe(false);
+			const hint = logSpy.mock.calls.some((args) =>
+				String(args[0]).includes('Pass --replace-legacy-flags'),
+			);
+			expect(hint).toBe(replaceLegacyFlags === undefined);
+		});
+
+		it.each([
+			201, 202, 403, 500,
+		])('creates no replacement if clearing targeting filters returns %s', async (status) => {
+			mockLegacy();
+			ddMock
+				.onPut(/.*/)
+				.reply(status, { errors: [{ detail: 'Clearing blocked' }] });
+			const report = await run(false, eppoFlag(), true);
+
+			expect(report.summary).toMatchObject({
+				created: 0,
+				synced: 0,
+				errored: 1,
+			});
+			expect(report.failures[0].error).toContain(
+				'Failed to clear the targeting filters of flag',
+			);
+			expect(report.failures[0].error).toContain('No replacement was created');
+			if (status === 201 || status === 202) {
+				expect(report.failures[0].error).toContain('requires approval');
+			}
+			expect(report.replacedKeys).toBeUndefined();
+			expect(ddMock.history.put.map((r) => r.url)).toEqual([
+				`${DD_BASE}${clearPaths[0]}`,
+			]);
+			expect(ddMock.history.post).toHaveLength(0);
+		});
+
+		it('reports cleared targeting filters when creating the replacement fails', async () => {
+			mockLegacy();
+			ddMock
+				.onPost(`${DD_BASE}/api/v2/feature-flags`)
+				.reply(500, { errors: [{ detail: 'Create failed' }] });
+			const report = await run(false, eppoFlag(), true);
+
+			expect(report.summary.errored).toBe(1);
+			expect(report.failures[0].error).toContain('Create failed');
+			expect(report.failures[0].error).toContain('were cleared in 2 env(s)');
+			expect(report.failures[0].error).not.toContain('This migration archived');
+			expect(report.replacedKeys).toBeUndefined();
+		});
+
+		function activeLegacyAttributes(): Record<string, unknown> {
+			return { ...legacyAttributes(), archived_at: null };
+		}
+
+		it('archives an active flag before replacing it', async () => {
+			mockLegacy(eppoFlag(), activeLegacyAttributes());
+			const report = await run(false, eppoFlag(), true);
+
+			expect(report.failures).toEqual([]);
+			expect(report.summary).toMatchObject({ created: 1, synced: 0 });
+			expect(report.replacedKeys).toEqual(['checkout-redesign']);
+			expect(report.legacyBucketingKeys).toBeUndefined();
+			expect(writes.map((w) => `${w.method} ${w.url}`)).toEqual([
+				`POST /api/v2/feature-flags/${LEGACY_ID}/archive`,
+				...clearPaths.map((p) => `PUT ${p}`),
+				'POST /api/v2/feature-flags',
+				`PUT /api/v2/feature-flags/${FLAG_ID}/environments/dd-prod/allocations`,
+				`PUT /api/v2/feature-flags/${FLAG_ID}/environments/dd-staging/allocations`,
+				`POST /api/v2/feature-flags/${FLAG_ID}/environments/dd-prod/enable`,
+			]);
+			expect(
+				(writes[3].body as { data: { attributes: Record<string, unknown> } })
+					.data.attributes,
+			).toMatchObject({ key: 'checkout-redesign', bucketing_mode: 'EPPO' });
+		});
+
+		it('previews archiving an active flag in a dry run', async () => {
+			mockLegacy(eppoFlag(), activeLegacyAttributes());
+			const report = await run(true, eppoFlag(), true);
+
+			expect(report.failures).toEqual([]);
+			expect(report.replacedKeys).toEqual(['checkout-redesign']);
+			expect(writes).toEqual([]);
+			expect(
+				(report.requests ?? [])
+					.filter((r) => r.path.startsWith('/api/v2/feature-flags'))
+					.slice(0, 4)
+					.map((r) => `${r.method} ${r.path}`),
+			).toEqual([
+				`POST /api/v2/feature-flags/${LEGACY_ID}/archive`,
+				...clearPaths.map((p) => `PUT ${p}`),
+				'POST /api/v2/feature-flags',
+			]);
+		});
+
+		it.each([
+			201, 202, 403, 500,
+		])('changes nothing if archiving an active flag returns %s', async (status) => {
+			mockLegacy(eppoFlag(), activeLegacyAttributes());
+			ddMock
+				.onPost(/.*/)
+				.reply(status, { errors: [{ detail: 'Archive blocked' }] });
+			const report = await run(false, eppoFlag(), true);
+
+			expect(report.summary).toMatchObject({ created: 0, errored: 1 });
+			expect(report.failures[0].error).toContain(
+				'Failed to archive flag "checkout-redesign" (legacy-flag) before replacing it',
+			);
+			expect(report.failures[0].error).toContain('The flag was not changed');
+			if (status === 201 || status === 202) {
+				expect(report.failures[0].error).toContain('requires approval');
+			}
+			expect(ddMock.history.post.map((r) => r.url)).toEqual([
+				`${DD_BASE}/api/v2/feature-flags/${LEGACY_ID}/archive`,
+			]);
+			expect(ddMock.history.put).toHaveLength(0);
+		});
+
+		it('reports that an active flag was archived when clearing fails', async () => {
+			mockLegacy(eppoFlag(), activeLegacyAttributes());
+			ddMock.onPut(/.*/).reply(201, {});
+			const report = await run(false, eppoFlag(), true);
+
+			expect(report.summary.errored).toBe(1);
+			const { error } = report.failures[0];
+			expect(error).toContain('requires approval');
+			expect(error).toContain('No replacement was created');
+			expect(error).toContain(
+				'This migration archived flag "checkout-redesign" (legacy-flag), so it serves no value until it is replaced.',
+			);
+			expect(error).not.toContain('were cleared');
+			expect(error).toContain('Re-run the migration');
+			expect(ddMock.history.post.map((r) => r.url)).toEqual([
+				`${DD_BASE}/api/v2/feature-flags/${LEGACY_ID}/archive`,
+			]);
+		});
+
+		it('reports archived and cleared state when creating the replacement of an active flag fails', async () => {
+			mockLegacy(eppoFlag(), activeLegacyAttributes());
+			ddMock
+				.onPost(`${DD_BASE}/api/v2/feature-flags`)
+				.reply(500, { errors: [{ detail: 'Create failed' }] });
+			const report = await run(false, eppoFlag(), true);
+
+			const { error } = report.failures[0];
+			expect(error).toContain('Create failed');
+			expect(error).toContain('This migration archived flag');
+			expect(error).toContain('were cleared in 2 env(s)');
+			expect(report.replacedKeys).toBeUndefined();
+		});
+
+		it.each([
+			undefined,
+			false,
+		])('keeps Datadog bucketing for an active flag when replaceLegacyFlags=%s', async (replaceLegacyFlags) => {
+			mockLegacy(eppoFlag(), activeLegacyAttributes());
+			const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+			const report = await run(false, eppoFlag(), replaceLegacyFlags);
+
+			expect(report.failures).toEqual([]);
+			expect(report.summary.synced).toBe(1);
+			expect(report.legacyBucketingKeys).toEqual(['checkout-redesign']);
+			expect(report.replacedKeys).toBeUndefined();
+			expect(writes.some((w) => w.url.endsWith('/archive'))).toBe(false);
+			expect(writes.some((w) => w.url === '/api/v2/feature-flags')).toBe(false);
+			const hint = logSpy.mock.calls.some((args) =>
+				String(args[0]).includes('Pass --replace-legacy-flags'),
+			);
+			expect(hint).toBe(replaceLegacyFlags === undefined);
+		});
+
+		it('still restores an archived EPPO flag', async () => {
+			mockSources(eppoFlag(), {
+				...legacyAttributes(),
+				bucketing_mode: 'EPPO',
+			});
+			const report = await run(false, eppoFlag(), true);
+
+			expect(report.failures).toEqual([]);
+			expect(report.restoredKeys).toEqual(['checkout-redesign']);
+			expect(report.replacedKeys).toBeUndefined();
 		});
 	});
 

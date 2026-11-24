@@ -183,6 +183,7 @@ async function main(): Promise<void> {
 				await runEppoMigration(ddApiKey, ddAppKey, ddSite, args.dryRun, {
 					doExport: args.doExport,
 					tagMode: args.tagMode,
+					replaceLegacyFlags: args.replaceLegacyFlags,
 					nonInteractive: {
 						envMap: ni.envMap,
 						flagKeys: ni.flagKeys,
@@ -207,6 +208,15 @@ async function main(): Promise<void> {
 	console.log();
 	console.log(chalk.bold('Migration: ') + chalk.green(providerLabel(provider)));
 	console.log();
+
+	if (provider !== 'eppo' && args.replaceLegacyFlags !== undefined) {
+		console.error(
+			chalk.red(
+				'\n--replace-legacy-flags is only supported for Eppo migrations.\n',
+			),
+		);
+		process.exit(1);
+	}
 
 	if (provider === 'datadog') {
 		if (args.datadogSite !== undefined) {
@@ -260,6 +270,7 @@ async function main(): Promise<void> {
 		await runEppoMigration(ddApiKey, ddAppKey, ddSite, args.dryRun, {
 			tagMode: args.tagMode,
 			doExport: args.doExport,
+			replaceLegacyFlags: args.replaceLegacyFlags,
 		});
 	}
 }

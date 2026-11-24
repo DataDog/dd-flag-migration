@@ -414,6 +414,34 @@ export async function unarchiveFeatureFlag(
 	}
 }
 
+export async function archiveFeatureFlag(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	site = 'datadoghq.com',
+): Promise<void> {
+	const response = await ddClient.post(
+		`${datadogBaseUrl(site)}/api/v2/feature-flags/${flagId}/archive`,
+		{},
+		{
+			headers: {
+				...ddHeaders(apiKey, appKey),
+				'Content-Type': 'application/json',
+			},
+		},
+	);
+	if (response.status === 201 || response.status === 202) {
+		throw new Error(
+			`Archiving Datadog flag "${flagId}" requires approval. Approve the archive in Datadog and re-run the migration.`,
+		);
+	}
+	if (response.status !== 200) {
+		throw new Error(
+			`Unexpected status ${response.status} when archiving Datadog flag "${flagId}".`,
+		);
+	}
+}
+
 export async function fetchFlagTags(
 	apiKey: string,
 	appKey: string,
@@ -1271,6 +1299,39 @@ export async function syncAllocationsForEnvironment(
 				: {}),
 		},
 	);
+}
+
+/**
+ * Remove every targeting filter of a flag in one environment. Targeting filter
+ * keys are unique per org even on archived flags, so this frees them for reuse.
+ */
+export async function clearAllocationsForEnvironment(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	environmentId: string,
+	site = 'datadoghq.com',
+): Promise<void> {
+	const response = await ddClient.put(
+		`${datadogBaseUrl(site)}/api/v2/feature-flags/${flagId}/environments/${environmentId}/allocations`,
+		{ data: [] },
+		{
+			headers: {
+				...ddHeaders(apiKey, appKey),
+				'Content-Type': 'application/vnd.api+json',
+			},
+		},
+	);
+	if (response.status === 201 || response.status === 202) {
+		throw new Error(
+			`Clearing the targeting filters of Datadog flag "${flagId}" in environment "${environmentId}" requires approval. Approve the change in Datadog and re-run the migration.`,
+		);
+	}
+	if (response.status !== 200) {
+		throw new Error(
+			`Unexpected status ${response.status} when clearing the targeting filters of Datadog flag "${flagId}" in environment "${environmentId}".`,
+		);
+	}
 }
 
 // ─── Restriction Policy ───────────────────────────────────────────────────────

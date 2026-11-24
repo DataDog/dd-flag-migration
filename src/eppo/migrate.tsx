@@ -21,6 +21,8 @@ import { spinner as createSpinner } from '../components/Spinner.js';
 import { formatVariantLabel } from '../components/VariantCounts.js';
 import {
 	applyVariantDeletes,
+	archiveFeatureFlag,
+	clearAllocationsForEnvironment,
 	createFeatureFlag,
 	disableFeatureFlagEnvironmentWithOutcome,
 	enableFeatureFlagEnvironmentWithOutcome,
@@ -129,6 +131,24 @@ function archivedEppoMatches(
 	);
 }
 
+/**
+ * The Datadog flag that `flag` matches if it was migrated before
+ * Eppo-compatible bucketing, active or archived. Its bucketing can't change,
+ * so switching to Eppo bucketing means replacing it with a new `EPPO` flag.
+ */
+function legacyFlagFor(
+	flag: EppoFlag,
+	datadogKeys: Map<string, string>,
+	datadogFlags: DatadogFlagEntry[],
+): DatadogFlagEntry | undefined {
+	const id = datadogIdForEppoFlag(flag, datadogKeys);
+	if (id === undefined) return undefined;
+	const existing = datadogFlags.find((entry) => entry.id === id);
+	return existing !== undefined && classifyExistingFlag(existing) === 'legacy'
+		? existing
+		: undefined;
+}
+
 /** Active matches take precedence; archived flags require a unique source ID match. */
 function indexEppoMigrationFlagKeys(
 	flags: EppoFlag[],
@@ -149,18 +169,27 @@ function indexEppoMigrationFlagKeys(
 
 function flagLabel(
 	flag: EppoFlag,
-	inDatadog: boolean,
-	archived: boolean,
+	datadogKeys: Map<string, string>,
+	datadogFlags: DatadogFlagEntry[],
+	replaceLegacyFlags: boolean | undefined,
 ): string {
-	const indicator = inDatadog ? chalk.green('✓') : ' ';
-	const name = flag.name;
+	const id = datadogIdForEppoFlag(flag, datadogKeys);
+	const existing = datadogFlags.find((entry) => entry.id === id);
+	const indicator = id !== undefined ? chalk.green('✓') : ' ';
 	const key = chalk.gray(`(${flag.key})`);
-	const badge = archived
-		? `  ${chalk.bgYellow.black(' Archived — will restore ')}`
-		: inDatadog
-			? `  ${chalk.bgGreen.black(' In Datadog ')}`
-			: '';
-	return `${indicator}  ${name}  ${key}${badge}`;
+	let badge = id !== undefined ? chalk.bgGreen.black(' In Datadog ') : '';
+	if (existing !== undefined) {
+		const state = existing.archived_at ? 'Archived' : 'In Datadog';
+		const legacy = classifyExistingFlag(existing) === 'legacy';
+		if (legacy && replaceLegacyFlags === true) {
+			badge = chalk.bgYellow.black(` ${state} — will replace `);
+		} else if (legacy && replaceLegacyFlags === undefined) {
+			badge = chalk.bgYellow.black(` ${state} — legacy bucketing `);
+		} else if (existing.archived_at) {
+			badge = chalk.bgYellow.black(' Archived — will restore ');
+		}
+	}
+	return `${indicator}  ${flag.name}  ${key}${badge ? `  ${badge}` : ''}`;
 }
 
 // ─── Prompt Steps ─────────────────────────────────────────────────────────────
@@ -283,6 +312,7 @@ export async function selectFlags(
 	previouslySelected: EppoFlag[] = [],
 	datadogFlags: DatadogFlagEntry[] = [],
 	message = 'Select flags to migrate to Datadog:',
+	replaceLegacyFlags?: boolean,
 ): Promise<EppoFlag[] | null> {
 	const selectedEnvIds = new Set(selectedEnvs.map((e) => e.id));
 	const visibleFlags =
@@ -325,15 +355,7 @@ export async function selectFlags(
 	return filterableCheckbox<EppoFlag>({
 		message,
 		choices: sortedFlags.map((flag) => ({
-			name: flagLabel(
-				flag,
-				datadogIdForEppoFlag(flag, datadogKeys) !== undefined,
-				datadogFlags.some(
-					(existing) =>
-						existing.id === datadogIdForEppoFlag(flag, datadogKeys) &&
-						!!existing.archived_at,
-				),
-			),
+			name: flagLabel(flag, datadogKeys, datadogFlags, replaceLegacyFlags),
 			value: flag,
 			checked: previousKeys.has(flag.key),
 			migrated: datadogIdForEppoFlag(flag, datadogKeys) !== undefined,
@@ -366,6 +388,55 @@ const EPPO_FILTER_CATEGORIES: FilterCategory[] = [
 ];
 
 type ConfirmAction = 'migrate' | 'select-more' | 'cancel';
+
+/**
+ * Ask whether flags migrated before Eppo-compatible bucketing keep Datadog
+ * bucketing (false) or are replaced by new Eppo-bucketed flags (true).
+ */
+async function selectLegacyFlagHandling(
+	legacyFlags: DatadogFlagEntry[],
+): Promise<boolean> {
+	const activeCount = legacyFlags.filter((flag) => !flag.archived_at).length;
+	console.log();
+	console.log(
+		chalk.yellow(
+			`  ${legacyFlags.length} selected flag(s) were migrated to Datadog before Eppo-compatible bucketing and use Datadog bucketing, so subjects in splits and partial rollouts are not assigned as in Eppo.`,
+		),
+	);
+	console.log(
+		chalk.gray(
+			'  Keeping Datadog bucketing syncs these flags as before, restoring any that are archived. Subject assignments in Datadog stay the same.',
+		),
+	);
+	console.log(
+		chalk.gray(
+			'  Switching replaces each flag with a new Eppo-bucketed flag that has the same key and a new Datadog flag ID. The old flags are archived, and their targeting filters are removed so their keys can be reused.',
+		),
+	);
+	if (activeCount > 0) {
+		console.log(
+			chalk.yellow(
+				`  ${activeCount} of these flag(s) are active. Switching archives them first: they serve no value until their replacements are enabled, their running experiments are cancelled, and subjects Datadog already serves may be assigned differently.`,
+			),
+		);
+	}
+	console.log();
+	return select<boolean>({
+		message: 'How should these flags be migrated?',
+		choices: [
+			{
+				name: 'Keep Datadog bucketing',
+				value: false,
+				short: 'Keep Datadog bucketing',
+			},
+			{
+				name: 'Switch to Eppo-compatible bucketing — replace the flags',
+				value: true,
+				short: 'Switch to Eppo-compatible bucketing',
+			},
+		],
+	});
+}
 
 /** Prompt the user to select a Datadog team handle for an unmatched Eppo team. */
 async function promptForTeamMapping(
@@ -520,6 +591,7 @@ async function confirmMigration(
 	nonInteractive = false,
 	doExport?: boolean,
 	configuredTagMode?: TagSyncMode,
+	configuredReplaceLegacyFlags?: boolean,
 ): Promise<ConfirmAction> {
 	if (flags.length === 0) {
 		console.log(chalk.yellow('\nNo flags selected — nothing to migrate.'));
@@ -570,12 +642,34 @@ async function confirmMigration(
 		}
 	}
 
+	const legacyFlags = flags.flatMap((flag) => {
+		const legacy = legacyFlagFor(flag, datadogKeys, datadogFlags);
+		return legacy ? [legacy] : [];
+	});
+	// Omitted in non-interactive mode, these flags keep Datadog bucketing.
+	let replaceLegacyFlags = configuredReplaceLegacyFlags ?? false;
+	if (configuredReplaceLegacyFlags === undefined && legacyFlags.length > 0) {
+		if (nonInteractive) {
+			console.log(
+				chalk.yellow(
+					`  ⚠ ${legacyFlags.length} flag(s) were migrated before Eppo-compatible bucketing and keep Datadog bucketing. Pass --replace-legacy-flags to replace them with Eppo-bucketed flags.`,
+				),
+			);
+		} else {
+			replaceLegacyFlags = await selectLegacyFlagHandling(legacyFlags);
+		}
+	}
+
 	let tagSyncMode: TagSyncMode =
 		configuredTagMode ?? (nonInteractive ? 'additive' : 'replace');
 	if (
 		configuredTagMode === undefined &&
 		!nonInteractive &&
-		flags.some((flag) => datadogIdForEppoFlag(flag, datadogKeys) !== undefined)
+		flags.some(
+			(flag) =>
+				datadogIdForEppoFlag(flag, datadogKeys) !== undefined &&
+				!(replaceLegacyFlags && legacyFlagFor(flag, datadogKeys, datadogFlags)),
+		)
 	) {
 		tagSyncMode = await selectMigrationTagMode();
 	}
@@ -670,6 +764,7 @@ async function confirmMigration(
 	const jsonArrayWrappedKeys: string[] = [];
 	const legacyBucketingKeys: string[] = [];
 	const restoredKeys: string[] = [];
+	const replacedKeys: string[] = [];
 	let runner: MigrationRunnerHandle | undefined;
 
 	const environmentMapping: MigrationEnvironmentMapping[] = [];
@@ -693,7 +788,11 @@ async function confirmMigration(
 		else process.stderr.write('\n');
 		if (
 			!dryRun &&
-			(created > 0 || synced > 0 || errored > 0 || restoredKeys.length > 0)
+			(created > 0 ||
+				synced > 0 ||
+				errored > 0 ||
+				restoredKeys.length > 0 ||
+				replacedKeys.length > 0)
 		) {
 			console.log(
 				chalk.yellow('\n  Migration interrupted — saving partial results…'),
@@ -718,6 +817,7 @@ async function confirmMigration(
 				disableApprovalRequests,
 				skippedFlags: skippedFlags.length > 0 ? skippedFlags : undefined,
 				restoredKeys: restoredKeys.length > 0 ? restoredKeys : undefined,
+				replacedKeys: replacedKeys.length > 0 ? replacedKeys : undefined,
 				flags,
 				environmentMapping,
 			};
@@ -820,8 +920,8 @@ async function confirmMigration(
 					jsonArrayWrappedKeys.push(flag.key);
 				}
 
-				const existingFlagId = datadogIdForEppoFlag(flag, datadogKeys);
-				if (existingFlagId === undefined) {
+				const matchedFlagId = datadogIdForEppoFlag(flag, datadogKeys);
+				if (matchedFlagId === undefined) {
 					const archivedMatches = archivedEppoMatches(flag, datadogFlags);
 					if (archivedMatches.length > 1) {
 						doFail(
@@ -831,9 +931,19 @@ async function confirmMigration(
 						continue;
 					}
 				}
-				const existingFlag = datadogFlags.find(
-					(existing) => existing.id === existingFlagId,
+				const matchedFlag = datadogFlags.find(
+					(existing) => existing.id === matchedFlagId,
 				);
+				// A replaced legacy flag is archived (if active) and keeps no targeting
+				// filters; a new EPPO flag is created in its place.
+				const replacedFlag =
+					replaceLegacyFlags &&
+					matchedFlag !== undefined &&
+					classifyExistingFlag(matchedFlag) === 'legacy'
+						? matchedFlag
+						: undefined;
+				const existingFlagId = replacedFlag ? undefined : matchedFlagId;
+				const existingFlag = replacedFlag ? undefined : matchedFlag;
 				const existingKind =
 					existingFlag !== undefined
 						? classifyExistingFlag(existingFlag)
@@ -887,7 +997,7 @@ async function confirmMigration(
 				if (bucketingMode === 'DATADOG') {
 					legacyBucketingKeys.push(flag.key);
 					activeRunner.printMessage(
-						`⚠ ${chalk.cyan(flag.key)} was migrated before Eppo-compatible bucketing — it keeps Datadog bucketing, so subjects in splits and partial rollouts are not assigned as in Eppo`,
+						`⚠ ${chalk.cyan(flag.key)} was migrated before Eppo-compatible bucketing — it keeps Datadog bucketing, so subjects in splits and partial rollouts are not assigned as in Eppo. To switch it to Eppo-compatible bucketing, re-migrate it and choose to replace it (--replace-legacy-flags in non-interactive mode)`,
 					);
 					activeRunner.beginFlag(flag.key);
 				}
@@ -1446,6 +1556,100 @@ async function confirmMigration(
 						return dvk !== undefined ? [{ ddEnv, dvk }] : [];
 					});
 
+					// The flag being replaced must be archived, so the new flag can take
+					// its key. Targeting filter keys are unique per org, including on
+					// archived flags, and the new flag reuses the Eppo allocation keys,
+					// so the old flag's targeting filters are cleared first.
+					let archivedByRun = false;
+					let clearedEnvCount = 0;
+					const replacementState = (): string => {
+						if (!replacedFlag) return '';
+						const notes: string[] = [];
+						if (archivedByRun) {
+							notes.push(
+								`This migration archived flag "${replacedFlag.key}" (${replacedFlag.id}), so it serves no value until it is replaced.`,
+							);
+						}
+						if (clearedEnvCount > 0) {
+							notes.push(
+								`The targeting filters of flag "${replacedFlag.key}" (${replacedFlag.id}) were cleared in ${clearedEnvCount} env(s).`,
+							);
+						}
+						return notes.length > 0
+							? ` ${notes.join(' ')} Re-run the migration to create its replacement.`
+							: '';
+					};
+					if (replacedFlag) {
+						const wasActive = !replacedFlag.archived_at;
+						if (wasActive) {
+							if (dryRun) {
+								dryRunRequests.push({
+									method: 'POST',
+									path: `/api/v2/feature-flags/${replacedFlag.id}/archive`,
+									body: {},
+								});
+							} else {
+								try {
+									await archiveFeatureFlag(
+										ddApiKey,
+										ddAppKey,
+										replacedFlag.id,
+										site,
+									);
+								} catch (err) {
+									throw new Error(
+										`Failed to archive flag "${replacedFlag.key}" (${replacedFlag.id}) before replacing it: ${formatAxiosError(err)} The flag was not changed and no replacement was created.`,
+									);
+								}
+								archivedByRun = true;
+								replacedFlag.archived_at = new Date().toISOString();
+							}
+						}
+						const { allocationKeyToIdByEnv } = await fetchFlagDetail(
+							ddApiKey,
+							ddAppKey,
+							replacedFlag.id,
+							site,
+						);
+						const envIdsToClear = [...allocationKeyToIdByEnv]
+							.filter(([, allocationIds]) => allocationIds.size > 0)
+							.map(([envId]) => envId);
+						for (const envId of envIdsToClear) {
+							if (dryRun) {
+								dryRunRequests.push({
+									method: 'PUT',
+									path: `/api/v2/feature-flags/${replacedFlag.id}/environments/${envId}/allocations`,
+									body: [],
+								});
+							} else {
+								try {
+									await clearAllocationsForEnvironment(
+										ddApiKey,
+										ddAppKey,
+										replacedFlag.id,
+										envId,
+										site,
+									);
+								} catch (err) {
+									throw new Error(
+										`Failed to clear the targeting filters of flag "${replacedFlag.key}" (${replacedFlag.id}): ${formatAxiosError(err)} No replacement was created.${replacementState()}`,
+									);
+								}
+								clearedEnvCount++;
+							}
+						}
+						const archiveLabel = wasActive
+							? `${dryRun ? 'would archive it and clear' : 'archived it and cleared'}`
+							: `${dryRun ? 'would clear' : 'cleared'}`;
+						activeRunner.printMessage(
+							`${dryRun ? '[dry run] Would replace' : 'Replacing'} ${wasActive ? '' : 'archived '}flag ${chalk.cyan(replacedFlag.key)} (${replacedFlag.id}) with an Eppo-bucketed flag — ${archiveLabel} its targeting filters in ${envIdsToClear.length} env(s)`,
+						);
+						activeRunner.beginFlag(flag.key);
+					}
+					const replacementLabel = replacedFlag
+						? `, replaces flag ${replacedFlag.id}`
+						: '';
+
 					if (dryRun) {
 						dryRunRequests.push({
 							method: 'POST',
@@ -1472,9 +1676,10 @@ async function confirmMigration(
 							envsToEnable.length > 0
 								? `, would enable in ${envsToEnable.map((e) => e.name).join(', ')}`
 								: '';
+						if (replacedFlag) replacedKeys.push(flag.key);
 						doCreate(
 							`${chalk.dim('[dry run]')} Would create ${chalk.cyan(flag.key)} ` +
-								`(${allFilterLabel}${allRuleLabel}${rolloutLabel}${enableLabel})`,
+								`(${allFilterLabel}${allRuleLabel}${rolloutLabel}${enableLabel}${replacementLabel})`,
 						);
 					} else {
 						try {
@@ -1526,12 +1731,13 @@ async function confirmMigration(
 							totalEnabled += enabledCount;
 							const enableLabel =
 								enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
+							if (replacedFlag) replacedKeys.push(flag.key);
 							doCreate(
-								`${chalk.green('✓')} Created ${chalk.cyan(flag.key)} (${allFilterLabel}${allRuleLabel}${rolloutLabel}${enableLabel})`,
+								`${chalk.green('✓')} Created ${chalk.cyan(flag.key)} (${allFilterLabel}${allRuleLabel}${rolloutLabel}${enableLabel}${replacementLabel})`,
 							);
 						} catch (err) {
 							const error = formatAxiosError(err);
-							doFail(flag.key, error);
+							doFail(flag.key, `${error}${replacementState()}`);
 						}
 					}
 				}
@@ -1581,6 +1787,7 @@ async function confirmMigration(
 			legacyBucketingKeys:
 				legacyBucketingKeys.length > 0 ? legacyBucketingKeys : undefined,
 			restoredKeys: restoredKeys.length > 0 ? restoredKeys : undefined,
+			replacedKeys: replacedKeys.length > 0 ? replacedKeys : undefined,
 			flags,
 			environmentMapping,
 			requests: dryRunRequests,
@@ -1618,6 +1825,7 @@ async function confirmMigration(
 			legacyBucketingKeys:
 				legacyBucketingKeys.length > 0 ? legacyBucketingKeys : undefined,
 			restoredKeys: restoredKeys.length > 0 ? restoredKeys : undefined,
+			replacedKeys: replacedKeys.length > 0 ? replacedKeys : undefined,
 			flags,
 			environmentMapping,
 		};
@@ -1665,6 +1873,8 @@ export interface EppoNonInteractiveOptions {
 
 export interface RunEppoMigrationOptions {
 	tagMode?: TagSyncMode;
+	/** See MigrateArgs.replaceLegacyFlags. */
+	replaceLegacyFlags?: boolean;
 	nonInteractive?: EppoNonInteractiveOptions;
 	doExport?: boolean;
 }
@@ -1690,6 +1900,7 @@ export async function runEppoMigration(
 			options.nonInteractive,
 			options.doExport ?? false,
 			options.tagMode,
+			options.replaceLegacyFlags,
 		);
 		return;
 	}
@@ -1788,6 +1999,8 @@ export async function runEppoMigration(
 					selectedEnvs,
 					prevSelectedFlags,
 					datadogFlags,
+					undefined,
+					options?.replaceLegacyFlags,
 				);
 				if (flagResult === null) break; // escaped → back to linking
 
@@ -1808,6 +2021,7 @@ export async function runEppoMigration(
 					false,
 					options?.doExport,
 					options?.tagMode,
+					options?.replaceLegacyFlags,
 				);
 				if (action === 'cancel') break outer;
 				if (action === 'migrate') break outer;
@@ -1908,6 +2122,7 @@ async function runEppoMigrationNonInteractive(
 	ni: EppoNonInteractiveOptions,
 	doExport: boolean,
 	tagMode?: TagSyncMode,
+	replaceLegacyFlags?: boolean,
 ): Promise<void> {
 	console.log();
 	console.log(chalk.gray('  Running in non-interactive mode'));
@@ -1978,5 +2193,6 @@ async function runEppoMigrationNonInteractive(
 		true,
 		doExport,
 		tagMode,
+		replaceLegacyFlags,
 	);
 }

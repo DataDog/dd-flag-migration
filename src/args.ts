@@ -28,6 +28,13 @@ export interface MigrateArgs {
 	interactive: boolean | undefined;
 	doExport: boolean | undefined;
 	distributionChannelMode: DistributionChannelMode | undefined;
+	/**
+	 * Eppo only. Whether flags migrated before Eppo-compatible bucketing are
+	 * replaced by new Eppo-bucketed flags instead of keeping Datadog bucketing.
+	 * Undefined prompts interactively and keeps Datadog bucketing in
+	 * non-interactive mode.
+	 */
+	replaceLegacyFlags: boolean | undefined;
 	nonInteractive?: NonInteractiveArgs;
 }
 
@@ -124,6 +131,7 @@ const FLAGS: FlagDef[] = [
 	{ name: '--feature-flag', takesValue: true },
 	{ name: '--distribution-channel', takesValue: true },
 	{ name: '--tag-mode', takesValue: true },
+	{ name: '--replace-legacy-flags', takesValue: false },
 ];
 
 /**
@@ -139,6 +147,7 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 	let projectKey: string | undefined;
 	let distributionChannelMode: DistributionChannelMode | undefined;
 	let tagMode: TagMode | undefined;
+	let replaceLegacyFlags: boolean | undefined;
 	const envMap: Array<[string, string]> = [];
 	const flagKeys: string[] = [];
 
@@ -219,6 +228,9 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 			case '--tag-mode':
 				tagMode = normalizeTagMode(value as string);
 				break;
+			case '--replace-legacy-flags':
+				replaceLegacyFlags = parseBool(value as string, name);
+				break;
 			case '--distribution-channel':
 				distributionChannelMode = normalizeDistributionChannelMode(
 					value as string,
@@ -251,6 +263,11 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 				'--distribution-channel is only supported for LaunchDarkly migrations',
 			);
 		}
+		if (provider !== 'eppo' && replaceLegacyFlags !== undefined) {
+			throw new ArgParseError(
+				'--replace-legacy-flags is only supported for Eppo migrations',
+			);
+		}
 		if (provider === 'datadog' && projectKey !== undefined) {
 			throw new ArgParseError(
 				'--project is only supported for LaunchDarkly migrations',
@@ -268,6 +285,7 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 			doExport,
 			distributionChannelMode,
 			tagMode,
+			replaceLegacyFlags,
 			nonInteractive: {
 				provider,
 				projectKey,
@@ -284,6 +302,7 @@ export function parseMigrateArgs(argv: string[]): MigrateArgs {
 		doExport,
 		distributionChannelMode,
 		tagMode,
+		replaceLegacyFlags,
 	};
 }
 

@@ -8,7 +8,35 @@ describe('parseMigrateArgs', () => {
 		expect(args.dryRun).toBeUndefined();
 		expect(args.doExport).toBeUndefined();
 		expect(args.distributionChannelMode).toBeUndefined();
+		expect(args.replaceLegacyFlags).toBeUndefined();
 		expect(args.nonInteractive).toBeUndefined();
+	});
+
+	it('accepts --replace-legacy-flags for non-interactive Eppo migrations', () => {
+		const args = parseMigrateArgs([
+			'--interactive=false',
+			'--provider=eppo',
+			'--env-map=prod,prod',
+			'--feature-flag=foo',
+			'--replace-legacy-flags',
+		]);
+		expect(args.replaceLegacyFlags).toBe(true);
+	});
+
+	it.each([
+		['launchdarkly', ['--project=my-ld']],
+		['datadog', []],
+	])('rejects --replace-legacy-flags for %s', (provider, extra) => {
+		expect(() =>
+			parseMigrateArgs([
+				'--interactive=false',
+				`--provider=${provider}`,
+				...extra,
+				'--env-map=prod,prod',
+				'--feature-flag=foo',
+				'--replace-legacy-flags=false',
+			]),
+		).toThrow(/--replace-legacy-flags is only supported for Eppo/);
 	});
 
 	it('parses --dry-run and --datadog-site (equals form)', () => {
@@ -299,6 +327,7 @@ describe.each([
 	['--dry-run', 'dryRun'],
 	['--export', 'doExport'],
 	['--interactive', 'interactive'],
+	['--replace-legacy-flags', 'replaceLegacyFlags'],
 ] as const)('parseMigrateArgs boolean option %s', (flag, field) => {
 	const base = ['--provider=eppo', '--env-map=p,p', '--feature-flag=x'];
 
