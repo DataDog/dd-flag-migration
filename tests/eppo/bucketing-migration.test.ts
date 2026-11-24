@@ -646,16 +646,23 @@ describe('Eppo migration with Eppo-compatible bucketing', () => {
 			};
 		}
 
+		const legacyDetailUrl = `${DD_BASE}/api/v2/feature-flags/${LEGACY_ID}`;
+		const legacyPolicyUrl = `${DD_BASE}/api/v2/restriction_policy/feature-flag:${LEGACY_ID}`;
+
 		function mockLegacy(
 			flag = eppoFlag(),
 			attributes = legacyAttributes(),
+			detailOverrides: Record<string, unknown> = {},
 		): void {
 			mockSources(flag, [{ id: LEGACY_ID, attributes }]);
-			ddMock.onGet(`${DD_BASE}/api/v2/feature-flags/${LEGACY_ID}`).reply(200, {
+			ddMock.onGet(legacyPolicyUrl).reply(404);
+			ddMock.onGet(legacyDetailUrl).reply(200, {
 				data: {
 					id: LEGACY_ID,
 					type: 'feature-flags',
 					attributes: {
+						...attributes,
+						require_approval: false,
 						variants: migratedVariants,
 						feature_flag_environments: [
 							{
@@ -676,6 +683,7 @@ describe('Eppo migration with Eppo-compatible bucketing', () => {
 								allocations: [{ id: 'legacy-alloc-2', key: 'qa-alloc' }],
 							},
 						],
+						...detailOverrides,
 					},
 				},
 			});
@@ -824,8 +832,165 @@ describe('Eppo migration with Eppo-compatible bucketing', () => {
 			return { ...legacyAttributes(), archived_at: null };
 		}
 
-		it('archives an active flag before replacing it', async () => {
+		it.each([
+			[false, 'dd-unmapped'],
+			[true, 'dd-unmapped'],
+			[false, 'dd-staging'],
+		] as const)('blocks a replacement (dryRun=%s) that would leave %s offline', async (dryRun, environmentId) => {
+			mockLegacy(eppoFlag(), activeLegacyAttributes(), {
+				feature_flag_environments: [
+					{
+						environment_id: environmentId,
+						status: 'ENABLED',
+						allocations: null,
+					},
+				],
+			});
+			const report = await run(dryRun, eppoFlag(), true);
+
+			expect(report.failures[0].error).toContain(
+				`replacement would not enable (${environmentId})`,
+			);
+			expect(ddMock.history.post).toHaveLength(0);
+			expect(ddMock.history.put).toHaveLength(0);
+			expect(report.requests ?? []).toHaveLength(0);
+		});
+
+		it.each([
+			true,
+			undefined,
+		])('blocks replacement if require_approval is %s', async (requireApproval) => {
+			mockLegacy(eppoFlag(), activeLegacyAttributes(), {
+				require_approval: requireApproval,
+			});
+			const report = await run(false, eppoFlag(), true);
+
+			expect(report.failures[0].error).toContain(
+				requireApproval
+					? 'requires approval for changes'
+					: 'replacement preflight',
+			);
+			expect(ddMock.history.post).toHaveLength(0);
+			expect(ddMock.history.put).toHaveLength(0);
+		});
+
+		it('blocks replacement of an archived flag with a restriction policy', async () => {
+			mockLegacy();
+			ddMock.onGet(legacyPolicyUrl).reply(200, {
+				data: {
+					attributes: {
+						bindings: [{ relation: 'editor', principals: ['team:editors'] }],
+					},
+				},
+			});
+			const report = await run(false, eppoFlag(), true);
+
+			expect(report.failures[0].error).toContain('has a restriction policy');
+			expect(ddMock.history.post).toHaveLength(0);
+			expect(ddMock.history.put).toHaveLength(0);
+		});
+
+		it.each([
+			200, 403,
+		])('does not archive when the policy cannot be verified (HTTP %s)', async (status) => {
 			mockLegacy(eppoFlag(), activeLegacyAttributes());
+			ddMock
+				.onGet(legacyPolicyUrl)
+				.reply(status, { errors: [{ detail: 'Policy unavailable' }] });
+			const report = await run(false, eppoFlag(), true);
+
+			expect(report.failures[0].error).toContain(
+				status === 200 ? 'missing bindings' : 'Policy unavailable',
+			);
+			expect(ddMock.history.post).toHaveLength(0);
+			expect(ddMock.history.put).toHaveLength(0);
+		});
+
+		it.each([
+			'2',
+			undefined,
+		])('does not replace a same-key flag with Eppo source ID %s', async (sourceId) => {
+			mockLegacy(eppoFlag(), {
+				...activeLegacyAttributes(),
+				migration_metadata: { provider: 'eppo', source_id: sourceId },
+			});
+			const report = await run(false, eppoFlag(), true);
+
+			expect(report.failures[0].error).toContain(
+				'does not have the matching Eppo source ID',
+			);
+			expect(ddMock.history.post).toHaveLength(0);
+			expect(ddMock.history.put).toHaveLength(0);
+		});
+
+		it('does not replace an alias match when another active flag owns the replacement key', async () => {
+			mockSources(eppoFlag(), [
+				{
+					id: FLAG_ID,
+					attributes: { key: 'checkout-redesign', name: 'Native flag' },
+				},
+				{
+					id: LEGACY_ID,
+					attributes: {
+						...activeLegacyAttributes(),
+						key: 'original-key',
+						migration_metadata: {
+							provider: 'eppo',
+							source_id: '1',
+							source_key: 'checkout-redesign',
+						},
+					},
+				},
+			]);
+			const report = await run(false, eppoFlag(), true);
+
+			expect(report.failures[0].error).toContain(
+				'already uses the replacement key or Eppo source ID',
+			);
+			expect(ddMock.history.post).toHaveLength(0);
+			expect(ddMock.history.put).toHaveLength(0);
+		});
+
+		it('leaves an active flag unchanged if reading cleanup details fails', async () => {
+			mockLegacy(eppoFlag(), activeLegacyAttributes());
+			ddMock
+				.onGet(legacyDetailUrl)
+				.reply(500, { errors: [{ detail: 'Flag detail unavailable' }] });
+			const report = await run(false, eppoFlag(), true);
+
+			expect(report.failures[0].error).toContain('Flag detail unavailable');
+			expect(ddMock.history.post).toHaveLength(0);
+			expect(ddMock.history.put).toHaveLength(0);
+		});
+
+		it('does not archive if the source ID no longer matches in the flag detail', async () => {
+			mockLegacy(eppoFlag(), activeLegacyAttributes(), {
+				migration_metadata: { provider: 'eppo', source_id: '2' },
+			});
+			const report = await run(false, eppoFlag(), true);
+
+			expect(report.failures[0].error).toContain(
+				'no longer matches the expected key and Eppo source ID',
+			);
+			expect(ddMock.history.post).toHaveLength(0);
+			expect(ddMock.history.put).toHaveLength(0);
+		});
+
+		it('archives an active flag before replacing it', async () => {
+			mockLegacy(eppoFlag(), activeLegacyAttributes(), {
+				feature_flag_environments: [
+					{
+						environment_id: 'dd-prod',
+						status: 'ENABLED',
+						allocations: [{ id: 'legacy-alloc-1', key: 'experiment-alloc' }],
+					},
+					{
+						environment_id: 'dd-unmapped',
+						status: 'DISABLED',
+						allocations: [{ id: 'legacy-alloc-2', key: 'qa-alloc' }],
+					},
+				],
+			});
 			const report = await run(false, eppoFlag(), true);
 
 			expect(report.failures).toEqual([]);
@@ -867,7 +1032,7 @@ describe('Eppo migration with Eppo-compatible bucketing', () => {
 
 		it.each([
 			201, 202, 403, 500,
-		])('changes nothing if archiving an active flag returns %s', async (status) => {
+		])('does not proceed if archiving an active flag returns %s', async (status) => {
 			mockLegacy(eppoFlag(), activeLegacyAttributes());
 			ddMock
 				.onPost(/.*/)
@@ -876,9 +1041,11 @@ describe('Eppo migration with Eppo-compatible bucketing', () => {
 
 			expect(report.summary).toMatchObject({ created: 0, errored: 1 });
 			expect(report.failures[0].error).toContain(
-				'Failed to archive flag "checkout-redesign" (legacy-flag) before replacing it',
+				'Failed to confirm the archive of flag "checkout-redesign" (legacy-flag)',
 			);
-			expect(report.failures[0].error).toContain('The flag was not changed');
+			expect(report.failures[0].error).toContain(
+				"Verify the old flag's archive status",
+			);
 			if (status === 201 || status === 202) {
 				expect(report.failures[0].error).toContain('requires approval');
 			}
@@ -921,6 +1088,28 @@ describe('Eppo migration with Eppo-compatible bucketing', () => {
 			expect(report.replacedKeys).toBeUndefined();
 		});
 
+		it('reports a created replacement when a later default update fails', async () => {
+			mockLegacy(eppoFlag(), activeLegacyAttributes());
+			ddMock
+				.onPut(/.*/)
+				.reply((config) =>
+					config.url?.startsWith(`${legacyDetailUrl}/`)
+						? [200, {}]
+						: [500, { errors: [{ detail: 'Default update failed' }] }],
+				);
+			const report = await run(false, eppoFlag(), true);
+
+			const { error } = report.failures[0];
+			expect(error).toContain('Default update failed');
+			expect(error).toContain('This migration archived flag');
+			expect(error).toContain(`The replacement (${FLAG_ID}) was created`);
+			expect(error).toContain('Re-run the migration to finish syncing it');
+			expect(report.replacedKeys).toEqual(['checkout-redesign']);
+			expect(
+				ddMock.history.post.some((request) => request.url?.endsWith('/enable')),
+			).toBe(false);
+		});
+
 		it.each([
 			undefined,
 			false,
@@ -941,16 +1130,20 @@ describe('Eppo migration with Eppo-compatible bucketing', () => {
 			expect(hint).toBe(replaceLegacyFlags === undefined);
 		});
 
-		it('still restores an archived EPPO flag', async () => {
-			mockSources(eppoFlag(), {
-				...legacyAttributes(),
-				bucketing_mode: 'EPPO',
-			});
+		it('restores an archived EPPO replacement instead of its legacy predecessor', async () => {
+			mockSources(eppoFlag(), [
+				{ id: LEGACY_ID, attributes: legacyAttributes() },
+				{
+					id: FLAG_ID,
+					attributes: { ...legacyAttributes(), bucketing_mode: 'EPPO' },
+				},
+			]);
 			const report = await run(false, eppoFlag(), true);
 
 			expect(report.failures).toEqual([]);
 			expect(report.restoredKeys).toEqual(['checkout-redesign']);
 			expect(report.replacedKeys).toBeUndefined();
+			expect(writes[0].url).toBe(`/api/v2/feature-flags/${FLAG_ID}/unarchive`);
 		});
 	});
 

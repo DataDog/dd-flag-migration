@@ -991,6 +991,74 @@ export async function fetchFlagDetail(
 	};
 }
 
+/** Read and validate the state needed before a destructive flag replacement. */
+export async function fetchFlagReplacementDetails(
+	apiKey: string,
+	appKey: string,
+	flagId: string,
+	site = 'datadoghq.com',
+): Promise<{
+	key: string;
+	eppoSourceId: string | undefined;
+	archived: boolean;
+	requiresApproval: boolean;
+	enabledEnvironmentIds: string[];
+	environmentIdsWithTargeting: string[];
+}> {
+	const response = await ddClient.get<{ data: { attributes: unknown } }>(
+		`${datadogBaseUrl(site)}/api/v2/feature-flags/${flagId}`,
+		{ headers: ddHeaders(apiKey, appKey) },
+	);
+	const attributes = response.data.data?.attributes;
+	if (
+		!isRecord(attributes) ||
+		typeof attributes.key !== 'string' ||
+		typeof attributes.require_approval !== 'boolean' ||
+		(attributes.archived_at != null &&
+			typeof attributes.archived_at !== 'string') ||
+		!Array.isArray(attributes.feature_flag_environments)
+	) {
+		throw new DatadogStatusDetailError(
+			flagId,
+			'replacement preflight requires flag identity, approval settings, and environment state',
+		);
+	}
+	const enabledEnvironmentIds: string[] = [];
+	const environmentIdsWithTargeting: string[] = [];
+	for (const environment of attributes.feature_flag_environments) {
+		if (
+			!isRecord(environment) ||
+			typeof environment.environment_id !== 'string' ||
+			(environment.status !== 'ENABLED' && environment.status !== 'DISABLED') ||
+			(environment.allocations !== null &&
+				!Array.isArray(environment.allocations))
+		) {
+			throw new DatadogStatusDetailError(
+				flagId,
+				'an environment has incomplete status or targeting information',
+			);
+		}
+		if (environment.status === 'ENABLED')
+			enabledEnvironmentIds.push(environment.environment_id);
+		if (environment.allocations?.length)
+			environmentIdsWithTargeting.push(environment.environment_id);
+	}
+	const metadata = attributes.migration_metadata;
+	return {
+		key: attributes.key,
+		eppoSourceId:
+			isRecord(metadata) &&
+			metadata.provider === 'eppo' &&
+			typeof metadata.source_id === 'string'
+				? metadata.source_id
+				: undefined,
+		archived: !!attributes.archived_at,
+		requiresApproval: attributes.require_approval,
+		enabledEnvironmentIds,
+		environmentIdsWithTargeting,
+	};
+}
+
 // ─── Variants ────────────────────────────────────────────────────────────────
 
 export async function createVariant(
@@ -1377,7 +1445,13 @@ export async function fetchRestrictionPolicy(
 		}>(`${baseUrl}/api/v2/restriction_policy/feature-flag:${flagId}`, {
 			headers: ddHeaders(apiKey, appKey),
 		});
-		return response.data.data.attributes.bindings ?? [];
+		const bindings = response.data.data?.attributes?.bindings;
+		if (!Array.isArray(bindings)) {
+			throw new Error(
+				`Could not verify the restriction policy for Datadog flag "${flagId}": missing bindings.`,
+			);
+		}
+		return bindings;
 	} catch (err) {
 		if (axios.isAxiosError(err) && err.response?.status === 404) {
 			return [];

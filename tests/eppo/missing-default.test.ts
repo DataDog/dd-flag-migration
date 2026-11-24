@@ -155,11 +155,16 @@ describe('interactive Eppo migration without a production default', () => {
 				ddEnvironment('dd-staging', 'Staging', false),
 			],
 		});
+		ddMock
+			.onGet(`${DD_BASE}/api/v2/restriction_policy/feature-flag:${FLAG_ID}`)
+			.reply(404);
 		ddMock.onGet(`${DD_BASE}/api/v2/feature-flags/${FLAG_ID}`).reply(200, {
 			data: {
 				id: FLAG_ID,
 				type: 'feature-flags',
 				attributes: {
+					...existing,
+					require_approval: false,
 					variants: [
 						{
 							id: 'on-id',

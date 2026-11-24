@@ -30,6 +30,8 @@ import {
 	fetchDatadogFlags,
 	fetchDatadogTeams,
 	fetchFlagDetail,
+	fetchFlagReplacementDetails,
+	fetchRestrictionPolicy,
 	indexDatadogFlagKeys,
 	syncAllocationsForEnvironment,
 	syncVariantsCreatesAndUpdates,
@@ -123,12 +125,16 @@ function archivedEppoMatches(
 	flag: EppoFlag,
 	datadogFlags: DatadogFlagEntry[],
 ): DatadogFlagEntry[] {
-	return datadogFlags.filter(
+	const matches = datadogFlags.filter(
 		(existing) =>
 			!!existing.archived_at &&
 			existing.migration_metadata?.provider === 'eppo' &&
 			existing.migration_metadata.source_id === String(flag.id),
 	);
+	// A replacement and its legacy predecessor share a source ID. Prefer the
+	// Eppo-bucketed flag, but still reject ambiguity within the preferred group.
+	const successors = matches.filter((match) => match.bucketing_mode === 'EPPO');
+	return successors.length > 0 ? successors : matches;
 }
 
 /**
@@ -942,6 +948,30 @@ async function confirmMigration(
 					classifyExistingFlag(matchedFlag) === 'legacy'
 						? matchedFlag
 						: undefined;
+				if (replacedFlag) {
+					if (replacedFlag.migration_metadata?.source_id !== String(flag.id)) {
+						doFail(
+							flag.key,
+							`Flag "${flag.key}": Datadog flag "${replacedFlag.key}" (${replacedFlag.id}) does not have the matching Eppo source ID "${flag.id}". It was not replaced.`,
+						);
+						continue;
+					}
+					const conflictingFlag = datadogFlags.find(
+						(entry) =>
+							entry.id !== replacedFlag.id &&
+							!entry.archived_at &&
+							(entry.key === flag.key ||
+								(entry.migration_metadata?.provider === 'eppo' &&
+									entry.migration_metadata.source_id === String(flag.id))),
+					);
+					if (conflictingFlag) {
+						doFail(
+							flag.key,
+							`Flag "${flag.key}": active Datadog flag "${conflictingFlag.key}" (${conflictingFlag.id}) already uses the replacement key or Eppo source ID. No flag was replaced.`,
+						);
+						continue;
+					}
+				}
 				const existingFlagId = replacedFlag ? undefined : matchedFlagId;
 				const existingFlag = replacedFlag ? undefined : matchedFlag;
 				const existingKind =
@@ -1562,12 +1592,13 @@ async function confirmMigration(
 					// so the old flag's targeting filters are cleared first.
 					let archivedByRun = false;
 					let clearedEnvCount = 0;
+					let replacementId: string | undefined;
 					const replacementState = (): string => {
 						if (!replacedFlag) return '';
 						const notes: string[] = [];
 						if (archivedByRun) {
 							notes.push(
-								`This migration archived flag "${replacedFlag.key}" (${replacedFlag.id}), so it serves no value until it is replaced.`,
+								`This migration archived flag "${replacedFlag.key}" (${replacedFlag.id})${replacementId ? '.' : ', so it serves no value until it is replaced.'}`,
 							);
 						}
 						if (clearedEnvCount > 0) {
@@ -1575,12 +1606,62 @@ async function confirmMigration(
 								`The targeting filters of flag "${replacedFlag.key}" (${replacedFlag.id}) were cleared in ${clearedEnvCount} env(s).`,
 							);
 						}
-						return notes.length > 0
-							? ` ${notes.join(' ')} Re-run the migration to create its replacement.`
-							: '';
+						if (replacementId) {
+							notes.push(
+								`The replacement (${replacementId}) was created. Re-run the migration to finish syncing it.`,
+							);
+						} else if (notes.length > 0) {
+							notes.push(
+								'Re-run the migration with replacement enabled to create its replacement.',
+							);
+						}
+						return notes.length > 0 ? ` ${notes.join(' ')}` : '';
 					};
 					if (replacedFlag) {
-						const wasActive = !replacedFlag.archived_at;
+						// Look up the current state before archiving, which disables every
+						// environment and cannot be undone by a later read failure.
+						const details = await fetchFlagReplacementDetails(
+							ddApiKey,
+							ddAppKey,
+							replacedFlag.id,
+							site,
+						);
+						if (
+							details.key !== replacedFlag.key ||
+							details.eppoSourceId !== String(flag.id)
+						) {
+							throw new Error(
+								`Datadog flag "${replacedFlag.key}" (${replacedFlag.id}) no longer matches the expected key and Eppo source ID "${flag.id}". Re-run the migration to refresh the flag list. No replacement was attempted.`,
+							);
+						}
+						const replacementEnabledEnvs = new Set(
+							envsToEnable.map((env) => env.id),
+						);
+						const missingEnvs = details.enabledEnvironmentIds.filter(
+							(envId) => !replacementEnabledEnvs.has(envId),
+						);
+						if (missingEnvs.length > 0) {
+							throw new Error(
+								`Datadog flag "${replacedFlag.key}" (${replacedFlag.id}) is enabled in environments the replacement would not enable (${missingEnvs.join(', ')}). Map each to an active Eppo environment before replacing the flag.`,
+							);
+						}
+						if (details.requiresApproval) {
+							throw new Error(
+								`Datadog flag "${replacedFlag.key}" (${replacedFlag.id}) requires approval for changes. Automatic replacement cannot preserve that protection; keep Datadog bucketing for this flag.`,
+							);
+						}
+						const bindings = await fetchRestrictionPolicy(
+							ddApiKey,
+							ddAppKey,
+							replacedFlag.id,
+							site,
+						);
+						if (bindings.length > 0) {
+							throw new Error(
+								`Datadog flag "${replacedFlag.key}" (${replacedFlag.id}) has a restriction policy. Automatic replacement cannot preserve that policy; keep Datadog bucketing for this flag.`,
+							);
+						}
+						const wasActive = !details.archived;
 						if (wasActive) {
 							if (dryRun) {
 								dryRunRequests.push({
@@ -1598,22 +1679,14 @@ async function confirmMigration(
 									);
 								} catch (err) {
 									throw new Error(
-										`Failed to archive flag "${replacedFlag.key}" (${replacedFlag.id}) before replacing it: ${formatAxiosError(err)} The flag was not changed and no replacement was created.`,
+										`Failed to confirm the archive of flag "${replacedFlag.key}" (${replacedFlag.id}): ${formatAxiosError(err)} No replacement was created. Verify the old flag's archive status in Datadog before retrying.`,
 									);
 								}
 								archivedByRun = true;
 								replacedFlag.archived_at = new Date().toISOString();
 							}
 						}
-						const { allocationKeyToIdByEnv } = await fetchFlagDetail(
-							ddApiKey,
-							ddAppKey,
-							replacedFlag.id,
-							site,
-						);
-						const envIdsToClear = [...allocationKeyToIdByEnv]
-							.filter(([, allocationIds]) => allocationIds.size > 0)
-							.map(([envId]) => envId);
+						const envIdsToClear = details.environmentIdsWithTargeting;
 						for (const envId of envIdsToClear) {
 							if (dryRun) {
 								dryRunRequests.push({
@@ -1690,6 +1763,11 @@ async function confirmMigration(
 								site,
 							);
 
+							if (replacedFlag) {
+								replacementId = createdFlag.id;
+								replacedKeys.push(flag.key);
+							}
+
 							// Set every per-environment default before enabling any
 							// environment; a failure here leaves the flag disabled.
 							for (const { ddEnv, dvk } of envDefaultsToSet) {
@@ -1723,7 +1801,7 @@ async function confirmMigration(
 									enableFailures.push({
 										key: flag.key,
 										env: ddEnv.name,
-										error: formatAxiosError(err),
+										error: `${formatAxiosError(err)}${replacementState()}`,
 									});
 								}
 							}
@@ -1731,7 +1809,6 @@ async function confirmMigration(
 							totalEnabled += enabledCount;
 							const enableLabel =
 								enabledCount > 0 ? `, enabled in ${enabledCount} env(s)` : '';
-							if (replacedFlag) replacedKeys.push(flag.key);
 							doCreate(
 								`${chalk.green('✓')} Created ${chalk.cyan(flag.key)} (${allFilterLabel}${allRuleLabel}${rolloutLabel}${enableLabel}${replacementLabel})`,
 							);
