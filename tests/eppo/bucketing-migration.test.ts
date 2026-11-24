@@ -16,6 +16,7 @@ import { ddClient } from '../../src/datadog/api.js';
 import { eppoClient } from '../../src/eppo/api.js';
 import { runEppoMigration } from '../../src/eppo/migrate.js';
 import type { EppoFlag } from '../../src/eppo/types.js';
+import type { TagSyncMode } from '../../src/helpers/sync-tags.js';
 
 const DD_SITE = 'test.invalid';
 const DD_BASE = `https://api.${DD_SITE}`;
@@ -231,9 +232,10 @@ describe('Eppo migration with Eppo-compatible bucketing', () => {
 		dryRun: boolean,
 		flag = eppoFlag(),
 		replaceLegacyFlags?: boolean,
+		tagMode: TagSyncMode = 'replace',
 	): Promise<Report> {
 		await runEppoMigration('dd-api-key', 'dd-app-key', DD_SITE, dryRun, {
-			tagMode: 'replace',
+			tagMode,
 			replaceLegacyFlags,
 			nonInteractive: {
 				envMap: [
@@ -727,6 +729,98 @@ describe('Eppo migration with Eppo-compatible bucketing', () => {
 					{ environment_id: 'dd-prod', ...expectedProdAllocations[0] },
 				],
 			});
+		});
+
+		function createAttributes(): Record<string, unknown> {
+			const create = writes.find((w) => w.url === '/api/v2/feature-flags');
+			return (create?.body as { data: { attributes: Record<string, unknown> } })
+				.data.attributes;
+		}
+
+		it.each([
+			'SERVER',
+			'CLIENT',
+			'ALL',
+		])('keeps the %s distribution channel of the flag it replaces', async (channel) => {
+			mockLegacy(eppoFlag(), activeLegacyAttributes(), {
+				distribution_channel: channel,
+			});
+			const report = await run(false, eppoFlag(), true);
+
+			expect(report.failures).toEqual([]);
+			expect(report.replacedKeys).toEqual(['checkout-redesign']);
+			expect(createAttributes().distribution_channel).toBe(channel);
+		});
+
+		it.each([
+			undefined,
+			null,
+			'BOTH',
+		])('creates the replacement with the default channel when the old one is %s', async (channel) => {
+			mockLegacy(eppoFlag(), legacyAttributes(), {
+				distribution_channel: channel,
+			});
+			const report = await run(false, eppoFlag(), true);
+
+			expect(report.failures).toEqual([]);
+			expect(report.replacedKeys).toEqual(['checkout-redesign']);
+			expect(createAttributes()).not.toHaveProperty('distribution_channel');
+		});
+
+		it.each([
+			['additive', [], ['team:platform', 'owner:customer']],
+			['replace', [], undefined],
+			[
+				'additive',
+				['beta', 'owner:customer'],
+				['team:platform', 'owner:customer', 'beta'],
+			],
+			['replace', ['beta', 'owner:customer'], ['beta', 'owner:customer']],
+		] as const)('resolves the replacement tags in %s mode from Eppo tags %j', async (tagMode, eppoTags, expected) => {
+			const flag = { ...eppoFlag(), tag_names: [...eppoTags] };
+			mockLegacy(flag, activeLegacyAttributes(), {
+				tags: ['team:platform', 'owner:customer'],
+			});
+			const report = await run(false, flag, true, tagMode);
+
+			expect(report.failures).toEqual([]);
+			expect(report.replacedKeys).toEqual(['checkout-redesign']);
+			expect(createAttributes().tags).toEqual(expected);
+		});
+
+		it('previews the kept channel and merged tags in a dry run', async () => {
+			const flag = { ...eppoFlag(), tag_names: ['beta'] };
+			mockLegacy(flag, activeLegacyAttributes(), {
+				distribution_channel: 'SERVER',
+				tags: ['team:platform'],
+			});
+			const report = await run(true, flag, true, 'additive');
+
+			expect(report.failures).toEqual([]);
+			expect(writes).toEqual([]);
+			const create = (report.requests ?? []).find(
+				(r) => r.method === 'POST' && r.path === '/api/v2/feature-flags',
+			);
+			expect(
+				(create?.body as { data: { attributes: Record<string, unknown> } }).data
+					.attributes,
+			).toMatchObject({
+				distribution_channel: 'SERVER',
+				tags: ['team:platform', 'beta'],
+			});
+		});
+
+		it.each([
+			'team:platform',
+			[42],
+		])('leaves an active flag unchanged when its tags %j cannot be read', async (tags) => {
+			mockLegacy(eppoFlag(), activeLegacyAttributes(), { tags });
+			const report = await run(false, eppoFlag(), true, 'additive');
+
+			expect(report.summary).toMatchObject({ created: 0, errored: 1 });
+			expect(report.replacedKeys).toBeUndefined();
+			expect(ddMock.history.post).toHaveLength(0);
+			expect(ddMock.history.put).toHaveLength(0);
 		});
 
 		it('previews the replacement in a dry run without writing', async () => {
