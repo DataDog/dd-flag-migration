@@ -74,8 +74,8 @@ import { CONFIG_DIR } from './helpers/config.js';
 import { requireEnvVars } from './helpers/env.js';
 import { shouldExportResults } from './helpers/export.js';
 import {
+	listMigrationFiles,
 	parseFileTimestamp,
-	sortNewestFirst,
 } from './helpers/migration-files.js';
 import { promptForDatadogSite } from './helpers/prompt-for-datadog-site.js';
 import { MIGRATION_PROVIDERS } from './helpers/providers.js';
@@ -216,11 +216,7 @@ async function selectMigrationFile(useLatest = false): Promise<MigrationFile> {
 		process.exit(1);
 	}
 
-	const files = sortNewestFirst(
-		fs
-			.readdirSync(CONFIG_DIR)
-			.filter((f) => f.startsWith('migration-') && f.endsWith('.json')),
-	);
+	const files = listMigrationFiles(CONFIG_DIR);
 
 	if (files.length === 0) {
 		console.log(chalk.red('\n  No migration files found.'));

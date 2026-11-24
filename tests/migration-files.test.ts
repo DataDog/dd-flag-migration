@@ -1,7 +1,11 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from '@jest/globals';
 import {
 	dryRunFilename,
 	fileTimestamp,
+	listMigrationFiles,
 	migrationFilename,
 	parseFileTimestamp,
 	sortNewestFirst,
@@ -53,5 +57,32 @@ describe('migration file names', () => {
 			'migration-unknown.json',
 		]);
 		expect(files[0]).toBe('migration-2026-11-13T11:02:05.852Z.json');
+	});
+
+	it('lists migration records from before and after Windows-safe names newest first', () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'migration-files-'));
+		try {
+			for (const name of [
+				// Colons are valid outside Windows, where older versions saved them.
+				...(process.platform === 'win32'
+					? []
+					: ['migration-2026-11-13T11:15:00.000Z.json']),
+				'migration-2026-11-13T11-30-00-000Z.json',
+				'migration-2026-11-13T10-59-59-999Z.json',
+				'dry-run-2026-11-13T12-00-00-000Z.json',
+				'config.json',
+			]) {
+				fs.writeFileSync(path.join(dir, name), '{}');
+			}
+			expect(listMigrationFiles(dir)).toEqual([
+				'migration-2026-11-13T11-30-00-000Z.json',
+				...(process.platform === 'win32'
+					? []
+					: ['migration-2026-11-13T11:15:00.000Z.json']),
+				'migration-2026-11-13T10-59-59-999Z.json',
+			]);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });

@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+
 /** Windows rejects `:` in filenames, so timestamps in filenames use `-`. */
 export function fileTimestamp(iso: string): string {
 	return iso.replace(/[:.]/g, '-');
@@ -32,5 +34,14 @@ export function sortNewestFirst(filenames: string[]): string[] {
 		parseFileTimestamp(filename)?.getTime() ?? Number.NEGATIVE_INFINITY;
 	return [...filenames].sort(
 		(a, b) => time(b) - time(a) || (a < b ? 1 : a > b ? -1 : 0),
+	);
+}
+
+/** Migration records saved in `dir`, newest first. */
+export function listMigrationFiles(dir: string): string[] {
+	return sortNewestFirst(
+		fs
+			.readdirSync(dir)
+			.filter((f) => f.startsWith('migration-') && f.endsWith('.json')),
 	);
 }
