@@ -20,6 +20,9 @@ const DD_BASE = `https://api.${DD_SITE}`;
 const EPPO_BASE = 'https://eppo.cloud';
 const FLAG_ID = 'dd-flag-1';
 const prompts: Array<{ message: string; choices: unknown[] }> = [];
+const LEGACY_PROMPT = 'How should these flags be migrated?';
+/** Answer to the prompt for flags migrated before Eppo bucketing. */
+let legacyAnswer: boolean | undefined;
 
 jest.unstable_mockModule('../../src/components/Select.js', () => ({
 	select: async ({
@@ -31,6 +34,8 @@ jest.unstable_mockModule('../../src/components/Select.js', () => ({
 	}) => {
 		prompts.push({ message, choices });
 		if (message.startsWith('Migrate ')) return 'migrate';
+		if (message === LEGACY_PROMPT && legacyAnswer !== undefined)
+			return legacyAnswer;
 		throw new Error(`Unexpected prompt: ${message}`);
 	},
 }));
@@ -117,6 +122,7 @@ describe('interactive Eppo migration without a production default', () => {
 		ddMock = new AxiosMockAdapter(ddClient as never);
 		eppoMock = new AxiosMockAdapter(eppoClient as never);
 		prompts.length = 0;
+		legacyAnswer = undefined;
 		process.env.EPPO_API_KEY = 'eppo-api-key';
 		jest.spyOn(process.stdout, 'write').mockReturnValue(true as never);
 		jest.spyOn(process.stderr, 'write').mockReturnValue(true as never);
@@ -149,11 +155,16 @@ describe('interactive Eppo migration without a production default', () => {
 				ddEnvironment('dd-staging', 'Staging', false),
 			],
 		});
+		ddMock
+			.onGet(`${DD_BASE}/api/v2/restriction_policy/feature-flag:${FLAG_ID}`)
+			.reply(404);
 		ddMock.onGet(`${DD_BASE}/api/v2/feature-flags/${FLAG_ID}`).reply(200, {
 			data: {
 				id: FLAG_ID,
 				type: 'feature-flags',
 				attributes: {
+					...existing,
+					require_approval: false,
 					variants: [
 						{
 							id: 'on-id',
@@ -215,19 +226,62 @@ describe('interactive Eppo migration without a production default', () => {
 		);
 	});
 
-	it('fails a flag migrated before Eppo bucketing without asking', async () => {
-		mockSources({
-			key: 'checkout-redesign',
-			name: 'Checkout Redesign',
-			bucketing_mode: 'DATADOG',
-			migration_metadata: { provider: 'eppo', source_id: '1' },
-		});
+	const legacyAttributes = {
+		key: 'checkout-redesign',
+		name: 'Checkout Redesign',
+		bucketing_mode: 'DATADOG',
+		migration_metadata: { provider: 'eppo', source_id: '1' },
+	};
+
+	it.each([
+		null,
+		'2026-10-22T00:00:00Z',
+	])('asks before replacing a flag migrated before Eppo bucketing, keeping Datadog bucketing first (archived_at=%s)', async (archivedAt) => {
+		legacyAnswer = false;
+		mockSources({ ...legacyAttributes, archived_at: archivedAt });
 		await run();
 
 		expect(prompts.map((prompt) => prompt.message)).toEqual([
 			'Migrate 1 flag(s) to Datadog?',
+			LEGACY_PROMPT,
 		]);
+		expect(
+			(prompts[1].choices as Array<{ value: boolean; name: string }>).map(
+				(choice) => choice.value,
+			),
+		).toEqual([false, true]);
+		const output = (console.log as jest.Mock).mock.calls
+			.map((args) => String(args[0]))
+			.join('\n');
+		expect(output).toContain('1 selected flag(s) were migrated');
+		expect(output.includes('Switching archives them first')).toBe(
+			archivedAt === null,
+		);
+	});
+
+	it('fails a flag migrated before Eppo bucketing when keeping Datadog bucketing', async () => {
+		legacyAnswer = false;
+		mockSources(legacyAttributes);
+		await run();
+
+		expect(createRequest()).toBeUndefined();
+		expect(ddMock.history.post).toHaveLength(0);
 		expect(ddMock.history.put).toHaveLength(0);
+	});
+
+	it('replaces a flag migrated before Eppo bucketing when switching, keeping no default', async () => {
+		legacyAnswer = true;
+		mockSources(legacyAttributes);
+		await run();
+
+		expect(ddMock.history.post[0].url).toBe(
+			`${DD_BASE}/api/v2/feature-flags/${FLAG_ID}/archive`,
+		);
+		expect(createRequest()).toMatchObject({
+			key: 'checkout-redesign',
+			bucketing_mode: 'EPPO',
+		});
+		expect(createRequest()).not.toHaveProperty('default_variant_key');
 	});
 
 	it('automatically restores an archived Eppo flag without an additional prompt', async () => {

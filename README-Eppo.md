@@ -12,6 +12,7 @@ Credentials are read from environment variables, and each section below lists th
   - [Migration credentials](#migration-credentials)
   - [Advanced filtering](#advanced-filtering)
   - [Re-syncing existing flags](#re-syncing-existing-flags)
+    - [Switching older flags to Eppo-compatible bucketing](#switching-older-flags-to-eppo-compatible-bucketing)
 - [Non-interactive migrations](#non-interactive-migrations)
 - [Migration status](#migration-status)
   - [Migration status credentials](#migration-status-credentials)
@@ -84,11 +85,19 @@ Eppo does not expose flag usage-recency data, so lifecycle categories such as La
 
 Selecting an Eppo flag that already exists in Datadog syncs it from Eppo. See [Re-syncing existing flags](README.md#re-syncing-existing-flags) for general behavior.
 
-If the matching Datadog flag is archived, the tool automatically restores it before syncing, without an additional prompt or option. This applies only to Eppo migrations and requires the archived flag's migration metadata to identify the same Eppo source flag ID. An active match takes precedence. Restoration preserves the existing flag and variant IDs and reuses its targeting-filter keys instead of creating a replacement.
+If the matching Datadog flag is archived, the tool automatically restores it before syncing, unless you choose to [replace it](#switching-older-flags-to-eppo-compatible-bucketing). This applies only to Eppo migrations and requires the archived flag's migration metadata to identify the same Eppo source flag ID. An active match takes precedence. Restoration preserves the existing flag and variant IDs and reuses its targeting-filter keys instead of creating a replacement.
 
-If multiple archived flags match the same Eppo source ID, the tool fails that flag rather than choosing one. Restore the intended flag in Datadog and re-run the migration. A failed or approval-required restoration also stops that flag's sync; no replacement is created. If restoration succeeds but a later sync fails, the flag remains restored. Migration reports list successful restorations in `restoredKeys`, including when a later step fails. Dry runs list planned restorations there and record the unarchive request without changing Datadog.
+If archived matches include an Eppo-bucketed flag and its older Datadog-bucketed predecessor, the tool prefers the Eppo-bucketed flag. If multiple candidates remain after applying that preference, the tool fails that flag rather than choosing one. Restore the intended flag in Datadog and re-run the migration. A failed or approval-required restoration also stops that flag's sync; no replacement is created. If restoration succeeds but a later sync fails, the flag remains restored. Migration reports list successful restorations in `restoredKeys`, including when a later step fails. Dry runs list planned restorations there and record the unarchive request without changing Datadog.
 
 The tool preserves numbered suffixes added to resolve duplicate display names, such as `Flag (1)`, while applying source name changes. If an updated name is already taken, the tool tries another numbered suffix without changing the flag's key or ID. Dry runs cannot check whether a new name is already taken.
+
+#### Switching older flags to Eppo-compatible bucketing
+
+Flags migrated before v1.7.0 use Datadog bucketing, which can't be changed in place. When you re-migrate them, interactive runs ask whether to keep Datadog bucketing (the default) or replace the flags. Non-interactive runs keep Datadog bucketing unless you pass `--replace-legacy-flags`.
+
+Before replacing a flag, the tool verifies that it belongs to the same Eppo source flag and that the replacement will be enabled in every Datadog environment where the old flag is currently enabled. It does not replace flags with required approvals or a restriction policy, since automatic replacement would not preserve those controls. The app key must be able to verify the old flag's restriction policy.
+
+Replacing a flag archives it if it's active, removes its targeting filters so their keys can be reused, then creates a new Eppo-bucketed flag with the Eppo key and a new flag ID. An active flag serves no value until its replacement is enabled, and archiving cancels its running experiments. The replacement may assign subjects differently. If a step fails after the old flag is changed, the error describes the changes the tool confirmed. Re-run with replacement enabled to retry; if the new flag already exists, the tool syncs it instead of creating another. Reports list replacements in `replacedKeys`.
 
 ---
 
@@ -118,6 +127,7 @@ Non-interactive migrations write a JSON result document to stdout. Status messag
 | `--dry-run` | Preview changes without writing to Datadog |
 | `--export[=<bool>]` | Export results to an `.xlsx` file in the current directory (bare option enables export; default: `false`) |
 | `--tag-mode <merge\|replace>` | Tag sync behavior (non-interactive default: `merge`) |
+| `--replace-legacy-flags[=<bool>]` | Replace flags migrated before v1.7.0 with Eppo-bucketed flags ([details](#switching-older-flags-to-eppo-compatible-bucketing); default: `false`) |
 
 **Examples**
 
@@ -231,4 +241,4 @@ For each selected flag, the tool:
 - Synchronizes the Eppo display name when re-migrating an existing Datadog flag, and the targeting of every mapped environment, including disabled ones
 - Enables the flag in the Datadog environments that correspond to active Eppo environments
 
-Flags migrated before Eppo-compatible bucketing follow the same rules when re-migrated, including the failures above, but keep Datadog bucketing: no Eppo IDs are sent and their targeting filter keys never change. A warning is recorded, because subjects in splits and partial rollouts are not assigned as in Eppo.
+Flags migrated before Eppo-compatible bucketing follow the same rules when re-migrated, including the failures above, but keep Datadog bucketing: no Eppo IDs are sent and their targeting filter keys never change. A warning is recorded, because subjects in splits and partial rollouts are not assigned as in Eppo. To switch, [replace the flag](#switching-older-flags-to-eppo-compatible-bucketing).
