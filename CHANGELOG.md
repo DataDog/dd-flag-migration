@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.7.1] — 2026-11-24
+
+### Migration — Eppo
+
+- Feat: offer to replace flags migrated before Eppo-compatible bucketing with new Eppo-bucketed flags, so subjects keep their Eppo assignments after cutover (#191)
+  - Interactive migrations ask whether to keep Datadog bucketing (default) or replace the flags; non-interactive migrations keep Datadog bucketing unless `--replace-legacy-flags` is passed
+  - Replacement archives the old flag if active, clears its targeting filters to free their keys, then creates a new flag with the same key; flags with required approvals or a restriction policy are not replaced
+  - Migration reports list replacements in `replacedKeys`
+
+### Documentation
+
+- Clarify that only flags migrated before v1.7.0 retain Datadog bucketing (#187)
+
+### Dependencies
+
+- Fix: update dependencies with vulnerability patches (#183, #186)
+
 ## [1.7.0] — 2026-10-29
 
 ### CLI
