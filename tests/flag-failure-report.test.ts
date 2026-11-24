@@ -336,6 +336,39 @@ describe('flag-level migration failures', () => {
 		expect(attributes.distribution_channel).toBe(expected);
 	});
 
+	it.each([
+		[false, 'migration'],
+		[true, 'dry-run'],
+	] as const)('saves the LaunchDarkly report (dryRun=%s) under a name Windows accepts', async (dryRun, prefix) => {
+		const flag = ldFlag();
+		mockLaunchDarklyNewFlag(flag);
+		await runLaunchDarklyMigration(
+			'dd-api-key',
+			'dd-app-key',
+			DD_SITE,
+			dryRun,
+			{
+				nonInteractive: {
+					projectKey: 'proj',
+					envMap: [['production', 'Production']],
+					flagKeys: [flag.key],
+				},
+				doExport: false,
+			},
+		);
+
+		const names = jest
+			.mocked(fs.writeFileSync)
+			.mock.calls.map(([file]) => path.basename(String(file)));
+		expect(names).toEqual([
+			expect.stringMatching(
+				new RegExp(
+					`^${prefix}-\\d{4}-\\d{2}-\\d{2}T\\d{2}-\\d{2}-\\d{2}-\\d{3}Z\\.json$`,
+				),
+			),
+		]);
+	});
+
 	it('records a LaunchDarkly disable approval request without counting the environment as disabled', async () => {
 		const flag = ldFlag();
 		mockLaunchDarklySource(flag);

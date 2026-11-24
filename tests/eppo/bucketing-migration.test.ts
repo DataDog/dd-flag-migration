@@ -3,6 +3,7 @@
  * Datadog, in which order, and which existing flags are refused.
  */
 import fs from 'node:fs';
+import path from 'node:path';
 import {
 	afterEach,
 	beforeEach,
@@ -330,6 +331,25 @@ describe('Eppo migration with Eppo-compatible bucketing', () => {
 			expect(JSON.stringify(attributes)).not.toContain('sourceId');
 			expect(ddMock.history.post).toHaveLength(0);
 			expect(ddMock.history.put).toHaveLength(0);
+		});
+
+		it.each([
+			[false, 'migration'],
+			[true, 'dry-run'],
+		] as const)('saves the report (dryRun=%s) under a name Windows accepts', async (dryRun, prefix) => {
+			mockSources(eppoFlag());
+			await run(dryRun);
+
+			const names = jest
+				.mocked(fs.writeFileSync)
+				.mock.calls.map(([file]) => path.basename(String(file)));
+			expect(names).toEqual([
+				expect.stringMatching(
+					new RegExp(
+						`^${prefix}-\\d{4}-\\d{2}-\\d{2}T\\d{2}-\\d{2}-\\d{2}-\\d{3}Z\\.json$`,
+					),
+				),
+			]);
 		});
 
 		it('sets every environment default before enabling', async () => {

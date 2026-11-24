@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import {
 	afterEach,
 	beforeEach,
@@ -172,6 +173,28 @@ describe('Datadog migration workflow', () => {
 				).toContainEqual(attributes);
 			}
 		});
+	});
+
+	it.each([
+		[false, 'migration'],
+		[true, 'dry-run'],
+	] as const)('saves the report (dryRun=%s) under a name Windows accepts', async (dryRun, prefix) => {
+		inventory(true, true, '{"type":"object"}');
+		mock
+			.onPost(`${targetBase}/target-flag/environments/target-prod/enable`)
+			.reply(200, {});
+		await run(dryRun);
+
+		const names = jest
+			.mocked(fs.writeFileSync)
+			.mock.calls.map(([file]) => path.basename(String(file)));
+		expect(names).toEqual([
+			expect.stringMatching(
+				new RegExp(
+					`^${prefix}-\\d{4}-\\d{2}-\\d{2}T\\d{2}-\\d{2}-\\d{2}-\\d{3}Z\\.json$`,
+				),
+			),
+		]);
 	});
 
 	it.each([

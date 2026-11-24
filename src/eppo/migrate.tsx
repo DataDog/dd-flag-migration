@@ -58,6 +58,10 @@ import { CONFIG_DIR } from '../helpers/config.js';
 import { shouldExportResults } from '../helpers/export.js';
 import { formatAxiosError } from '../helpers/format-axios-error.js';
 import { toSyncRequests } from '../helpers/migration.js';
+import {
+	dryRunFilename,
+	migrationFilename,
+} from '../helpers/migration-files.js';
 import { writeJsonOutput } from '../helpers/output.js';
 import {
 	resolveMigrationTargetTags,
@@ -827,7 +831,7 @@ async function confirmMigration(
 				flags,
 				environmentMapping,
 			};
-			const filename = `migration-${timestamp}.json`;
+			const filename = migrationFilename(timestamp);
 			if (!fs.existsSync(CONFIG_DIR))
 				fs.mkdirSync(CONFIG_DIR, { recursive: true });
 			const filepath = path.join(CONFIG_DIR, filename);
@@ -1871,7 +1875,7 @@ async function confirmMigration(
 		};
 		outputData = dryRunData;
 		if (dryRunRequests.length > 0) {
-			const filename = `dry-run-${timestamp}.json`;
+			const filename = dryRunFilename(timestamp);
 			const filepath = path.join(process.cwd(), filename);
 			fs.writeFileSync(filepath, JSON.stringify(dryRunData, null, 2));
 			console.log(chalk.gray(`  Requests written to ${filepath}`));
@@ -1908,7 +1912,7 @@ async function confirmMigration(
 		};
 		outputData = migrationData;
 		if (created > 0 || synced > 0 || errored > 0) {
-			const filename = `migration-${timestamp}.json`;
+			const filename = migrationFilename(timestamp);
 			if (!fs.existsSync(CONFIG_DIR))
 				fs.mkdirSync(CONFIG_DIR, { recursive: true });
 			const filepath = path.join(CONFIG_DIR, filename);
