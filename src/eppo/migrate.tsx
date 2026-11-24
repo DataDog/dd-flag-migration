@@ -60,6 +60,7 @@ import { formatAxiosError } from '../helpers/format-axios-error.js';
 import { toSyncRequests } from '../helpers/migration.js';
 import { writeJsonOutput } from '../helpers/output.js';
 import {
+	computeTargetTags,
 	resolveMigrationTargetTags,
 	selectMigrationTagMode,
 	type TagSyncMode,
@@ -671,11 +672,7 @@ async function confirmMigration(
 	if (
 		configuredTagMode === undefined &&
 		!nonInteractive &&
-		flags.some(
-			(flag) =>
-				datadogIdForEppoFlag(flag, datadogKeys) !== undefined &&
-				!(replaceLegacyFlags && legacyFlagFor(flag, datadogKeys, datadogFlags)),
-		)
+		flags.some((flag) => datadogIdForEppoFlag(flag, datadogKeys) !== undefined)
 	) {
 		tagSyncMode = await selectMigrationTagMode();
 	}
@@ -1559,24 +1556,10 @@ async function confirmMigration(
 					// Flag does not exist — create it with targeting rules and Eppo
 					// bucketing, without a flag-level default: environments without an
 					// Eppo default keep none, so unmatched subjects get the SDK fallback.
-					const tags = buildEppoFlagTags(
+					const sourceTags = buildEppoFlagTags(
 						flag.tag_names ?? [],
 						teamHandlesByFlagId.get(flag.id),
 					);
-					const request: DatadogCreateFlagRequest = {
-						key: flag.key,
-						name: flag.name,
-						value_type: mapVariationType(flag.variation_type),
-						variants: toCreateFlagVariants(variants),
-						allocations: allocations.length > 0 ? allocations : undefined,
-						migration_metadata: {
-							provider: 'eppo',
-							source_id: String(flag.id),
-							source_key: flag.key,
-						},
-						bucketing_mode: 'EPPO',
-						...(tags.length > 0 ? { tags } : {}),
-					};
 					// Allocations are already embedded in the create request, so an
 					// environment is synced again only to set its Eppo default. This
 					// happens before any environment is enabled, so no environment
@@ -1593,6 +1576,9 @@ async function confirmMigration(
 					let archivedByRun = false;
 					let clearedEnvCount = 0;
 					let replacementId: string | undefined;
+					let replacementDetails:
+						| Awaited<ReturnType<typeof fetchFlagReplacementDetails>>
+						| undefined;
 					const replacementState = (): string => {
 						if (!replacedFlag) return '';
 						const notes: string[] = [];
@@ -1626,6 +1612,7 @@ async function confirmMigration(
 							replacedFlag.id,
 							site,
 						);
+						replacementDetails = details;
 						if (
 							details.key !== replacedFlag.key ||
 							details.eppoSourceId !== String(flag.id)
@@ -1722,6 +1709,33 @@ async function confirmMigration(
 					const replacementLabel = replacedFlag
 						? `, replaces flag ${replacedFlag.id}`
 						: '';
+					// A replacement keeps the predecessor's Datadog-side settings: its
+					// distribution channel, and its tags under the selected tag mode.
+					const tags = replacementDetails
+						? computeTargetTags(
+								tagSyncMode,
+								sourceTags,
+								replacementDetails.tags,
+							).target
+						: sourceTags;
+					const distributionChannel = replacementDetails?.distributionChannel;
+					const request: DatadogCreateFlagRequest = {
+						key: flag.key,
+						name: flag.name,
+						value_type: mapVariationType(flag.variation_type),
+						variants: toCreateFlagVariants(variants),
+						allocations: allocations.length > 0 ? allocations : undefined,
+						migration_metadata: {
+							provider: 'eppo',
+							source_id: String(flag.id),
+							source_key: flag.key,
+						},
+						bucketing_mode: 'EPPO',
+						...(tags.length > 0 ? { tags } : {}),
+						...(distributionChannel
+							? { distribution_channel: distributionChannel }
+							: {}),
+					};
 
 					if (dryRun) {
 						dryRunRequests.push({

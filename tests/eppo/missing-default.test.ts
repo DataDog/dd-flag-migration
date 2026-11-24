@@ -23,6 +23,9 @@ const prompts: Array<{ message: string; choices: unknown[] }> = [];
 const LEGACY_PROMPT = 'How should these flags be migrated?';
 /** Answer to the prompt for flags migrated before Eppo bucketing. */
 let legacyAnswer: boolean | undefined;
+const TAG_PROMPT =
+	'For existing Datadog flags, how should tags and team tags be synced?';
+let tagAnswer: 'additive' | 'replace' | undefined;
 
 jest.unstable_mockModule('../../src/components/Select.js', () => ({
 	select: async ({
@@ -36,6 +39,7 @@ jest.unstable_mockModule('../../src/components/Select.js', () => ({
 		if (message.startsWith('Migrate ')) return 'migrate';
 		if (message === LEGACY_PROMPT && legacyAnswer !== undefined)
 			return legacyAnswer;
+		if (message === TAG_PROMPT && tagAnswer !== undefined) return tagAnswer;
 		throw new Error(`Unexpected prompt: ${message}`);
 	},
 }));
@@ -123,6 +127,7 @@ describe('interactive Eppo migration without a production default', () => {
 		eppoMock = new AxiosMockAdapter(eppoClient as never);
 		prompts.length = 0;
 		legacyAnswer = undefined;
+		tagAnswer = undefined;
 		process.env.EPPO_API_KEY = 'eppo-api-key';
 		jest.spyOn(process.stdout, 'write').mockReturnValue(true as never);
 		jest.spyOn(process.stderr, 'write').mockReturnValue(true as never);
@@ -192,10 +197,10 @@ describe('interactive Eppo migration without a production default', () => {
 		ddMock.onPost(/.*/).reply(200, {});
 	}
 
-	async function run(): Promise<void> {
-		await runEppoMigration('dd-api-key', 'dd-app-key', DD_SITE, false, {
-			tagMode: 'replace',
-		});
+	async function run(
+		options: { tagMode?: 'additive' | 'replace' } = { tagMode: 'replace' },
+	): Promise<void> {
+		await runEppoMigration('dd-api-key', 'dd-app-key', DD_SITE, false, options);
 	}
 
 	function createRequest(): Record<string, unknown> | undefined {
@@ -282,6 +287,26 @@ describe('interactive Eppo migration without a production default', () => {
 			bucketing_mode: 'EPPO',
 		});
 		expect(createRequest()).not.toHaveProperty('default_variant_key');
+	});
+
+	it.each([
+		['additive', ['team:platform', 'owner:customer']],
+		['replace', undefined],
+	] as const)('asks how to sync tags before replacing a flag, then applies %s', async (answer, expectedTags) => {
+		legacyAnswer = true;
+		tagAnswer = answer;
+		mockSources({
+			...legacyAttributes,
+			tags: ['team:platform', 'owner:customer'],
+		});
+		await run({});
+
+		expect(prompts.map((prompt) => prompt.message)).toEqual([
+			'Migrate 1 flag(s) to Datadog?',
+			LEGACY_PROMPT,
+			TAG_PROMPT,
+		]);
+		expect(createRequest()?.tags).toEqual(expectedTags);
 	});
 
 	it('automatically restores an archived Eppo flag without an additional prompt', async () => {

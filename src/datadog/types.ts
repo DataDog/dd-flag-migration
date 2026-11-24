@@ -168,6 +168,15 @@ export type DatadogAllocationSyncRequest = Omit<
 	'environment_id'
 >;
 
+/** The distribution channels Datadog stores and returns for a flag. */
+export type DatadogFlagDistributionChannel = 'CLIENT' | 'SERVER' | 'ALL';
+
+export function isDatadogFlagDistributionChannel(
+	value: unknown,
+): value is DatadogFlagDistributionChannel {
+	return value === 'CLIENT' || value === 'SERVER' || value === 'ALL';
+}
+
 export interface DatadogCreateFlagRequest {
 	key: string;
 	name: string;

@@ -19,6 +19,7 @@ import type {
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,
 	DatadogEnvironmentStatus,
+	DatadogFlagDistributionChannel,
 	DatadogFlagEntry,
 	DatadogStatusAllocation,
 	DatadogStatusFlagDetail,
@@ -36,6 +37,7 @@ import type {
 	VariantMigrationMetadata,
 	VariantSyncCounts,
 } from './types.js';
+import { isDatadogFlagDistributionChannel } from './types.js';
 
 // ─── Rate Limiting ──────────────────────────────────────────────────────────
 
@@ -923,6 +925,12 @@ export class DatadogStatusDetailError extends Error {
 	}
 }
 
+function isStringArray(value: unknown): value is string[] {
+	return (
+		Array.isArray(value) && value.every((entry) => typeof entry === 'string')
+	);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -1002,6 +1010,8 @@ export async function fetchFlagReplacementDetails(
 	eppoSourceId: string | undefined;
 	archived: boolean;
 	requiresApproval: boolean;
+	distributionChannel: DatadogFlagDistributionChannel | undefined;
+	tags: string[];
 	enabledEnvironmentIds: string[];
 	environmentIdsWithTargeting: string[];
 }> {
@@ -1016,11 +1026,12 @@ export async function fetchFlagReplacementDetails(
 		typeof attributes.require_approval !== 'boolean' ||
 		(attributes.archived_at != null &&
 			typeof attributes.archived_at !== 'string') ||
+		(attributes.tags != null && !isStringArray(attributes.tags)) ||
 		!Array.isArray(attributes.feature_flag_environments)
 	) {
 		throw new DatadogStatusDetailError(
 			flagId,
-			'replacement preflight requires flag identity, approval settings, and environment state',
+			'replacement preflight requires flag identity, approval settings, tags, and environment state',
 		);
 	}
 	const enabledEnvironmentIds: string[] = [];
@@ -1054,6 +1065,12 @@ export async function fetchFlagReplacementDetails(
 				: undefined,
 		archived: !!attributes.archived_at,
 		requiresApproval: attributes.require_approval,
+		distributionChannel: isDatadogFlagDistributionChannel(
+			attributes.distribution_channel,
+		)
+			? attributes.distribution_channel
+			: undefined,
+		tags: isStringArray(attributes.tags) ? attributes.tags : [],
 		enabledEnvironmentIds,
 		environmentIdsWithTargeting,
 	};
