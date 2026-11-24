@@ -672,11 +672,7 @@ async function confirmMigration(
 	if (
 		configuredTagMode === undefined &&
 		!nonInteractive &&
-		flags.some(
-			(flag) =>
-				datadogIdForEppoFlag(flag, datadogKeys) !== undefined &&
-				!(replaceLegacyFlags && legacyFlagFor(flag, datadogKeys, datadogFlags)),
-		)
+		flags.some((flag) => datadogIdForEppoFlag(flag, datadogKeys) !== undefined)
 	) {
 		tagSyncMode = await selectMigrationTagMode();
 	}
