@@ -12,12 +12,15 @@ import type {
 	SourceVariant,
 	VariantSyncPlan,
 } from '../../datadog/types.js';
-import { mappedDatadogEnvironments } from '../../datadog/types.js';
+import {
+	type DatadogFlagDistributionChannel,
+	isDatadogFlagDistributionChannel,
+	mappedDatadogEnvironments,
+} from '../../datadog/types.js';
 
 type SourceEnvironment = DatadogStatusFlagDetail['environments'][number];
 
 export type DatadogValueType = DatadogCreateFlagRequest['value_type'];
-export type DatadogFlagDistributionChannel = 'CLIENT' | 'SERVER' | 'ALL';
 
 const VALUE_TYPES = new Set<DatadogValueType>([
 	'BOOLEAN',
@@ -25,12 +28,6 @@ const VALUE_TYPES = new Set<DatadogValueType>([
 	'NUMERIC',
 	'STRING',
 	'JSON',
-]);
-
-const DISTRIBUTION_CHANNELS = new Set<DatadogFlagDistributionChannel>([
-	'CLIENT',
-	'SERVER',
-	'ALL',
 ]);
 
 // ─── Flag Matching ────────────────────────────────────────────────────────────
@@ -68,11 +65,8 @@ export function datadogValueType(
 export function datadogDistributionChannel(
 	detail: DatadogStatusFlagDetail,
 ): DatadogFlagDistributionChannel | undefined {
-	const channel = detail.distributionChannel as
-		| DatadogFlagDistributionChannel
-		| undefined;
-	return channel !== undefined && DISTRIBUTION_CHANNELS.has(channel)
-		? channel
+	return isDatadogFlagDistributionChannel(detail.distributionChannel)
+		? detail.distributionChannel
 		: undefined;
 }
 

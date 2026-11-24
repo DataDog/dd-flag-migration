@@ -19,6 +19,7 @@ import type {
 	DatadogCreateFlagRequest,
 	DatadogEnvironment,
 	DatadogEnvironmentStatus,
+	DatadogFlagDistributionChannel,
 	DatadogFlagEntry,
 	DatadogStatusAllocation,
 	DatadogStatusFlagDetail,
@@ -36,6 +37,7 @@ import type {
 	VariantMigrationMetadata,
 	VariantSyncCounts,
 } from './types.js';
+import { isDatadogFlagDistributionChannel } from './types.js';
 
 // ─── Rate Limiting ──────────────────────────────────────────────────────────
 
@@ -1008,7 +1010,7 @@ export async function fetchFlagReplacementDetails(
 	eppoSourceId: string | undefined;
 	archived: boolean;
 	requiresApproval: boolean;
-	distributionChannel: 'CLIENT' | 'SERVER' | 'ALL' | undefined;
+	distributionChannel: DatadogFlagDistributionChannel | undefined;
 	tags: string[];
 	enabledEnvironmentIds: string[];
 	environmentIdsWithTargeting: string[];
@@ -1053,7 +1055,6 @@ export async function fetchFlagReplacementDetails(
 			environmentIdsWithTargeting.push(environment.environment_id);
 	}
 	const metadata = attributes.migration_metadata;
-	const channel = attributes.distribution_channel;
 	return {
 		key: attributes.key,
 		eppoSourceId:
@@ -1064,10 +1065,11 @@ export async function fetchFlagReplacementDetails(
 				: undefined,
 		archived: !!attributes.archived_at,
 		requiresApproval: attributes.require_approval,
-		distributionChannel:
-			channel === 'CLIENT' || channel === 'SERVER' || channel === 'ALL'
-				? channel
-				: undefined,
+		distributionChannel: isDatadogFlagDistributionChannel(
+			attributes.distribution_channel,
+		)
+			? attributes.distribution_channel
+			: undefined,
 		tags: isStringArray(attributes.tags) ? attributes.tags : [],
 		enabledEnvironmentIds,
 		environmentIdsWithTargeting,
